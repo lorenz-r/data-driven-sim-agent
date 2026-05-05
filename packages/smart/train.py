@@ -17,6 +17,9 @@ if __name__ == '__main__':
     parser.add_argument('--pretrain_ckpt', type=str, default="")
     parser.add_argument('--ckpt_path', type=str, default="")
     parser.add_argument('--save_ckpt_path', type=str, default="")
+    
+    # Add --cpu flag
+    parser.add_argument('--cpu', action='store_true', help='Force training on CPU')
     args = parser.parse_args()
     config = load_config_act(args.config)
     Predictor = Predictor_hash[config.Model.predictor]
@@ -32,6 +35,10 @@ if __name__ == '__main__':
         model.load_params_from_file(filename=args.pretrain_ckpt,
                                     logger=logger)
     trainer_config = config.Trainer
+    
+    if args.cpu:
+        trainer_config.accelerator = "cpu"
+    
     model_checkpoint = ModelCheckpoint(dirpath=args.save_ckpt_path,
                                        filename="{epoch:02d}",
                                        monitor='val_cls_acc',
