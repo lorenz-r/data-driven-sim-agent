@@ -9,9 +9,10 @@ managed = true
 
 [tool.uv.workspace]
 members = [
-    "packages/*",
-    "tests",
-]
+    "packages/argoverse-forecasting",
+    "packages/sim-integration",
+    "tests"
+    ]
 
 [tool.uv.sources]
 sim-integration = { workspace = true }
