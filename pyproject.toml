@@ -1,0 +1,32 @@
+[project]
+name = "data-driven-sim-agent"
+version = "0.0.1"
+description = "Data-driven simulation agent — workspace root"
+requires-python = ">=3.11,<3.12"
+
+[tool.uv]
+managed = true
+
+[tool.uv.workspace]
+members = [
+    "packages/*",
+    "tests",
+]
+
+[tool.uv.sources]
+sim-integration = { workspace = true }
+argoverse-forecasting = { workspace = true }
+integration-tests = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests/src"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+markers = [
+    "gpu: marks tests requiring a GPU",
+    "slow: marks slow tests",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.0",
+]

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-suffix: "py3.11"
+
+      - name: Install
+        run: uv sync --all-packages
+
+      - name: Test (CPU-only, skip GPU markers)
+        run: uv run pytest -m "not gpu" --tb=short -q
+
+  test-gpu:
+    runs-on: ubuntu-latest  # swap to self-hosted GPU runner when available
+    if: false               # disabled until GPU runner exists
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --all-packages
+
+      - name: Test (all)
+        run: uv run pytest --tb=short -q
