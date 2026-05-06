@@ -5,7 +5,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl && \
+        ca-certificates \
+        curl \
+        build-essential && \
     rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
