@@ -24,3 +24,5 @@ Thumbs.db
 .coverage
 htmlcov/
 .pytest_cache/
+
+*.ckpt
