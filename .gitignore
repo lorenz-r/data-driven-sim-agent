@@ -26,3 +26,5 @@ htmlcov/
 .pytest_cache/
 
 *.ckpt
+
+.env

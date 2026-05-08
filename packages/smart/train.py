@@ -48,6 +48,16 @@ class EpochLossTracker(pl.Callback):
             return self.start_loss - self.end_loss
         return None
 
+from dotenv import load_dotenv
+import wandb
+import os
+from lightning.pytorch.loggers import WandbLogger
+
+load_dotenv()
+
+wandb.login(
+    key=os.getenv("WANDB_API_KEY")
+)
 
 if __name__ == '__main__':
     parser = ArgumentParser()
@@ -108,62 +118,93 @@ if __name__ == '__main__':
     if args.cpu:
         trainer_config.accelerator = "cpu"
 
-    model_checkpoint = ModelCheckpoint(
-        dirpath=args.save_ckpt_path,
-        filename="{epoch:02d}",
-        monitor='val_cls_acc',
-        every_n_epochs=1,
-        save_top_k=5,
-        mode='max',
-    )
-    lr_monitor = LearningRateMonitor(logging_interval='epoch')
-    loss_tracker = EpochLossTracker(loss_key=args.loss_key)
+    # model_checkpoint = ModelCheckpoint(
+    #     dirpath=args.save_ckpt_path,
+    #     filename="{epoch:02d}",
+    #     monitor='val_cls_acc',
+    #     every_n_epochs=1,
+    #     save_top_k=5,
+    #     mode='max',
+    # )
+    # lr_monitor = LearningRateMonitor(logging_interval='epoch')
+    # loss_tracker = EpochLossTracker(loss_key=args.loss_key)
 
-    trainer = pl.Trainer(
-        accelerator=trainer_config.accelerator,
-        devices=trainer_config.devices,
-        strategy=strategy,
-        accumulate_grad_batches=trainer_config.accumulate_grad_batches,
-        num_nodes=trainer_config.num_nodes,
-        callbacks=[model_checkpoint, lr_monitor, loss_tracker],
-        max_epochs=trainer_config.max_epochs,
-        num_sanity_val_steps=0,
-        gradient_clip_val=0.5,
+    # trainer = pl.Trainer(
+    #     accelerator=trainer_config.accelerator,
+    #     devices=trainer_config.devices,
+    #     strategy=strategy,
+    #     accumulate_grad_batches=trainer_config.accumulate_grad_batches,
+    #     num_nodes=trainer_config.num_nodes,
+    #     callbacks=[model_checkpoint, lr_monitor, loss_tracker],
+    #     max_epochs=trainer_config.max_epochs,
+    #     num_sanity_val_steps=0,
+    #     gradient_clip_val=0.5,
+    # )
+
+    
+    wandb_logger = WandbLogger(
+        project="smart-train",
+        name="mock-run"
     )
+
+    model_checkpoint = ModelCheckpoint(dirpath=args.save_ckpt_path,
+                                       filename="{epoch:02d}",
+                                       monitor='val_cls_acc',
+                                       every_n_epochs=1,
+                                       save_top_k=5,
+                                       mode='max')
+    lr_monitor = LearningRateMonitor(logging_interval='epoch')
+    trainer = pl.Trainer(accelerator=trainer_config.accelerator, devices=trainer_config.devices,
+                         strategy=strategy,
+                         accumulate_grad_batches=trainer_config.accumulate_grad_batches,
+                         num_nodes=trainer_config.num_nodes,
+                         callbacks=[model_checkpoint, lr_monitor],
+                         max_epochs=trainer_config.max_epochs,
+                         num_sanity_val_steps=0,
+                         gradient_clip_val=0.5,
+                         logger=wandb_logger)
 
     if args.ckpt_path == "":
         trainer.fit(model, datamodule)
     else:
-        trainer.fit(model, datamodule, ckpt_path=args.ckpt_path)
 
-    if args.return_metrics:
-        metrics = get_training_metrics(
-            model_checkpoint=model_checkpoint,
-            trainer=trainer,
-            loss_tracker=loss_tracker,
-            metric_name='val_cls_acc',
-        )
+    #     trainer.fit(model, datamodule, ckpt_path=args.ckpt_path)
 
-        # Human-readable summary printed to stdout / captured by CI
-        accuracy = metrics.get('accuracy')
-        start_loss = metrics.get('start_loss')
-        end_loss = metrics.get('end_loss')
-        loss_decrease = metrics.get('loss_decrease')
+    # if args.return_metrics:
+    #     metrics = get_training_metrics(
+    #         model_checkpoint=model_checkpoint,
+    #         trainer=trainer,
+    #         loss_tracker=loss_tracker,
+    #         metric_name='val_cls_acc',
+    #     )
 
-        print("\n── Training summary ──────────────────────")
-        print(f"  Best val accuracy : {accuracy:.4f}" if accuracy is not None else "  Best val accuracy : n/a")
-        print(f"  Start loss        : {start_loss:.4f}" if start_loss is not None else "  Start loss        : n/a")
-        print(f"  End loss          : {end_loss:.4f}" if end_loss is not None else "  End loss          : n/a")
-        if loss_decrease is not None:
-            direction = "↓" if loss_decrease > 0 else "↑ (increased!)"
-            print(f"  Loss change       : {abs(loss_decrease):.4f} {direction}")
-        else:
-            print("  Loss change       : n/a")
-        print("──────────────────────────────────────────\n")
+    #     # Human-readable summary printed to stdout / captured by CI
+    #     accuracy = metrics.get('accuracy')
+    #     start_loss = metrics.get('start_loss')
+    #     end_loss = metrics.get('end_loss')
+    #     loss_decrease = metrics.get('loss_decrease')
 
-        try:
-            with open(args.return_metrics, 'w') as fh:
-                json.dump(metrics, fh, indent=2)
-            print(f"Wrote metrics to {args.return_metrics}")
-        except Exception as e:
-            print(f"Failed to write metrics file {args.return_metrics}: {e}")
+    #     print("\n── Training summary ──────────────────────")
+    #     print(f"  Best val accuracy : {accuracy:.4f}" if accuracy is not None else "  Best val accuracy : n/a")
+    #     print(f"  Start loss        : {start_loss:.4f}" if start_loss is not None else "  Start loss        : n/a")
+    #     print(f"  End loss          : {end_loss:.4f}" if end_loss is not None else "  End loss          : n/a")
+    #     if loss_decrease is not None:
+    #         direction = "↓" if loss_decrease > 0 else "↑ (increased!)"
+    #         print(f"  Loss change       : {abs(loss_decrease):.4f} {direction}")
+    #     else:
+    #         print("  Loss change       : n/a")
+    #     print("──────────────────────────────────────────\n")
+
+    #     try:
+    #         with open(args.return_metrics, 'w') as fh:
+    #             json.dump(metrics, fh, indent=2)
+    #         print(f"Wrote metrics to {args.return_metrics}")
+    #     except Exception as e:
+    #         print(f"Failed to write metrics file {args.return_metrics}: {e}")
+
+        trainer.fit(model,
+                    datamodule,
+                    ckpt_path=args.ckpt_path)
+        
+    wandb.finish()
+
