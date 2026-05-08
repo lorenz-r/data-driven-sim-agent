@@ -1,17 +1,26 @@
-# exit when error
-set -e 
+#!/usr/bin/env bash
 
-INPUT_DIR="/app/packages/smart/data/raw/train"
-OUTPUT_DIR="/app/packages/smart/data/processed/train"
-PYTHON_SCRIPT="data_preprocess_av2.py"
+set -euxo pipefail
 
-# place the venv in the package root (packages/smart/.venv_av2)
-VENV_DIR="/app/packages/smart/.venv_av2"
+# Determine package root (packages/smart) relative to this script
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Accept optional positional arguments
+INPUT_DIR=${1:-"$SCRIPT_DIR/data/raw/train"}
+OUTPUT_DIR=${2:-"$SCRIPT_DIR/data/processed/train"}
+
+PYTHON_SCRIPT=${PYTHON_SCRIPT:-"$SCRIPT_DIR/data_preprocess_av2.py"}
+
+# place the venv in the package root (packages/smart/.venv_av2) by default
+VENV_DIR=${VENV_DIR:-"$SCRIPT_DIR/.venv_av2"}
+
+echo "INPUT_DIR=$INPUT_DIR"
+echo "OUTPUT_DIR=$OUTPUT_DIR"
 
 # create a dedicated venv for av2 if it doesn't exist yet
 if [ ! -d "$VENV_DIR" ]; then
     echo "Creating venv for AV2..."
-    uv venv $VENV_DIR --python 3.11
+    uv venv "$VENV_DIR" --python 3.11
 fi
 
 # install dependencies
@@ -26,7 +35,7 @@ uv pip install \
     opencv-python-headless
 
 echo "Starting conversion: AV2 Parquet -> SMART Pickle..."
-$VENV_DIR/bin/python "$PYTHON_SCRIPT" \
+"$VENV_DIR/bin/python" "$PYTHON_SCRIPT" \
     --input_dir "$INPUT_DIR" \
     --output_dir "$OUTPUT_DIR" \
     --num_workers 1

@@ -1,5 +1,6 @@
 
 from argparse import ArgumentParser
+import sys
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -13,11 +14,12 @@ from smart.utils.log import Logging
 if __name__ == '__main__':
     parser = ArgumentParser()
     Predictor_hash = {"smart": SMART, }
-    parser.add_argument('--config', type=str, default='configs/train/train_scalable.yaml')
+    parser.add_argument('--config', type=str, default='configs/train/train_overfitting_workflow.yaml')
     parser.add_argument('--pretrain_ckpt', type=str, default="")
     parser.add_argument('--ckpt_path', type=str, default="")
     parser.add_argument('--save_ckpt_path', type=str, default="")
-    
+    parser.add_argument('--min_acc', type=float, default=0.2,
+                        help='Minimum required validation accuracy to pass (float)')
     # Add --cpu flag
     parser.add_argument('--cpu', action='store_true', help='Force training on CPU')
     args = parser.parse_args()
@@ -61,3 +63,36 @@ if __name__ == '__main__':
         trainer.fit(model,
                     datamodule,
                     ckpt_path=args.ckpt_path)
+
+# After training, check best accuracy against threshold and fail if below
+best_score = None
+if hasattr(model_checkpoint, 'best_model_score') and model_checkpoint.best_model_score is not None:
+    val = model_checkpoint.best_model_score
+    try:
+        best_score = float(val.item()) if hasattr(val, 'item') else float(val)
+    except Exception:
+        try:
+            best_score = float(val)
+        except Exception:
+            best_score = None
+else:
+    metrics = getattr(trainer, 'callback_metrics', {})
+    if metrics and 'val_cls_acc' in metrics and metrics['val_cls_acc'] is not None:
+        val = metrics['val_cls_acc']
+        try:
+            best_score = float(val.item()) if hasattr(val, 'item') else float(val)
+        except Exception:
+            try:
+                best_score = float(val)
+            except Exception:
+                best_score = None
+
+if best_score is None:
+    print('Warning: Could not determine final accuracy; skipping threshold check')
+else:
+    print(f"Best accuracy: {best_score:.6f} (threshold: {args.min_acc})")
+    if best_score < args.min_acc:
+        print('Accuracy below threshold, failing job')
+        sys.exit(1)
+    else:
+        print('Accuracy meets threshold')
