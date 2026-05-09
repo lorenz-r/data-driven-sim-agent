@@ -276,3 +276,47 @@ def batch_nms_token(pred_trajs, pred_scores,
 
     ret_idxs = sorted_idxs[bs_idxs, ret_idxs]
     return ret_goals, ret_scores, ret_idxs
+
+
+def get_best_accuracy(model_checkpoint: Optional[object], trainer: Optional[object],
+                      metric_name: str = 'val_cls_acc') -> Optional[float]:
+    """Extract the best validation accuracy from the provided checkpoint or trainer.
+
+    Tries several fallbacks in order:
+    - `model_checkpoint.best_model_score` if available
+    - `trainer.callback_metrics[metric_name]` if present
+
+    Returns a float accuracy or None if not found.
+    """
+    best_score = None
+    if model_checkpoint is not None:
+        try:
+            best_score = getattr(model_checkpoint, 'best_model_score', None)
+            if best_score is not None:
+                # convert tensors to float
+                try:
+                    return float(best_score.item()) if hasattr(best_score, 'item') else float(best_score)
+                except Exception:
+                    try:
+                        return float(best_score)
+                    except Exception:
+                        best_score = None
+        except Exception:
+            best_score = None
+
+    if trainer is not None:
+        try:
+            metrics = getattr(trainer, 'callback_metrics', {}) or {}
+            val = metrics.get(metric_name)
+            if val is not None:
+                try:
+                    return float(val.item()) if hasattr(val, 'item') else float(val)
+                except Exception:
+                    try:
+                        return float(val)
+                    except Exception:
+                        return None
+        except Exception:
+            return None
+
+    return None

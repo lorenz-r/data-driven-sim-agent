@@ -1,20 +1,16 @@
 name: Overfit SMART on a single downloaded scenario
 
 on:
-  workflow_dispatch:
-    inputs:
-      storage:
-        description: 'Relative path to store extracted data'
-        required: false
-        default: 'packages/smart/data/raw'
-      preprocess_input:
-        description: 'Input directory for preprocessing'
-        required: false
-        default: 'data/raw/train'
-      preprocess_output:
-        description: 'Output directory for preprocessing'
-        required: false
-        default: 'data/processed/train'
+  pull_request:
+    paths:
+      - 'packages/smart/**'
+      - '.github/workflows/overfit_smart.yml'
+
+env:
+  STORAGE: ${{ github.event.inputs.storage || 'packages/smart/data/raw' }}
+  PREPROCESS_INPUT: ${{ github.event.inputs.preprocess_input || 'data/raw/train' }}
+  PREPROCESS_OUTPUT: ${{ github.event.inputs.preprocess_output || 'data/processed/train' }}
+  MIN_ACCURACY: 0.3
 
 jobs:
   extract-and-preprocess:
@@ -32,7 +28,7 @@ jobs:
         uses: ./.github/actions/partial_extract
         with:
           scenarios: '1'
-          storage: ${{ github.event.inputs.storage }}
+          storage: ${{ env.STORAGE }}
 
       - name: Install `uv` helper
         run: |
@@ -55,11 +51,30 @@ jobs:
         run: |
           echo "Running packages/smart/scripts/run_preprocess.sh"
           bash scripts/run_preprocess.sh \
-            "${{ github.event.inputs.preprocess_input }}" \
-            "${{ github.event.inputs.preprocess_output }}"
+            "${{ env.PREPROCESS_INPUT }}" \
+            "${{ env.PREPROCESS_OUTPUT }}"
 
       - name: Train SMART
         working-directory: packages/smart
         run: |
             uv sync
-            uv run train.py --cpu
+            uv run train.py --cpu --return_accuracy accuracy.json
+
+      - name: Check recorded accuracy and fail if below threshold
+        working-directory: packages/smart
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          if [ ! -f accuracy.json ]; then
+            echo "Accuracy file not found: accuracy.json"
+            exit 1
+          fi
+          accuracy=$(jq -r '.accuracy' accuracy.json)
+          if [ "$accuracy" -lt ${{ env.MIN_ACCURACY }} ]; then
+            echo "Accuracy check failed (accuracy=$accuracy)"
+            cat accuracy.json
+            exit 1
+          else
+            echo "Accuracy check passed"
+            cat accuracy.json
+          fi
