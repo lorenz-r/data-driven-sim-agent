@@ -28,7 +28,7 @@ Trainer:
   strategy: ddp_find_unused_parameters_false
   accelerator: "gpu"
   devices: 1
-  max_epochs: 64
+  max_epochs: 150
   save_ckpt_path:
   num_nodes: 1
   mode:

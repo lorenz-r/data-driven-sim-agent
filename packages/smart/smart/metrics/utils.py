@@ -278,22 +278,25 @@ def batch_nms_token(pred_trajs, pred_scores,
     return ret_goals, ret_scores, ret_idxs
 
 
-def get_best_accuracy(model_checkpoint: Optional[object], trainer: Optional[object],
-                      metric_name: str = 'val_cls_acc') -> Optional[float]:
+def get_best_accuracy(
+    model_checkpoint: Optional[object],
+    trainer: Optional[object],
+    metric_name: str = 'val_cls_acc',
+) -> Optional[float]:
     """Extract the best validation accuracy from the provided checkpoint or trainer.
-
+ 
     Tries several fallbacks in order:
-    - `model_checkpoint.best_model_score` if available
-    - `trainer.callback_metrics[metric_name]` if present
-
+    - ``model_checkpoint.best_model_score`` if available
+    - ``trainer.callback_metrics[metric_name]`` if present
+ 
     Returns a float accuracy or None if not found.
     """
     best_score = None
+ 
     if model_checkpoint is not None:
         try:
             best_score = getattr(model_checkpoint, 'best_model_score', None)
             if best_score is not None:
-                # convert tensors to float
                 try:
                     return float(best_score.item()) if hasattr(best_score, 'item') else float(best_score)
                 except Exception:
@@ -303,7 +306,7 @@ def get_best_accuracy(model_checkpoint: Optional[object], trainer: Optional[obje
                         best_score = None
         except Exception:
             best_score = None
-
+ 
     if trainer is not None:
         try:
             metrics = getattr(trainer, 'callback_metrics', {}) or {}
@@ -318,5 +321,62 @@ def get_best_accuracy(model_checkpoint: Optional[object], trainer: Optional[obje
                         return None
         except Exception:
             return None
-
+ 
     return None
+ 
+ 
+def _to_float(value: object) -> Optional[float]:
+    """Safely coerce a scalar (plain number or tensor) to float."""
+    if value is None:
+        return None
+    try:
+        return float(value.item()) if hasattr(value, 'item') else float(value)
+    except Exception:
+        return None
+ 
+ 
+def get_training_metrics(
+    model_checkpoint: Optional[object] = None,
+    trainer: Optional[object] = None,
+    loss_tracker: Optional[object] = None,
+    metric_name: str = 'val_cls_acc',
+) -> dict:
+    """Return a dict with accuracy and loss metrics from a completed training run.
+ 
+    Keys returned
+    -------------
+    accuracy      – best monitored validation accuracy (float | None)
+    start_loss    – training loss at epoch 1 (float | None)
+    end_loss      – training loss at the final epoch (float | None)
+    loss_decrease – start_loss − end_loss; positive means loss went down (float | None)
+ 
+    Parameters
+    ----------
+    model_checkpoint
+        A PyTorch Lightning ``ModelCheckpoint`` callback instance.
+    trainer
+        A PyTorch Lightning ``Trainer`` instance (fallback for accuracy).
+    loss_tracker
+        An ``EpochLossTracker`` callback instance (from train.py) that
+        exposes ``.start_loss``, ``.end_loss``, and ``.loss_decrease``.
+    metric_name
+        Name of the accuracy metric monitored during validation.
+    """
+    accuracy = get_best_accuracy(model_checkpoint, trainer, metric_name)
+ 
+    start_loss: Optional[float] = None
+    end_loss: Optional[float] = None
+    loss_decrease: Optional[float] = None
+ 
+    if loss_tracker is not None:
+        start_loss = _to_float(getattr(loss_tracker, 'start_loss', None))
+        end_loss = _to_float(getattr(loss_tracker, 'end_loss', None))
+        loss_decrease = _to_float(getattr(loss_tracker, 'loss_decrease', None))
+ 
+    return {
+        'accuracy': accuracy,
+        'start_loss': start_loss,
+        'end_loss': end_loss,
+        'loss_decrease': loss_decrease,
+    }
+ 

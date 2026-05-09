@@ -10,7 +10,7 @@ env:
   STORAGE: ${{ github.event.inputs.storage || 'packages/smart/data/raw' }}
   PREPROCESS_INPUT: ${{ github.event.inputs.preprocess_input || 'data/raw/train' }}
   PREPROCESS_OUTPUT: ${{ github.event.inputs.preprocess_output || 'data/processed/train' }}
-  MIN_ACCURACY: 0.3
+  MIN_ACCURACY: "0.3"
 
 jobs:
   extract-and-preprocess:
@@ -30,54 +30,29 @@ jobs:
           scenarios: '1'
           storage: ${{ env.STORAGE }}
 
-      - name: Install `uv` helper
+      - name: Install uv and system dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install uv
+          python -m pip install -q uv
+          sudo apt-get install -y libgl1 libglib2.0-0
 
-      - name: Install system dependencies for OpenCV
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgl1 \
-            libglib2.0-0
+      - name: Run preprocess script
+        working-directory: packages/smart
+        run: bash scripts/run_preprocess.sh "${{ env.PREPROCESS_INPUT }}" "${{ env.PREPROCESS_OUTPUT }}"
 
-      - name: Make preprocess script executable
-        run: |
-          chmod +x packages/smart/scripts/run_preprocess.sh
-
-      - name: Run preprocess script (uses script-managed venv)
+      - name: Sanity check on CPU SMART
         working-directory: packages/smart
         run: |
-          echo "Running packages/smart/scripts/run_preprocess.sh"
-          bash scripts/run_preprocess.sh \
-            "${{ env.PREPROCESS_INPUT }}" \
-            "${{ env.PREPROCESS_OUTPUT }}"
+          uv sync
+          uv run train.py --cpu --return_metrics metrics.json \
+            --config configs/train/sanity_check.yaml
 
-      - name: Train SMART
+      - name: Check training metrics
         working-directory: packages/smart
         run: |
-            uv sync
-            uv run train.py \
-              --cpu \
-              --return_accuracy accuracy.json \
-              --config configs/train/train_overfitting_workflow.yaml
-
-      - name: Check recorded accuracy and fail if below threshold
-        working-directory: packages/smart
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
-          if [ ! -f accuracy.json ]; then
-            echo "Accuracy file not found: accuracy.json"
-            exit 1
-          fi
-          accuracy=$(jq -r '.accuracy' accuracy.json)
-          if [ "$accuracy" -lt ${{ env.MIN_ACCURACY }} ]; then
-            echo "Accuracy check failed (accuracy=$accuracy)"
-            cat accuracy.json
-            exit 1
-          else
-            echo "Accuracy check passed"
-            cat accuracy.json
-          fi
+          cat metrics.json
+          accuracy=$(jq '.accuracy'      metrics.json)
+          loss_dec=$(jq '.loss_decrease' metrics.json)
+          awk -v a="$accuracy" -v m=${{ env.MIN_ACCURACY }} \
+            'BEGIN { if (a < m) { print "FAIL: accuracy " a " < " m; exit 1 } }'
+          awk -v d="$loss_dec" \
+            'BEGIN { if (d < 0) { print "FAIL: loss increased by " -d; exit 1 } }'
