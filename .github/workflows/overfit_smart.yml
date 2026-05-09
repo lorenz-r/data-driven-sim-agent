@@ -58,7 +58,10 @@ jobs:
         working-directory: packages/smart
         run: |
             uv sync
-            uv run train.py --cpu --return_accuracy accuracy.json
+            uv run train.py \
+              --cpu \
+              --return_accuracy accuracy.json \
+              --config configs/train/train_overfitting_workflow.yaml
 
       - name: Check recorded accuracy and fail if below threshold
         working-directory: packages/smart
