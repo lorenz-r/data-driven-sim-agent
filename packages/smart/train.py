@@ -53,6 +53,12 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     Predictor_hash = {"smart": SMART}
     parser.add_argument('--config', type=str, default='configs/train/train_scalable.yaml')
+
+    # Add arguments to override config values from the command line. This is helpful for top-level hyperparameter search scripts that want to sweep over a few parameters without needing to create a separate config file for each run.
+    parser.add_argument('--lr', type=float, default=None)
+    parser.add_argument('--dropout', type=float, default=None)
+    parser.add_argument('--hidden_dim', type=int, default=None)
+
     parser.add_argument('--pretrain_ckpt', type=str, default="")
     parser.add_argument('--ckpt_path', type=str, default="")
     parser.add_argument('--save_ckpt_path', type=str, default="")
@@ -63,6 +69,17 @@ if __name__ == '__main__':
                         help='Name of the loss metric logged by the model (default: train_loss)')
     args = parser.parse_args()
     config = load_config_act(args.config)
+
+    # Override config values from CLI if provided
+    if args.lr is not None:
+        config.Model.lr = args.lr
+
+    if args.dropout is not None:
+        config.Model.dropout = args.dropout
+
+    if args.hidden_dim is not None:
+        config.Model.hidden_dim = args.hidden_dim
+
     Predictor = Predictor_hash[config.Model.predictor]
     strategy = DDPStrategy(find_unused_parameters=True, gradient_as_bucket_view=True)
     Data_config = config.Dataset
