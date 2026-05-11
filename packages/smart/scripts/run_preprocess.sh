@@ -17,6 +17,7 @@ VENV_DIR=${VENV_DIR:-"$SCRIPT_DIR/.venv_av2"}
 echo "INPUT_DIR=$INPUT_DIR"
 echo "OUTPUT_DIR=$OUTPUT_DIR"
 
+
 # create a dedicated venv for av2 if it doesn't exist yet
 if [ ! -d "$VENV_DIR" ]; then
     echo "Creating venv for AV2..."

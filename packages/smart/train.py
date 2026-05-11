@@ -51,7 +51,7 @@ class EpochLossTracker(pl.Callback):
 from dotenv import load_dotenv
 import wandb
 import os
-from lightning.pytorch.loggers import WandbLogger
+from pytorch_lightning.loggers import WandbLogger
 
 load_dotenv()
 
@@ -144,7 +144,7 @@ if __name__ == '__main__':
     
     wandb_logger = WandbLogger(
         project="smart-train",
-        name="mock-run"
+        name="simple-ov-run"
     )
 
     model_checkpoint = ModelCheckpoint(dirpath=args.save_ckpt_path,

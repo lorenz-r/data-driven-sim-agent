@@ -7,15 +7,15 @@ time_info: &time_info
 
 Dataset:
   root:
-  train_batch_size: 1
-  val_batch_size: 1
+  train_batch_size: 10
+  val_batch_size: 10
   test_batch_size: 1
   shuffle: True
   num_workers: 1
   pin_memory: True
   persistent_workers: True
   train_raw_dir: ["data/av2_processed/training"]
-  val_raw_dir: ["data/av2_processed/training"]
+  val_raw_dir: ["data/av2_processed/validation"]
   test_raw_dir:
   transform: WaymoTargetBuilder
   train_processed_dir:
@@ -28,7 +28,7 @@ Trainer:
   strategy: ddp_find_unused_parameters_false
   accelerator: "gpu"
   devices: 1
-  max_epochs: 32
+  max_epochs: 40
   save_ckpt_path:
   num_nodes: 1
   mode:
@@ -49,7 +49,7 @@ Model:
   head_dim: 16
   dropout: 0.1
   num_freq_bands: 64
-  lr: 0.0005
+  lr: 0.0011
   warmup_steps: 0
   total_steps: 32
   decoder:
