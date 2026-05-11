@@ -73,6 +73,7 @@ class SMARTAgentDecoder(nn.Module):
         self.type_a_emb = nn.Embedding(4, hidden_dim)
         self.shape_emb = MLPLayer(3, hidden_dim, hidden_dim)
 
+        # Fourier is used for position and heading features, MLP is used for categorical features such as agent type and shape. The embeddings are then fused together for the final agent feature. The reason for using Fourier embedding for position and heading is that it can better capture the periodicity and relative differences in these features, which are important for modeling the motion of agents. The categorical features are embedded using MLP because they do not have the same properties as continuous features and can be better captured by a learnable embedding.
         self.x_a_emb = FourierEmbedding(input_dim=input_dim_x_a, hidden_dim=hidden_dim, num_freq_bands=num_freq_bands)
         self.r_t_emb = FourierEmbedding(input_dim=input_dim_r_t, hidden_dim=hidden_dim, num_freq_bands=num_freq_bands)
         self.r_pt2a_emb = FourierEmbedding(input_dim=input_dim_r_pt2a, hidden_dim=hidden_dim,
@@ -123,6 +124,8 @@ class SMARTAgentDecoder(nn.Module):
         agent_pred_rel = agent_diff_rel + prev_pos[:, :, -1:, :]
         return agent_pred_rel
 
+    # This does not learn the token embedding, but just retrieves the token embedding for each agent at each time step. The token embedding is pre-computed and loaded from the token_data.
+    # This is also used for loading in ground truth trajectory token data for the teacher forcing during training and for trajectory generation during inference.
     def agent_token_embedding(self, data, agent_category, agent_token_index, pos_a, head_vector_a, inference=False):
         num_agent, num_step, traj_dim = pos_a.shape
         motion_vector_a = torch.cat([pos_a.new_zeros(data['agent']['num_nodes'], 1, self.input_dim),
@@ -218,6 +221,7 @@ class SMARTAgentDecoder(nn.Module):
 
         return token_res
 
+    # Temporal edges are not built via a radius graph because they are not based on spatial proximity but rather on temporal proximity. Each agent at each time step is connected to itself at the previous time step, and possibly to several previous time steps within a certain time span. The edge features for temporal edges are computed based on the relative position, relative heading, and time difference between the connected nodes. The mask is used to ensure that only valid temporal connections are made, and to optionally apply a random drop of historical connections during training for regularization.
     def build_temporal_edge(self, pos_a, head_a, head_vector_a, num_agent, mask, inference_mask=None):
         pos_t = pos_a.reshape(-1, self.input_dim)
         head_t = head_a.reshape(-1)
@@ -262,6 +266,7 @@ class SMARTAgentDecoder(nn.Module):
         r_a2a = self.r_a2a_emb(continuous_inputs=r_a2a, categorical_embs=None)
         return edge_index_a2a, r_a2a
 
+    
     def build_map2agent_edge(self, data, num_step, agent_category, pos_a, head_a, head_vector_a, mask,
                              batch_s, batch_pl):
         mask_pl2a = mask.clone()
@@ -294,6 +299,10 @@ class SMARTAgentDecoder(nn.Module):
         num_agent, num_step, traj_dim = pos_a.shape
         agent_category = data['agent']['category']
         agent_token_index = data['agent']['token_idx']
+
+        # feat_a has the shape of (num_agent, num_step, hidden_dim), agent_token_traj has the shape of (num_agent, num_step, token_size, 4, 2)
+        # agent_token_traj contains the trajectory corresponding to each token, which is used for token-based trajectory prediction in the inference stage. The trajectory is represented in the agent's local coordinate, where the last observed position is the origin and the last observed heading is the x-axis.
+        # feat_a is the fused feature of the agent's current state and the token embedding, which is used for attention-based interaction and token prediction. The token embedding is retrieved from the pre-computed token data based on the agent's category and token index at each time step.
         feat_a, agent_token_traj = self.agent_token_embedding(data, agent_category, agent_token_index,
                                                               pos_a, head_vector_a)
 
@@ -320,9 +329,17 @@ class SMARTAgentDecoder(nn.Module):
         edge_index_pl2a, r_pl2a = self.build_map2agent_edge(data, num_step, agent_category, pos_a, head_a,
                                                             head_vector_a, mask, batch_s, batch_pl)
 
+        # Performs three graph attention operations for each layer: temporal attention, map-to-agent attention, and agent-to-agent attention. The temporal attention captures the temporal dependencies of each agent's trajectory, the map-to-agent attention captures the influence of the map on the agent, and the agent-to-agent attention captures the interactions between agents. The output feature feat_a is updated after each attention operation and is used for the next layer of attention. After multi-layer attention, feat_a contains rich information about the agent's state, its interaction with the map, and its interaction with other agents, which is then used for token prediction.
+        # This is probably the most important code block from the forward method. In order, temporal attention, map-to-agent attention, and agent-to-agent attention are performed for each layer. The temporal attention is performed first because it only involves the agent's own features and can help to capture the temporal dynamics of the agent's trajectory. The map-to-agent attention is performed next because the map information can provide important context for understanding the agent's behavior and can help to refine the agent's feature representation. The agent-to-agent attention is performed last because it captures the interactions between agents, which can be influenced by both the agent's own state and the map context. By performing these three types of attention in each layer, we can effectively integrate temporal, spatial, and social information to learn a comprehensive representation of the agent's state and its future trajectory.
         for i in range(self.num_layers):
-            feat_a = feat_a.reshape(-1, self.hidden_dim)
+            feat_a = feat_a.reshape(-1, self.hidden_dim) # Graph attention expects [nodes, features], so we reshape the feature from [num_agent, num_step, hidden_dim] to [num_agent*num_step, hidden_dim]
+
+            # i selects the current temporal attention layer
+            # feat_a has been reshaped into nodes, features format for attention computation
+            # r_t is the edge feature for temporal attention, which has been embedded into the same hidden dimension as feat_a
+            # edge_index_t is the edge index for temporal attention, which indicates the connections between nodes (agent-time pairs) in the temporal graph
             feat_a = self.t_attn_layers[i](feat_a, r_t, edge_index_t)
+            
             feat_a = feat_a.reshape(-1, num_step,
                                     self.hidden_dim).transpose(0, 1).reshape(-1, self.hidden_dim)
             feat_a = self.pt2a_attn_layers[i]((map_enc['x_pt'].repeat_interleave(
@@ -332,7 +349,7 @@ class SMARTAgentDecoder(nn.Module):
             feat_a = feat_a.reshape(num_step, -1, self.hidden_dim).transpose(0, 1)
 
         num_agent, num_step, hidden_dim, traj_num, traj_dim = agent_token_traj.shape
-        next_token_prob = self.token_predict_head(feat_a)
+        next_token_prob = self.token_predict_head(feat_a) # The final latent space is used to predict the next token, which is supervised by the ground truth next token index during training. During inference, we will apply softmax to get the probability distribution over tokens and then select the top-k tokens for trajectory generation.
         next_token_prob_softmax = torch.softmax(next_token_prob, dim=-1)
         _, next_token_idx = torch.topk(next_token_prob_softmax, k=10, dim=-1)
 
@@ -341,10 +358,10 @@ class SMARTAgentDecoder(nn.Module):
         next_token_eval_mask = next_token_eval_mask * next_token_eval_mask.roll(shifts=-1, dims=1) * next_token_eval_mask.roll(shifts=1, dims=1)
         next_token_eval_mask[:, -1] = False
 
-        return {'x_a': feat_a,
+        return {'x_a': feat_a, # The final agent feature after multi-layer attention, which will be used for token prediction and can also be used for auxiliary loss such as contrastive learning. The dimension of x_a is (num_agent, num_step, hidden_dim).
                 'next_token_idx': next_token_idx,
-                'next_token_prob': next_token_prob,
-                'next_token_idx_gt': next_token_index_gt,
+                'next_token_prob': next_token_prob, # This is the unnormalized logit output for token prediction, which will be used for computing the loss during training. During inference, we will apply softmax to get the probability distribution over tokens and then select the top-k tokens for trajectory generation. The dimension of next_token_prob is (num_agent, num_step, token_size).
+                'next_token_idx_gt': next_token_index_gt, # This is the ground truth next token index, which is used for computing the loss during training. The dimension of next_token_index_gt is (num_agent, num_step).
                 'next_token_eval_mask': next_token_eval_mask,
                 }
 
@@ -495,8 +512,9 @@ class SMARTAgentDecoder(nn.Module):
         agent_valid_mask[agent_category != 3] = False
 
         return {
-            'pos_a': pos_a[:, (self.num_historical_steps - 1) // self.shift:],
-            'head_a': head_a[:, (self.num_historical_steps - 1) // self.shift:],
+            'pos_a': pos_a[:, (self.num_historical_steps - 1) // self.shift:], # During inference, we will update the input agent position and heading with the predicted position and heading at each recurrent step, so the input agent position and heading for the next recurrent step will be the predicted position and heading from the previous step. Therefore, we need to return the updated agent position and heading after all recurrent steps for evaluation. The shape of pos_a and head_a is (num_agent, num_recurrent_steps, traj_dim) and (num_agent, num_recurrent_steps) respectively.
+            # head_a is the predicted heading in the global coordinate, which is computed based on the predicted trajectory. The predicted trajectory is represented in the agent's local coordinate, where the last observed position is the origin and the last observed heading is the x-axis. To get the predicted trajectory in the global coordinate, we need to transform the predicted trajectory from the agent's local coordinate to the global coordinate using the predicted position and heading at each recurrent step. The shape of pred_traj is (num_agent, num_recurrent_steps, 2) and the shape of pred_head is (num_agent, num_recurrent_steps).
+            'head_a': head_a[:, (self.num_historical_steps - 1) // self.shift:], # The predicted trajectory is generated based on the predicted token at each recurrent step, which is represented in the agent's local coordinate. To get the predicted trajectory in the global coordinate, we need to transform the predicted trajectory from the agent's local coordinate to the global coordinate using the predicted position and heading at each recurrent step. The shape of pred_traj is (num_agent, num_recurrent_steps, 2) and the shape of pred_head is (num_agent, num_recurrent_steps).
             'gt': data['agent']['position'][:, self.num_historical_steps:, :self.input_dim].contiguous(),
             'valid_mask': agent_valid_mask[:, self.num_historical_steps:],
             'pred_traj': pred_traj,
