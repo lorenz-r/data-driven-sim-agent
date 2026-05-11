@@ -56,6 +56,9 @@ from pytorch.lightning.loggers import WandbLogger
 
 load_dotenv()
 
+# Set up the logging by creating a wandb account and getting the API key from the environment variable
+# After creating an account, share your email/username with the team to get access to the project and its resources; this way the logs can be stored in the shared project and everyone can access them.
+# If you wish to run without logging, simply comment out the wandb.login() line and the WandbLogger in the trainer configuration.
 wandb.login(
     key=os.getenv("WANDB_API_KEY")
 )
