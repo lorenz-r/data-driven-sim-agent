@@ -81,6 +81,15 @@ if __name__ == '__main__':
                         help='Path to write JSON with best-model accuracy and loss metrics')
     parser.add_argument('--loss_key', type=str, default='train_loss',
                         help='Name of the loss metric logged by the model (default: train_loss)')
+    
+    # Also allow for epochs, batch size, and other trainer parameters to be overridden from the command line if needed
+    parser.add_argument('--max_epochs', type=int, default=None)
+    parser.add_argument('--train_batch_size', type=int, default=None)
+    parser.add_argument('--val_batch_size', type=int, default=None)
+
+    # Optuna passes a trial number to the training script for each run, which can be used for logging and tracking purposes. We'll include it as an optional argument in case it's needed, but it won't affect the training logic directly.
+    parser.add_argument('--trial_number', type=int, default=0, help='Optional trial number for hyperparameter search runs; used for logging purposes')
+
     args = parser.parse_args()
     config = load_config_act(args.config)
 
@@ -93,6 +102,15 @@ if __name__ == '__main__':
 
     if args.hidden_dim is not None:
         config.Model.hidden_dim = args.hidden_dim
+
+    if args.max_epochs is not None:
+        config.Trainer.max_epochs = args.max_epochs
+    
+    if args.train_batch_size is not None:
+        config.Dataset.train_batch_size = args.train_batch_size
+
+    if args.val_batch_size is not None:
+        config.Dataset.val_batch_size = args.val_batch_size
 
     Predictor = Predictor_hash[config.Model.predictor]
 
@@ -148,8 +166,15 @@ if __name__ == '__main__':
     
     wandb_logger = WandbLogger(
         project="smart-train",
-        name="simple-ov-run"
+        name=f"op_trial-{args.trial_number}",
     )
+
+    # Log the config values to wandb so they show up in the UI and are saved with the run. This is helpful for tracking what hyperparameters were used for each run, especially when doing hyperparameter sweeps.
+    wandb_logger.experiment.config.update({
+        "model": vars(config.Model),
+        "trainer": vars(config.Trainer),
+        "dataset": vars(config.Dataset),
+    })
 
     model_checkpoint = ModelCheckpoint(dirpath=args.save_ckpt_path,
                                        filename="{epoch:02d}",

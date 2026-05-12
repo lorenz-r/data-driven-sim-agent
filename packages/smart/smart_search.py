@@ -52,6 +52,9 @@ def objective(trial):
 
         "--return_metrics",
         str(metrics_path),
+
+        "--trial_number",
+        str(trial.number)
     ]
 
     print("\nRunning:")
@@ -82,7 +85,10 @@ def objective(trial):
     # Define optimization objective
     # ==========================================
 
-    score = accuracy - 0.01 * end_loss
+    # score = accuracy - 0.01 * end_loss
+
+    # Since we want to specifically overfit on the training data, we'll just optimize for minimizing the end loss. In a more realistic setting, we would want to optimize for validation performance instead.
+    score = - end_loss
 
     return score
 
