@@ -46,3 +46,7 @@ docker rmi -f sim-agent 2>/dev/null || true && docker build -t sim-agent . && do
 | Dependencies | `uv.lock` + `UV_FROZEN=1` in CI and Docker |
 | UV itself | Pinned version in Dockerfile (0.6.6) |
 | CUDA | Torch/flash-attn wheels bundle their own CUDA runtime |
+
+### Model Logging
+
+When training SMART, wandb logging is currently an active part of the code. It requires a wandb account and the associated API key to be put in a local .env file (for more instructions look at the comments in packages/smart/train.py). If the training should be run without logging, simply comment out wandb related code.

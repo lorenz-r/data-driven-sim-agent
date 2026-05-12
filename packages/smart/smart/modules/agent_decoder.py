@@ -265,8 +265,7 @@ class SMARTAgentDecoder(nn.Module):
              rel_head_a2a], dim=-1)
         r_a2a = self.r_a2a_emb(continuous_inputs=r_a2a, categorical_embs=None)
         return edge_index_a2a, r_a2a
-
-    
+ 
     def build_map2agent_edge(self, data, num_step, agent_category, pos_a, head_a, head_vector_a, mask,
                              batch_s, batch_pl):
         mask_pl2a = mask.clone()
@@ -335,7 +334,7 @@ class SMARTAgentDecoder(nn.Module):
             feat_a = feat_a.reshape(-1, self.hidden_dim) # Graph attention expects [nodes, features], so we reshape the feature from [num_agent, num_step, hidden_dim] to [num_agent*num_step, hidden_dim]
 
             # i selects the current temporal attention layer
-            # feat_a has been reshaped into nodes, features format for attention computation
+            # feat_a has been reshaped into (nodes, features) format for attention computation
             # r_t is the edge feature for temporal attention, which has been embedded into the same hidden dimension as feat_a
             # edge_index_t is the edge index for temporal attention, which indicates the connections between nodes (agent-time pairs) in the temporal graph
             feat_a = self.t_attn_layers[i](feat_a, r_t, edge_index_t)
@@ -353,13 +352,14 @@ class SMARTAgentDecoder(nn.Module):
         next_token_prob_softmax = torch.softmax(next_token_prob, dim=-1)
         _, next_token_idx = torch.topk(next_token_prob_softmax, k=10, dim=-1)
 
+        # Teacher forcing during training: we use the ground truth next token index to compute the loss for token prediction. The ground truth next token index is obtained by shifting the agent_token_index by one time step, which means the next token index at time step t is the token index at time step t+1. The mask is used to ensure that we only compute the loss for valid time steps and agents.
         next_token_index_gt = agent_token_index.roll(shifts=-1, dims=1)
         next_token_eval_mask = mask.clone()
         next_token_eval_mask = next_token_eval_mask * next_token_eval_mask.roll(shifts=-1, dims=1) * next_token_eval_mask.roll(shifts=1, dims=1)
         next_token_eval_mask[:, -1] = False
 
         return {'x_a': feat_a, # The final agent feature after multi-layer attention, which will be used for token prediction and can also be used for auxiliary loss such as contrastive learning. The dimension of x_a is (num_agent, num_step, hidden_dim).
-                'next_token_idx': next_token_idx,
+                'next_token_idx': next_token_idx, # This is the predicted next token index, which is obtained by applying softmax to the next_token_prob and selecting the top-k tokens. This will be used for trajectory generation during inference. The dimension of next_token_idx is (num_agent, num_step, k).
                 'next_token_prob': next_token_prob, # This is the unnormalized logit output for token prediction, which will be used for computing the loss during training. During inference, we will apply softmax to get the probability distribution over tokens and then select the top-k tokens for trajectory generation. The dimension of next_token_prob is (num_agent, num_step, token_size).
                 'next_token_idx_gt': next_token_index_gt, # This is the ground truth next token index, which is used for computing the loss during training. The dimension of next_token_index_gt is (num_agent, num_step).
                 'next_token_eval_mask': next_token_eval_mask,
