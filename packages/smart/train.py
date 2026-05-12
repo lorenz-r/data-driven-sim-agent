@@ -81,7 +81,10 @@ if __name__ == '__main__':
         config.Model.hidden_dim = args.hidden_dim
 
     Predictor = Predictor_hash[config.Model.predictor]
-    strategy = DDPStrategy(find_unused_parameters=True, gradient_as_bucket_view=True)
+
+    # This may be causing issues with Optuna parallelization, so we'll switch to the default strategy for now and can re-enable it later if needed.
+    # strategy = DDPStrategy(find_unused_parameters=True, gradient_as_bucket_view=True)
+
     Data_config = config.Dataset
     datamodule = MultiDataModule(**vars(Data_config))
 
@@ -92,6 +95,15 @@ if __name__ == '__main__':
         model = Predictor(config.Model)
         model.load_params_from_file(filename=args.pretrain_ckpt, logger=logger)
     trainer_config = config.Trainer
+
+    # Dynamically adjust strategy based on number of devices requested, since DDP doesn't work with a single device
+    if trainer_config.devices > 1:
+        strategy = DDPStrategy(
+            find_unused_parameters=True,
+            gradient_as_bucket_view=True
+        )
+    else:
+        strategy = "auto"
 
     if args.cpu:
         trainer_config.accelerator = "cpu"

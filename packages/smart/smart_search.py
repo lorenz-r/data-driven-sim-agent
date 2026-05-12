@@ -57,11 +57,15 @@ def objective(trial):
     print("\nRunning:")
     print(" ".join(cmd))
 
-    try:
-        subprocess.run(cmd, check=True)
+    # Subprocess is maybe not the best approach, but without severely modifying train.py, it's the easiest way to run multiple training runs with different hyperparameters from a single script. We can explore more integrated approaches later if needed.
+    result = subprocess.run(
+        cmd,
+        text=True,
+        capture_output=True
+    )
 
-    except subprocess.CalledProcessError:
-        # Failed runs get terrible score
+    if result.returncode != 0:
+        print(result.stderr)
         return -9999
 
     # ==========================================
