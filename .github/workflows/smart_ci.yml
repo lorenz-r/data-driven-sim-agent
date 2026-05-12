@@ -1,4 +1,4 @@
-name: Sanity Check SMART code on single scenario
+name: SMART Sanity + Overfit
 
 on:
   pull_request:
