@@ -1,0 +1,69 @@
+name: Sanity Check SMART code on single scenario
+
+on:
+  pull_request:
+    paths:
+      - 'packages/smart/**'
+      - '.github/actions/smart_train/**'
+      - '.github/workflows/smart_ci.yml'
+
+env:
+  STORAGE: ${{ github.event.inputs.storage || 'packages/smart/data/raw' }}
+  PREPROCESS_INPUT: ${{ github.event.inputs.preprocess_input || 'data/raw/train' }}
+  PREPROCESS_OUTPUT: ${{ github.event.inputs.preprocess_output || 'data/processed/train' }}
+  MIN_ACCURACY: "0.9"
+
+jobs:
+  sanity-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run SMART training pipeline
+        uses: ./.github/actions/smart_train
+        with:
+          config: configs/train/sanity_check.yaml
+          cpu: 'true'
+          scenarios: '1'
+          storage: ${{ env.STORAGE }}
+          preprocess_input: ${{ env.PREPROCESS_INPUT }}
+          preprocess_output: ${{ env.PREPROCESS_OUTPUT }}
+
+      - name: Check training metrics
+        working-directory: packages/smart
+        run: |
+          cat metrics.json
+          accuracy=$(jq '.accuracy'      metrics.json)
+          loss_dec=$(jq '.loss_decrease' metrics.json)
+          awk -v d="$loss_dec" \
+            'BEGIN { if (d < 0) { print "\n FAIL: loss increased by " -d; exit 1 } }'
+            
+  overfit-gpu:
+    runs-on: ubuntu-latest  # swap to self-hosted GPU runner when available
+    if: false               # disabled until GPU runner exists
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run SMART training pipeline
+        uses: ./.github/actions/smart_train
+        with:
+          config: configs/train/train_overfitting.yaml
+          cpu: 'false'
+          scenarios: '1'
+          storage: ${{ env.STORAGE }}
+          preprocess_input: ${{ env.PREPROCESS_INPUT }}
+          preprocess_output: ${{ env.PREPROCESS_OUTPUT }}
+
+      - name: Check training metrics
+        working-directory: packages/smart
+        run: |
+          cat metrics.json
+          accuracy=$(jq '.accuracy'      metrics.json)
+          loss_dec=$(jq '.loss_decrease' metrics.json)
+          awk -v a="$accuracy" -v m=${{ env.MIN_ACCURACY }} \
+            'BEGIN { if (a < m) { print "\n FAIL: accuracy " a " < " m; exit 1 } }'
+          awk -v d="$loss_dec" \
+            'BEGIN { if (d < 0) { print "\n FAIL: loss increased by " -d; exit 1 } }'
