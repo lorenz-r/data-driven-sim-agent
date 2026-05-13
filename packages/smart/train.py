@@ -51,7 +51,7 @@ class EpochLossTracker(pl.Callback):
 from dotenv import load_dotenv
 import wandb
 import os
-from pytorch.lightning.loggers import WandbLogger
+from pytorch_lightning.loggers import WandbLogger
 
 
 load_dotenv()
