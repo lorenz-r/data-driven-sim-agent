@@ -656,7 +656,8 @@ def process_single_data(scenario):
     save_infos.update(info)
     return save_infos
 
-import tensorflow as tf
+# TODO: gracefully remove these imports, or delete the file
+import tensorflow as tf 
 from waymo_open_dataset.protos import scenario_pb2
 
 
