@@ -1,5 +1,6 @@
 from typing import Optional, List
 from pathlib import Path
+import argparse
 
 import numpy as np
 import pickle
@@ -321,6 +322,20 @@ def _draw_track(
         if state_at_t is None:
             return
 
+        if show_trajectory:
+            past_states = [s for s in states if s.timestep <= timestep]
+            if past_states:
+                coords = [(s.position[0], s.position[1]) for s in past_states]
+                xs, ys = zip(*coords)
+                is_focal = track.category == TrackCategory.FOCAL_TRACK
+                linewidth = 2.5 if is_focal else (3 if is_important else 1.5)
+                alpha = 1.0 if is_focal else (trajectory_alpha if is_important else trajectory_alpha * 0.5)
+                linestyle = '--' if is_focal else '-'
+                ax.plot(xs, ys, color=color, linewidth=linewidth, alpha=alpha, linestyle=linestyle, zorder=12)
+                if is_focal and len(coords) > 0:
+                    ax.scatter(xs[0], ys[0], color=color, s=20, marker='o', zorder=25, edgecolors='black', linewidths=1)
+                    
+
         if show_boxes:
             corners = _get_bounding_box(
                 state_at_t.position,
@@ -338,19 +353,21 @@ def _draw_track(
             )
             ax.add_patch(box)
     else:
+        is_focal = track.category == TrackCategory.FOCAL_TRACK
+
         if show_trajectory:
-            coords = [(s.position[0], s.position[1]) for s in states]
-            xs, ys = zip(*coords)
+                coords = [(s.position[0], s.position[1]) for s in states]
+                xs, ys = zip(*coords)
 
-            is_focal = track.category == TrackCategory.FOCAL_TRACK
-            linewidth = 5 if is_focal else (3 if is_important else 1.5)
-            alpha = 0.9 if is_focal else (trajectory_alpha if is_important else trajectory_alpha * 0.5)
+                linewidth = 2.5 if is_focal else (3 if is_important else 1.5)
+                alpha = 1.0 if is_focal else (trajectory_alpha if is_important else trajectory_alpha * 0.5)
+                linestyle = '--' if is_focal else '-'
 
-            ax.plot(xs, ys, color=color, linewidth=linewidth, alpha=alpha, zorder=10)
+                ax.plot(xs, ys, color=color, linewidth=linewidth, alpha=alpha, linestyle=linestyle, zorder=12)
 
-            if is_focal and len(coords) > 0:
-                ax.scatter(xs[0], ys[0], color=color, s=80, marker='o', zorder=20, edgecolors='white', linewidths=1.5)
-                ax.scatter(xs[-1], ys[-1], color=color, s=120, marker='*', zorder=20, edgecolors='white', linewidths=1.5)
+                if is_focal and len(coords) > 0:
+                    ax.scatter(xs[0], ys[0], color=color, s=20, marker='o', zorder=25, edgecolors='black', linewidths=1)
+                    
 
         last_state = states[-1]
         if show_boxes:
@@ -417,7 +434,7 @@ def _update_track_animation(
                 artists['trajectory'].set_data(xs, ys)
                 is_focal = track.category == TrackCategory.FOCAL_TRACK
                 if is_focal:
-                    artists['trajectory'].set_linewidth(5)
+                    artists['trajectory'].set_linewidth(2.0)
                     artists['trajectory'].set_alpha(0.9)
 
         corners = _get_bounding_box(
@@ -536,21 +553,22 @@ def test_visualize_scenario(
 
 
 if __name__ == "__main__":
-    import argparse
+
 
     parser = argparse.ArgumentParser(description="Visualize AV2 scenario or SMART prediction")
-    parser.add_argument("--help", "-h", 
-                        action="help", 
-                        default=argparse.SUPPRESS, 
-                        help="Show this help message and exit"
-                        )
-    
+
     
     parser.add_argument(
         '--input', '-i',
         type=str,
         required=True,
         help='Path to input file (parquet for AV2)'
+    )
+    parser.add_argument(
+        '--output', '-o',
+        type=str,
+        default=None,
+        help='Output folder for animation or image'
     )
     parser.add_argument(
         '--animate', '-a',
@@ -563,12 +581,7 @@ if __name__ == "__main__":
         default=None,
         help='Show only this timestep (static mode)'
     )
-    parser.add_argument(
-        '--output', '-o',
-        type=str,
-        default=None,
-        help='Output folder for animation or image'
-    )
+
 
     args = parser.parse_args()
 
