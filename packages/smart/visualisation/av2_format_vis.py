@@ -266,7 +266,7 @@ def _get_bounding_box(
     position: tuple,
     heading: float,
     obj_type: ObjectType,
-) -> tuple:
+) -> list[tuple]:
     """Get corner coordinates of bounding box.
 
     Args:
@@ -501,19 +501,19 @@ def test_visualize_scenario(
     """
     if data_dir is None:
         project_root = Path(__file__).resolve().parents[1]
-        data_dir = project_root / "data" / "av2_partial_py"
-
-    data_dir = Path(data_dir)
+        base_dir = project_root / "data" / "av2_partial_py"
+    else:
+        base_dir = Path(data_dir)
 
     if scenario_id is None:
-        split_dir = data_dir / split
+        split_dir = base_dir / split
         scenario_dirs = sorted(split_dir.glob("*"))
         if not scenario_dirs:
             raise FileNotFoundError(f"No scenario folders found in {split_dir}")
         scenario_dir = scenario_dirs[0]
         scenario_id = scenario_dir.name
     else:
-        scenario_dir = data_dir / split / scenario_id
+        scenario_dir = base_dir / split / scenario_id
 
     parquet_files = sorted(scenario_dir.glob("scenario_*.parquet"))
     map_files = sorted(scenario_dir.glob("log_map_archive_*.json"))

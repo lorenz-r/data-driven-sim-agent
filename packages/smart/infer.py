@@ -1,6 +1,7 @@
 import pickle
 from argparse import ArgumentParser
 from pathlib import Path
+from typing import Optional
 
 import torch
 import numpy as np
@@ -16,7 +17,7 @@ from smart.utils.config import load_config_act
 def run_inference(
     input_path: str,
     output_dir: str,
-    checkpoint_path: str = None,
+    checkpoint_path: Optional[str] = None,
     config_path: str = "configs/validation/validation_scalable.yaml",
     format_av2: bool = False,
     device: str = "cuda",
@@ -31,11 +32,11 @@ def run_inference(
         format_av2: If True, also save AV2 format
         device: Device to run inference on
     """
-    input_path = Path(input_path)
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    p_input = Path(input_path)
+    p_output = Path(output_dir)
+    p_output.mkdir(parents=True, exist_ok=True)
 
-    scenario_id = input_path.stem
+    scenario_id = p_input.stem
     print(f"Running inference on: {scenario_id}")
 
     # 1. Load config and initialize model
@@ -50,7 +51,7 @@ def run_inference(
 
     # 2. Load SMART format data
     print("Loading SMART format data...")
-    with open(input_path, 'rb') as f:
+    with open(p_input, 'rb') as f:
         smart_data = pickle.load(f)
 
     # Keep as dict, let token_processor handle it
@@ -106,7 +107,7 @@ def run_inference(
     print(f"Filtered predictions: {pred_valid_mask.sum().item()} / {pred_valid_mask.numel()} valid, {out_of_bounds_count} out of bounds")
 
     # 5. Save SMART format predictions
-    sample_output_dir = output_dir / scenario_id
+    sample_output_dir = p_output / scenario_id
     smart_output_dir = sample_output_dir / "smart"
     smart_output_dir.mkdir(parents=True, exist_ok=True)
 
