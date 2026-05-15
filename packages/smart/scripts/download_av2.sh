@@ -51,12 +51,12 @@ if [[ "$MODE" == "dev" ]]; then
 
     echo "Running DEV/PARTIAL dataset extraction..."
 
-    python "$SCRIPT_DIR/dataset/partial_tar_extract.py" \
+    python "$SCRIPT_DIR/partial_tar_extract.py" \
         --url "$TRAIN_URL" \
         --scenarios "$SCENARIOS" \
         --out "$RAW_DIR"
 
-    python "$SCRIPT_DIR/dataset/partial_tar_extract.py" \
+    python "$SCRIPT_DIR/partial_tar_extract.py" \
         --url "$VAL_URL" \
         --scenarios "$SCENARIOS" \
         --out "$RAW_DIR"
