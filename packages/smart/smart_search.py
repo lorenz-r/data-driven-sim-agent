@@ -49,13 +49,13 @@ def objective(trial):
         "--max_epochs",
         "50",
         "--train_batch_size",
-        "100",
+        "1",
         "--val_batch_size",
-        "100",
+        "1",
         "--train_path",
-        "train_split"
+        "tiny_train"
         "--val_path",
-        "validation_split",
+        "validation_tiny",
         "--devices",
         "1"
     ]

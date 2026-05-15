@@ -7,8 +7,8 @@ time_info: &time_info
 
 Dataset:
   root:
-  train_batch_size: 100
-  val_batch_size: 100
+  train_batch_size: 1
+  val_batch_size: 1
   test_batch_size: 1
   shuffle: True
   num_workers: 1
