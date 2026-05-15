@@ -129,5 +129,6 @@ def main():
     print("Done ✔")
 
 
+# This script creates reproducible train and validation datasets by sampling from the ALREADY PREPROCESSED source directories.
 if __name__ == "__main__":
     main()
