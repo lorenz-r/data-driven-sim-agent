@@ -7,19 +7,19 @@ time_info: &time_info
 
 Dataset:
   root:
-  train_batch_size: 1
-  val_batch_size: 1
+  train_batch_size: 100
+  val_batch_size: 100
   test_batch_size: 1
   shuffle: True
   num_workers: 1
   pin_memory: True
   persistent_workers: True
-  train_raw_dir: ["data/processed/train"]
-  val_raw_dir: ["data/processed/train"]
+  train_raw_dir:
+  val_raw_dir: 
   test_raw_dir:
   transform: WaymoTargetBuilder
-  train_processed_dir:
-  val_processed_dir:
+  train_processed_dir: ["train_split"]
+  val_processed_dir: ["validation_split"]
   test_processed_dir:
   dataset: "scalable"
   <<: *time_info
@@ -27,7 +27,7 @@ Dataset:
 Trainer:
   strategy: ddp_find_unused_parameters_false
   accelerator: "gpu"
-  devices: 1
+  devices: 2
   max_epochs: 150
   save_ckpt_path:
   num_nodes: 1

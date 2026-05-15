@@ -46,6 +46,12 @@ def objective(trial):
         str(metrics_path),
         "--trial_number",
         str(trial.number),
+        "--max_epochs",
+        "50",
+        "--train_batch_size",
+        "100",
+        "--val_batch_size",
+        "100",
     ]
 
     print("\nRunning:")
