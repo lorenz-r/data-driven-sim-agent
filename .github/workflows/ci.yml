@@ -54,7 +54,12 @@ jobs:
         run: |
             FILES="${{ steps.changed-files.outputs.all_changed_files }}"
             SAFE_FILES=$(echo "$FILES" | tr ' ' '\n' | grep -v "argoverse-forecasting" | tr '\n' ' ')
-            uv run mypy $SAFE_FILES
+            if [ -n "$SAFE_FILES" ]; then
+              echo "Running Mypy on: $SAFE_FILES"
+              uv run mypy $SAFE_FILES
+            else
+              echo "Only excluded files were changed. Skipping Mypy."
+            fi
 
   test:
     runs-on: ubuntu-latest
