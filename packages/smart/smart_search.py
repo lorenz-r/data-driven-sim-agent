@@ -47,17 +47,17 @@ def objective(trial):
         "--trial_number",
         str(trial.number),
         "--max_epochs",
-        "50",
+        "30",
         "--train_batch_size",
-        "1",
+        "30",
         "--val_batch_size",
-        "1",
+        "30",
         #"--train_path",
         #"tiny_train",
         #"--val_path",
         #"validation_tiny",
         "--devices",
-        "1"
+        "2"
     ]
 
     print("\nRunning:")

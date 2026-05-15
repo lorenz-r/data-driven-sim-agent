@@ -5,10 +5,10 @@ import hashlib
 from pathlib import Path
 
 # ---------------- CONFIG ----------------
-SOURCE_DIR = Path("train")
+SOURCE_DIR = Path("data/processed/train")
 TRAIN_OUT = Path("train_split")
 
-SOURCE_VAL_DIR = Path("validation")
+SOURCE_VAL_DIR = Path("data/processed/val")
 VAL_OUT = Path("validation_split")
 
 TRAIN_SIZE = 16_000

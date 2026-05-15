@@ -12,10 +12,10 @@ Dataset:
   test_batch_size: 1
   shuffle: True
   num_workers: 1
-  pin_memory: False
+  pin_memory: True
   persistent_workers: True
-  train_raw_dir: ["tiny_train"]
-  val_raw_dir: ["validation_tiny"]
+  train_raw_dir: ["train_split"]
+  val_raw_dir: ["validation_split"]
   test_raw_dir:
   transform: WaymoTargetBuilder
   train_processed_dir:
