@@ -29,9 +29,13 @@ jobs:
           enable-cache: true
           cache-suffix: "py3.11"
 
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+
       - name: Install Dependencies
         run: uv sync --all-packages
-
+      
 
       - name: Run Ruff (Linting & Formatting)
         run: |
