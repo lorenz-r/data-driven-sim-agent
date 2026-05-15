@@ -142,7 +142,9 @@ class EncoderRNN(nn.Module):
         self.linear1 = nn.Linear(input_size, embedding_size)
         self.lstm1 = nn.LSTMCell(embedding_size, hidden_size)
 
-    def forward(self, x: torch.FloatTensor, hidden: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.FloatTensor, hidden: Tuple[torch.Tensor, torch.Tensor]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Run forward propagation.
 
         Args:

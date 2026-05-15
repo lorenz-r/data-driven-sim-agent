@@ -23,7 +23,12 @@ else:
 class LSTMDataset(Dataset):
     """PyTorch Dataset for LSTM Baselines."""
 
-    def __init__(self, data_dict: Dict[str, Union[np.ndarray, pd.DataFrame, None]], args: argparse.Namespace, mode: str):
+    def __init__(
+        self,
+        data_dict: Dict[str, Union[np.ndarray, pd.DataFrame, None]],
+        args: argparse.Namespace,
+        mode: str,
+    ):
         """Initialize the Dataset.
 
         Args:
@@ -55,9 +60,7 @@ class LSTMDataset(Dataset):
         """
         return self.data_size
 
-    def __getitem__(
-        self, idx: int
-    ) -> Tuple[torch.Tensor, torch.Tensor, tuple]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, tuple]:
         """Get the element at the given index.
 
         Args:
@@ -189,7 +192,9 @@ class ModelUtils:
 
         return epoch, rollout_len, best_loss
 
-    def my_collate_fn(self, batch: List[Tuple[torch.Tensor, torch.Tensor, tuple]]) -> List[Union[torch.Tensor, list]]:
+    def my_collate_fn(
+        self, batch: List[Tuple[torch.Tensor, torch.Tensor, tuple]]
+    ) -> List[Union[torch.Tensor, list]]:
         """Collate function for PyTorch DataLoader.
 
         Args:
@@ -209,7 +214,9 @@ class ModelUtils:
         output = torch.stack(output)
         return [_input, output, helpers]
 
-    def init_hidden(self, batch_size: int, hidden_size: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def init_hidden(
+        self, batch_size: int, hidden_size: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get initial hidden state for LSTM.
 
         Args:

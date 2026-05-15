@@ -319,7 +319,8 @@ def get_map_features(map_infos, tf_current_light, dim=3):
         )
 
     num_points = torch.tensor(
-        [point.size(0) for point in point_position if point is not None], dtype=torch.long
+        [point.size(0) for point in point_position if point is not None],
+        dtype=torch.long,
     )
     point_to_polygon_edge_index = torch.stack(
         [
@@ -843,7 +844,11 @@ def decode_map_features_from_proto(map_features):
 
 
 def decode_dynamic_map_states_from_proto(dynamic_map_states):
-    dynamic_map_infos: dict[str, list[np.ndarray]] = {"lane_id": [], "state": [], "stop_point": []}
+    dynamic_map_infos: dict[str, list[np.ndarray]] = {
+        "lane_id": [],
+        "state": [],
+        "stop_point": [],
+    }
     for cur_data in dynamic_map_states:  # (num_timestamp)
         lane_id, state, stop_point = [], [], []
         for cur_signal in cur_data.lane_states:  # (num_observed_signals)
@@ -903,6 +908,7 @@ def process_single_data(scenario):
     save_infos.update(info)
     return save_infos
 
+
 # TODO: gracefully remove these imports, or delete the file
 
 
@@ -950,7 +956,6 @@ def batch_process9s_transformer(dir_name, output_dir, num_workers=2):
     func = partial(wm2argo, output_dir=output_dir, dir_name=dir_name)
     with multiprocessing.Pool(num_workers) as p:
         list(tqdm(p.imap(func, packages), total=len(packages)))
-
 
 
 if __name__ == "__main__":

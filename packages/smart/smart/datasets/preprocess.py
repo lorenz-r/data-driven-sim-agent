@@ -139,7 +139,9 @@ def interplating_polyline(polylines, heading, distance=0.5, split_distace=5):
             continue
         multi_polylines_parts.append(multi_polylines)
     if len(multi_polylines_parts) > 0:
-        multi_polylines_list: Optional[torch.Tensor] = torch.cat(multi_polylines_parts, dim=0)
+        multi_polylines_list: Optional[torch.Tensor] = torch.cat(
+            multi_polylines_parts, dim=0
+        )
     else:
         multi_polylines_list = None
     return multi_polylines_list
@@ -239,9 +241,9 @@ class TokenProcessor:
     def tokenize_agent(self, data):
         if data["agent"]["velocity"].shape[1] == 90:
             print(data["scenario_id"], data["agent"]["velocity"].shape)
-        interplote_mask = (
-            ~data["agent"]["valid_mask"][:, self.current_step]
-        ) * (data["agent"]["position"][:, self.current_step, 0] != 0)
+        interplote_mask = (~data["agent"]["valid_mask"][:, self.current_step]) * (
+            data["agent"]["position"][:, self.current_step, 0] != 0
+        )
         if data["agent"]["velocity"].shape[-1] == 2:
             data["agent"]["velocity"] = torch.cat(
                 [
@@ -272,9 +274,9 @@ class TokenProcessor:
         data["agent"]["type"] = data["agent"]["type"].to(torch.uint8)
 
         self.clean_heading(data)
-        matching_extra_mask = (
-            data["agent"]["valid_mask"][:, self.current_step]
-        ) * (~data["agent"]["valid_mask"][:, self.current_step - 5])
+        matching_extra_mask = (data["agent"]["valid_mask"][:, self.current_step]) * (
+            ~data["agent"]["valid_mask"][:, self.current_step - 5]
+        )
 
         interplote_mask_first = (~data["agent"]["valid_mask"][:, 0]) * (
             data["agent"]["position"][:, 0, 0] != 0

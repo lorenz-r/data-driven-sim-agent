@@ -193,7 +193,9 @@ def load_and_preprocess_data(
     return _input, _output, df
 
 
-def get_relative_distance(data: np.ndarray, mode: str, args: argparse.Namespace) -> np.ndarray:
+def get_relative_distance(
+    data: np.ndarray, mode: str, args: argparse.Namespace
+) -> np.ndarray:
     """Convert absolute distance to relative distance in place and return the reference (first value).
 
     Args:

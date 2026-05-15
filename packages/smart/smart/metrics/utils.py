@@ -419,7 +419,9 @@ def _to_float(value: object) -> Optional[float]:
     if value is None:
         return None
     try:
-        return float(value.item()) if hasattr(value, "item") else float(cast(float, value))
+        return (
+            float(value.item()) if hasattr(value, "item") else float(cast(float, value))
+        )
     except Exception:
         return None
 

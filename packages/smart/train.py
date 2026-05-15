@@ -54,7 +54,6 @@ class EpochLossTracker(pl.Callback):
         return None
 
 
-
 load_dotenv()
 
 # Set up the logging by creating a wandb account and getting the API key from the environment variable
