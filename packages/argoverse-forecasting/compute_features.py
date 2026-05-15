@@ -9,7 +9,7 @@ import os
 import shutil
 import tempfile
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple
 
 import argparse
 from joblib import Parallel, delayed
@@ -21,7 +21,7 @@ from utils.map_features_utils import MapFeaturesUtils
 from utils.social_features_utils import SocialFeaturesUtils
 
 
-def parse_arguments() -> Any:
+def parse_arguments() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument(

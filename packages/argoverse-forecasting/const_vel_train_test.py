@@ -6,7 +6,7 @@ Example usage:
 """
 
 import argparse
-from typing import Any, Tuple
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -61,7 +61,7 @@ def get_mean_velocity(coords: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def predict(
-    obs_trajectory: np.ndarray, vx: np.ndarray, vy: np.ndarray, args: Any
+    obs_trajectory: np.ndarray, vx: np.ndarray, vy: np.ndarray, args: argparse.Namespace
 ) -> np.ndarray:
     """Predict future trajectory given mean velocity.
 
@@ -86,7 +86,7 @@ def predict(
 
 
 def forecast_and_save_trajectory(
-    obs_trajectory: np.ndarray, seq_id: np.ndarray, args: Any
+    obs_trajectory: np.ndarray, seq_id: np.ndarray, args: argparse.Namespace
 ) -> None:
     """Forecast future trajectory and save it.
 

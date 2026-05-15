@@ -4,7 +4,7 @@ Argoverse 2 Motion Forecasting → SMART preprocessing pipeline.
 
 Needs the AV2 environment set up (which is not compatible with SMART's environment).
 
-Run with:  
+Run with:
 python data_preprocess_av2_stable.py --input_dir  ./data/av2_partial_py/train/ --output_dir ./data/av2_processed/training --num_workers 8
 
 This version writes pickle files that match the structure produced by SMART's
@@ -59,7 +59,7 @@ import pickle
 import traceback
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Tuple, TypedDict
 
 import numpy as np
 import torch
@@ -79,7 +79,7 @@ from av2.map.map_api import ArgoverseStaticMap
 
 NUM_TIMESTEPS: int = 110
 CURRENT_TIME_INDEX: int = 49
-OBSERVED_STEPS: int = CURRENT_TIME_INDEX + 1   # 50  (t=0..49 are history)
+OBSERVED_STEPS: int = CURRENT_TIME_INDEX + 1  # 50  (t=0..49 are history)
 PREDICTION_STEPS: int = NUM_TIMESTEPS - OBSERVED_STEPS  # 60 (t=50..109 are future)
 
 LANE_CENTERLINE_POINTS: int = 20
@@ -162,6 +162,15 @@ DEFAULT_BOX: Dict[ObjectType, Tuple[float, float, float]] = {
 # -----------------------------------------------------------------------------
 # Small helpers
 # -----------------------------------------------------------------------------
+
+
+class _LaneSegmentInfo(TypedDict, total=False):
+    id: int
+    type: int
+    light_type: int
+    polyline: np.ndarray
+    entry_lanes: List[int]
+    exit_lanes: List[int]
 
 
 def _to_numpy_3d(obj) -> np.ndarray:
@@ -289,10 +298,15 @@ def _find_av_track_index(scenario: ArgoverseScenario, track_indices: List[int]) 
 
     for idx in track_indices:
         t = tracks[idx]
-        if t.object_type == ObjectType.VEHICLE and t.category == TrackCategory.UNSCORED_TRACK:
+        if (
+            t.object_type == ObjectType.VEHICLE
+            and t.category == TrackCategory.UNSCORED_TRACK
+        ):
             n_obs = sum(
-                1 for s in t.object_states
-                if _state_present(s) and 0 <= int(getattr(s, "timestep", -1)) <= CURRENT_TIME_INDEX
+                1
+                for s in t.object_states
+                if _state_present(s)
+                and 0 <= int(getattr(s, "timestep", -1)) <= CURRENT_TIME_INDEX
             )
             if n_obs > best_count:
                 best_count = n_obs
@@ -304,8 +318,10 @@ def _find_av_track_index(scenario: ArgoverseScenario, track_indices: List[int]) 
         t = tracks[idx]
         if t.object_type == ObjectType.VEHICLE:
             n_obs = sum(
-                1 for s in t.object_states
-                if _state_present(s) and 0 <= int(getattr(s, "timestep", -1)) <= CURRENT_TIME_INDEX
+                1
+                for s in t.object_states
+                if _state_present(s)
+                and 0 <= int(getattr(s, "timestep", -1)) <= CURRENT_TIME_INDEX
             )
             if n_obs > best_count:
                 best_count = n_obs
@@ -373,10 +389,12 @@ def build_agent_dict(scenario: ArgoverseScenario) -> Dict:
 
     for i, track in enumerate(tracks):
         agent_id.append(str(track.track_id))
-        agent_type.append(SMART_AGENT_TYPE[AV2_TO_SMART_AGENT.get(track.object_type, "background")])
+        agent_type.append(
+            SMART_AGENT_TYPE[AV2_TO_SMART_AGENT.get(track.object_type, "background")]
+        )
         agent_category.append(_category_for_track(track))
 
-        l, w, h = DEFAULT_BOX.get(track.object_type, (1.0, 1.0, 1.0))
+        length, w, h = DEFAULT_BOX.get(track.object_type, (1.0, 1.0, 1.0))
 
         # ── Fill raw observations ─────────────────────────────────────────────
         for state in track.object_states:
@@ -395,12 +413,12 @@ def build_agent_dict(scenario: ArgoverseScenario) -> Dict:
             velocity[i, t, 0] = float(vx)
             velocity[i, t, 1] = float(vy)
             velocity[i, t, 2] = float(vz)
-            shape[i, t, 0] = float(l)
+            shape[i, t, 0] = float(length)
             shape[i, t, 1] = float(w)
             shape[i, t, 2] = float(h)
 
         valid_mask[i, 1:OBSERVED_STEPS] = (
-            valid_mask[i, :OBSERVED_STEPS - 1] & valid_mask[i, 1:OBSERVED_STEPS]
+            valid_mask[i, : OBSERVED_STEPS - 1] & valid_mask[i, 1:OBSERVED_STEPS]
         )
         valid_mask[i, 0] = False  # t=0 has no predecessor; never a valid vector
 
@@ -436,8 +454,8 @@ def build_map_dict(static_map: ArgoverseStaticMap) -> Dict:
     Build the map sub-dicts ('map_polygon', 'map_point', and edge indices)
     expected by SMART's data loader.
     """
-    lane_segments = []
-    crosswalks = []
+    lane_segments: List[_LaneSegmentInfo] = []
+    crosswalks: List[_LaneSegmentInfo] = []
 
     # ── Collect lane segments ─────────────────────────────────────────────────
     for lane_id, ls in static_map.vector_lane_segments.items():
@@ -508,7 +526,10 @@ def build_map_dict(static_map: ArgoverseStaticMap) -> Dict:
         polygon_type[idx] = int(poly["type"])
         polygon_light_type[idx] = int(poly["light_type"])
 
-        if poly["type"] == SMART_POLYGON_TYPES.index("PEDESTRIAN") and len(polyline) == 4:
+        if (
+            poly["type"] == SMART_POLYGON_TYPES.index("PEDESTRIAN")
+            and len(polyline) == 4
+        ):
             # Crosswalk quadrilateral: treat the 4 corners as a closed polygon.
             # Pick 3 representative vectors along two edges so the centroid is
             # within the quad and orientation is meaningful.
@@ -659,8 +680,8 @@ def process_scenario(scenario_dir: Path, output_dir: Path) -> bool:
         return False
 
     try:
-        scenario: ArgoverseScenario = scenario_serialization.load_argoverse_scenario_parquet(
-            parquet_files[0]
+        scenario: ArgoverseScenario = (
+            scenario_serialization.load_argoverse_scenario_parquet(parquet_files[0])
         )
         static_map: ArgoverseStaticMap = ArgoverseStaticMap.from_json(map_files[0])
     except Exception:
@@ -693,7 +714,9 @@ def process_scenario(scenario_dir: Path, output_dir: Path) -> bool:
         with open(out_path, "wb") as fh:
             pickle.dump(output, fh, protocol=4)
     except Exception:
-        print(f"[ERROR] {scenario_id}: failed to write pickle.\n{traceback.format_exc()}")
+        print(
+            f"[ERROR] {scenario_id}: failed to write pickle.\n{traceback.format_exc()}"
+        )
         return False
 
     return True

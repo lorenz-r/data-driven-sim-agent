@@ -4,7 +4,9 @@ import copy
 import math
 import os
 import pickle as pkl
-from typing import Any, Dict, List, Tuple, Union
+from typing import Dict, List, Protocol, Tuple, Union
+
+import argparse
 
 from argoverse.map_representation.map_api import ArgoverseMap
 import matplotlib.pyplot as plt
@@ -12,6 +14,7 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import LineString, LinearRing
 from shapely.affinity import affine_transform, rotate
+from sklearn.model_selection import GridSearchCV
 
 from utils.baseline_config import (
     BASELINE_INPUT_FEATURES,
@@ -20,8 +23,12 @@ from utils.baseline_config import (
 )
 
 
+class _SupportsGridSearch(Protocol):
+    def run_grid_search(self, x: np.ndarray, y: np.ndarray) -> GridSearchCV: ...
+
+
 def get_data(
-    args: Any, baseline_key: str
+    args: argparse.Namespace, baseline_key: str
 ) -> Dict[str, Union[np.ndarray, pd.DataFrame, None]]:
     """Load data from local data_dir.
 
@@ -79,7 +86,7 @@ def get_data(
 def load_and_preprocess_data(
     input_features: List[str],
     output_features: List[str],
-    args: Any,
+    args: argparse.Namespace,
     feature_file: str,
     mode: str = "train",
 ) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
@@ -186,7 +193,7 @@ def load_and_preprocess_data(
     return _input, _output, df
 
 
-def get_relative_distance(data: np.ndarray, mode: str, args: Any) -> np.ndarray:
+def get_relative_distance(data: np.ndarray, mode: str, args: argparse.Namespace) -> np.ndarray:
     """Convert absolute distance to relative distance in place and return the reference (first value).
 
     Args:
@@ -450,7 +457,7 @@ def viz_predictions(
             plt.show()
 
 
-def get_normalized_traj(df: pd.DataFrame, args: Any) -> np.ndarray:
+def get_normalized_traj(df: pd.DataFrame, args: argparse.Namespace) -> np.ndarray:
     """Normalize trajectory such that it starts at (0,0) and observed part ends on x-axis.
 
     Args:
@@ -547,8 +554,8 @@ def normalized_to_map_coordinates(
 def get_abs_traj(
     input_: np.ndarray,
     output: np.ndarray,
-    args: Any,
-    helpers: Dict[str, Any],
+    args: argparse.Namespace,
+    helpers: Dict[str, Union[np.ndarray, List[np.ndarray]]],
     start_idx: int = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Get absolute trajectory reverting all the transformations.
@@ -609,12 +616,12 @@ def get_abs_traj(
 
 
 def get_model(
-    regressor: Any,
+    regressor: _SupportsGridSearch,
     train_input: np.ndarray,
     train_output: np.ndarray,
-    args: Any,
+    args: argparse.Namespace,
     pred_horizon: int,
-) -> Any:
+) -> GridSearchCV:
     """Get the trained model after running grid search or load a saved one.
 
     Args:
@@ -675,7 +682,7 @@ def merge_saved_traj(batched_dir: str, merged_file_path: str):
 
 
 def get_test_data_dict_subset(
-    data_dict: Dict[str, Union[np.ndarray, None]], args: Any
+    data_dict: Dict[str, Union[np.ndarray, None]], args: argparse.Namespace
 ) -> Dict[int, Dict[str, Union[np.ndarray, None]]]:
     """Get test subset from data dict. Useful when used with joblib as we don't need to pass the entire data_dict to all the batches.
 
@@ -699,7 +706,7 @@ def get_test_data_dict_subset(
     return test_data_dict_batches
 
 
-def validate_args(args: Any) -> bool:
+def validate_args(args: argparse.Namespace) -> bool:
     """Validate the arguments passed to the baseline.
 
     Args:

@@ -1,10 +1,14 @@
 """lstm_utils.py contains utility functions for running LSTM Baselines."""
 
+import argparse
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 
 import numpy as np
+import pandas as pd
 import torch
+import torch.nn as nn
+from torch.optim import Optimizer
 from torch.utils.data import Dataset
 
 import utils.baseline_config as config
@@ -19,7 +23,7 @@ else:
 class LSTMDataset(Dataset):
     """PyTorch Dataset for LSTM Baselines."""
 
-    def __init__(self, data_dict: Dict[str, Any], args: Any, mode: str):
+    def __init__(self, data_dict: Dict[str, Union[np.ndarray, pd.DataFrame, None]], args: argparse.Namespace, mode: str):
         """Initialize the Dataset.
 
         Args:
@@ -53,7 +57,7 @@ class LSTMDataset(Dataset):
 
     def __getitem__(
         self, idx: int
-    ) -> Tuple[torch.FloatTensor, Any, Dict[str, np.ndarray]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, tuple]:
         """Get the element at the given index.
 
         Args:
@@ -71,7 +75,7 @@ class LSTMDataset(Dataset):
             self.helpers[idx],
         )
 
-    def get_helpers(self) -> Tuple[Any]:
+    def get_helpers(self) -> tuple:
         """Get helpers for running baselines.
 
         Returns:
@@ -131,7 +135,7 @@ class LSTMDataset(Dataset):
 class ModelUtils:
     """Utils for LSTM baselines."""
 
-    def save_checkpoint(self, save_dir: str, state: Dict[str, Any]) -> None:
+    def save_checkpoint(self, save_dir: str, state: Dict[str, object]) -> None:
         """Save checkpoint file.
 
         Args:
@@ -145,10 +149,10 @@ class ModelUtils:
     def load_checkpoint(
         self,
         checkpoint_file: str,
-        encoder: Any,
-        decoder: Any,
-        encoder_optimizer: Any,
-        decoder_optimizer: Any,
+        encoder: nn.Module,
+        decoder: nn.Module,
+        encoder_optimizer: Optimizer,
+        decoder_optimizer: Optimizer,
     ) -> Tuple[int, int, float]:
         """Load the checkpoint.
 
@@ -185,7 +189,7 @@ class ModelUtils:
 
         return epoch, rollout_len, best_loss
 
-    def my_collate_fn(self, batch: List[Any]) -> List[Any]:
+    def my_collate_fn(self, batch: List[Tuple[torch.Tensor, torch.Tensor, tuple]]) -> List[Union[torch.Tensor, list]]:
         """Collate function for PyTorch DataLoader.
 
         Args:
@@ -205,7 +209,7 @@ class ModelUtils:
         output = torch.stack(output)
         return [_input, output, helpers]
 
-    def init_hidden(self, batch_size: int, hidden_size: int) -> Tuple[Any, Any]:
+    def init_hidden(self, batch_size: int, hidden_size: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get initial hidden state for LSTM.
 
         Args:

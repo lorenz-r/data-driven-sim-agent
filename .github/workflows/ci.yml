@@ -14,6 +14,30 @@ env:
   UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-suffix: "py3.11"
+
+      - name: Install Dependencies
+        run: uv sync --all-packages
+
+
+      - name: Run Ruff (Linting & Formatting)
+        run: |
+        uv run ruff check .
+        uv run ruff format --check .
+
+      - name: Run Mypy (Static Type Checking)
+        run: uv run mypy .
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -25,11 +49,8 @@ jobs:
           enable-cache: true
           cache-suffix: "py3.11"
 
-      - name: Install
-        run: uv sync --all-packages
-
       - name: Test (CPU-only, skip GPU markers)
-        run: uv run pytest -m "not gpu" --tb=short -q
+        run: bash ./test.sh
 
   test-gpu:
     runs-on: ubuntu-latest  # swap to self-hosted GPU runner when available

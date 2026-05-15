@@ -1,6 +1,6 @@
 """This module is used for computing map features for motion forecasting baselines."""
 
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -291,7 +291,7 @@ class MapFeaturesUtils:
         seq_len: int,
         raw_data_format: Dict[str, int],
         mode: str,
-    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+    ) -> Tuple[np.ndarray, Dict[str, Union[np.ndarray, List[np.ndarray]]]]:
         """Compute map based features for the given sequence.
 
         If the mode is test, oracle_nt_dist will be empty, candidate_nt_dist will be populated.

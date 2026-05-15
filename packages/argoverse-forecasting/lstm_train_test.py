@@ -11,21 +11,23 @@ python lstm_train_test.py
     --use_delta --normalize
 """
 
+import argparse
 import os
 import shutil
 import tempfile
 import time
-from typing import Any, Dict, Tuple
+from typing import Dict, Tuple, Union
 
-import argparse
 import joblib
 from joblib import Parallel, delayed
 import numpy as np
+import pandas as pd
 import pickle as pkl
 from termcolor import cprint
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.optim import Optimizer
 
 from logger import Logger
 import utils.baseline_config as config
@@ -44,7 +46,7 @@ np.random.seed(100)
 ROLLOUT_LENS = [1, 10, 30]
 
 
-def parse_arguments() -> Any:
+def parse_arguments() -> argparse.Namespace:
     """Arguments for running the baseline.
 
     Returns:
@@ -140,7 +142,7 @@ class EncoderRNN(nn.Module):
         self.linear1 = nn.Linear(input_size, embedding_size)
         self.lstm1 = nn.LSTMCell(embedding_size, hidden_size)
 
-    def forward(self, x: torch.FloatTensor, hidden: Any) -> Any:
+    def forward(self, x: torch.FloatTensor, hidden: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         """Run forward propagation.
 
         Args:
@@ -192,14 +194,14 @@ class DecoderRNN(nn.Module):
 
 
 def train(
-    train_loader: Any,
+    train_loader: torch.utils.data.DataLoader,
     epoch: int,
-    criterion: Any,
+    criterion: nn.Module,
     logger: Logger,
-    encoder: Any,
-    decoder: Any,
-    encoder_optimizer: Any,
-    decoder_optimizer: Any,
+    encoder: nn.Module,
+    decoder: nn.Module,
+    encoder_optimizer: Optimizer,
+    decoder_optimizer: Optimizer,
     model_utils: ModelUtils,
     rollout_len: int = 30,
 ) -> None:
@@ -286,14 +288,14 @@ def train(
 
 
 def validate(
-    val_loader: Any,
+    val_loader: torch.utils.data.DataLoader,
     epoch: int,
-    criterion: Any,
+    criterion: nn.Module,
     logger: Logger,
-    encoder: Any,
-    decoder: Any,
-    encoder_optimizer: Any,
-    decoder_optimizer: Any,
+    encoder: nn.Module,
+    decoder: nn.Module,
+    encoder_optimizer: Optimizer,
+    decoder_optimizer: Optimizer,
     model_utils: ModelUtils,
     prev_loss: float,
     decrement_counter: int,
@@ -612,7 +614,7 @@ def infer_map(
 
 
 def infer_helper(
-    curr_data_dict: Dict[str, Any],
+    curr_data_dict: Dict[str, Union[np.ndarray, pd.DataFrame, None]],
     start_idx: int,
     encoder: EncoderRNN,
     decoder: DecoderRNN,

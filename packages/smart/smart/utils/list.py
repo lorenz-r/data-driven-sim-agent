@@ -1,8 +1,9 @@
+from typing import List, Optional, TypeVar
 
-from typing import Any, List, Optional
+_T = TypeVar("_T")
 
 
-def safe_list_index(ls: List[Any], elem: Any) -> Optional[int]:
+def safe_list_index(ls: List[_T], elem: _T) -> Optional[int]:
     try:
         return ls.index(elem)
     except ValueError:

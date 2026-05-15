@@ -1,8 +1,9 @@
 """This module contains utility functions for training and testing Nearest Neighbor based baselines."""
 
+import argparse
 import shutil
 import tempfile
-from typing import Any, Union
+from typing import Union
 
 from joblib import Parallel, delayed
 import numpy as np
@@ -69,7 +70,7 @@ class Regressor:
         train_output: np.ndarray,
         test_helpers: pd.DataFrame,
         num_features: int,
-        args: Any,
+        args: argparse.Namespace,
     ) -> None:
         """Train and test the model on different prediction horizons for map based Nearest Neighbors.
 
@@ -137,7 +138,7 @@ class Regressor:
         test_input: np.ndarray,
         test_helpers: pd.DataFrame,
         num_features: int,
-        args: Any,
+        args: argparse.Namespace,
     ) -> None:
         """Train and test the model on different prediction horizons for non-map baselines.
 
@@ -213,14 +214,14 @@ class Regressor:
 
     def infer_and_save_traj_map(
         self,
-        grid_search: Any,
+        grid_search: GridSearchCV,
         train_output: np.ndarray,
         test_nt: np.ndarray,
         test_centerlines: np.ndarray,
         test_references: np.ndarray,
         test_seq_ids: np.ndarray,
         start_idx: int,
-        args: Any,
+        args: argparse.Namespace,
         num_features: int,
         horizon: int,
         save_dir: str,
@@ -319,7 +320,7 @@ class Regressor:
 
     def infer_and_save_traj_absolute(
         self,
-        grid_search: Any,
+        grid_search: GridSearchCV,
         train_output: np.ndarray,
         test_input: np.ndarray,
         test_references: Union[np.ndarray, None],
@@ -327,7 +328,7 @@ class Regressor:
         test_translation: Union[np.ndarray, None],
         test_rotation: Union[np.ndarray, None],
         start_idx: int,
-        args: Any,
+        args: argparse.Namespace,
         num_features: int,
         horizon: int,
         save_dir: str,

@@ -14,7 +14,6 @@ if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
 
-
 def _main() -> int:
     from sim_integration.runner import main
 
