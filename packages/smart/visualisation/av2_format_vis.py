@@ -342,10 +342,15 @@ def _draw_track(
             coords = [(s.position[0], s.position[1]) for s in states]
             xs, ys = zip(*coords)
 
-            linewidth = 3 if is_important else 1.5
-            alpha = trajectory_alpha if is_important else trajectory_alpha * 0.5
+            is_focal = track.category == TrackCategory.FOCAL_TRACK
+            linewidth = 5 if is_focal else (3 if is_important else 1.5)
+            alpha = 0.9 if is_focal else (trajectory_alpha if is_important else trajectory_alpha * 0.5)
 
             ax.plot(xs, ys, color=color, linewidth=linewidth, alpha=alpha, zorder=10)
+
+            if is_focal and len(coords) > 0:
+                ax.scatter(xs[0], ys[0], color=color, s=80, marker='o', zorder=20, edgecolors='white', linewidths=1.5)
+                ax.scatter(xs[-1], ys[-1], color=color, s=120, marker='*', zorder=20, edgecolors='white', linewidths=1.5)
 
         last_state = states[-1]
         if show_boxes:
@@ -410,6 +415,10 @@ def _update_track_animation(
                 xs = [s.position[0] for s in past_states]
                 ys = [s.position[1] for s in past_states]
                 artists['trajectory'].set_data(xs, ys)
+                is_focal = track.category == TrackCategory.FOCAL_TRACK
+                if is_focal:
+                    artists['trajectory'].set_linewidth(5)
+                    artists['trajectory'].set_alpha(0.9)
 
         corners = _get_bounding_box(
             state.position,
