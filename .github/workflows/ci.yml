@@ -23,6 +23,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -32,18 +34,26 @@ jobs:
       - name: Get changed files
         id: changed-files
         uses: tj-actions/changed-files@v44
+        with:
+          files: |
+            **/*.py
 
       - name: Install Dependencies
         run: uv sync --all-packages
       
 
       - name: Run Ruff (Linting & Formatting)
+        if: steps.changed-files.outputs.all_changed_files != ''
         run: |
-            uv run ruff check .
-            uv run ruff format --check .
+            FILES="${{ steps.changed-files.outputs.all_changed_files }}"
+            uv run ruff check $FILES
+            uv run ruff format --check $FILES
 
       - name: Run Mypy (Static Type Checking)
-        run: uv run mypy .
+        if: steps.changed-files.outputs.all_changed_files != ''
+        run: |
+            FILES="${{ steps.changed-files.outputs.all_changed_files }}"
+            uv run mypy $FILES
 
   test:
     runs-on: ubuntu-latest
