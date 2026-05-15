@@ -65,7 +65,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     Predictor_hash = {"smart": SMART}
     parser.add_argument(
-        "--config", type=str, default="configs/train/train_scalable.yaml"
+        "--config", type=str, default="configs/train/train_overfitting.yaml"
     )
 
     # Add arguments to override config values from the command line. This is helpful for top-level hyperparameter search scripts that want to sweep over a few parameters without needing to create a separate config file for each run.

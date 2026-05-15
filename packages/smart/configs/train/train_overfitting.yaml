@@ -14,8 +14,8 @@ Dataset:
   num_workers: 1
   pin_memory: True
   persistent_workers: True
-  train_raw_dir:
-  val_raw_dir: 
+  train_raw_dir: ["tiny_train"]
+  val_raw_dir: ["validation_tiny"]
   test_raw_dir:
   transform: WaymoTargetBuilder
   train_processed_dir:

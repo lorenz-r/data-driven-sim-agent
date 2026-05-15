@@ -52,10 +52,10 @@ def objective(trial):
         "1",
         "--val_batch_size",
         "1",
-        "--train_path",
-        "tiny_train",
-        "--val_path",
-        "validation_tiny",
+        #"--train_path",
+        #"tiny_train",
+        #"--val_path",
+        #"validation_tiny",
         "--devices",
         "1"
     ]
