@@ -205,13 +205,14 @@ if __name__ == "__main__":
     )
 
     # Log the config values to wandb so they show up in the UI and are saved with the run. This is helpful for tracking what hyperparameters were used for each run, especially when doing hyperparameter sweeps.
-    wandb_logger.experiment.config.update(
-        {
-            "model": vars(config.Model),
-            "trainer": vars(config.Trainer),
-            "dataset": vars(config.Dataset),
-        }
-    )
+    # This causes issues if runs are not properly finished (e.g. due to early stopping or errors), so we'll comment it out for now and can re-enable it later if needed.
+    #wandb_logger.experiment.config.update(
+    #    {
+    #        "model": vars(config.Model),
+    #        "trainer": vars(config.Trainer),
+    #        "dataset": vars(config.Dataset),
+    #    }
+    #)
 
     model_checkpoint = ModelCheckpoint(
         dirpath=args.save_ckpt_path,
