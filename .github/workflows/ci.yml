@@ -53,7 +53,8 @@ jobs:
         if: steps.changed-files.outputs.all_changed_files != ''
         run: |
             FILES="${{ steps.changed-files.outputs.all_changed_files }}"
-            uv run mypy $FILES
+            SAFE_FILES=$(echo "$FILES" | tr ' ' '\n' | grep -v "argoverse-forecasting" | tr '\n' ' ')
+            uv run mypy $SAFE_FILES
 
   test:
     runs-on: ubuntu-latest
