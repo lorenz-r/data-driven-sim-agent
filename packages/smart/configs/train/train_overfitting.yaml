@@ -12,7 +12,7 @@ Dataset:
   test_batch_size: 1
   shuffle: True
   num_workers: 1
-  pin_memory: True
+  pin_memory: False
   persistent_workers: True
   train_raw_dir: ["tiny_train"]
   val_raw_dir: ["validation_tiny"]
