@@ -3,6 +3,10 @@ name = "data-driven-sim-agent"
 version = "0.0.1"
 description = "Data-driven simulation agent — workspace root"
 requires-python = ">=3.11,<3.12"
+dependencies = [
+    "mypy>=2.1.0",
+    "ruff>=0.15.13",
+]
 
 [tool.uv]
 managed = true
