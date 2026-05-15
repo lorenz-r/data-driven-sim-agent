@@ -15,7 +15,7 @@ from av2.map.map_api import ArgoverseStaticMap
 from av2.map.lane_segment import LaneSegment, LaneType, LaneMarkType
 from av2.map.pedestrian_crossing import PedestrianCrossing
 from av2.map.map_primitives import Polyline, Point
-#from av2.datasets.motion_forecasting import scenario_serialization
+from av2.datasets.motion_forecasting import scenario_serialization
 
 # --- Constants (must match data_preprocess_av2.py) ---
 NUM_TIMESTEPS = 110
@@ -92,7 +92,8 @@ def smart_to_argoverse(smart_data: Dict) -> tuple[ArgoverseScenario, ArgoverseSt
         mask = pt_to_poly[1] == poly_idx
         pt_indices = pt_to_poly[0][mask]
         
-        if len(pt_indices) == 0: continue
+        if len(pt_indices) == 0:
+            continue
         
         # Geometry: SMART points represent vectors. Reconstruct positions.
         coords = pt_data['position'][pt_indices].numpy()
