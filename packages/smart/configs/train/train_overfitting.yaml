@@ -18,8 +18,8 @@ Dataset:
   val_raw_dir: 
   test_raw_dir:
   transform: WaymoTargetBuilder
-  train_processed_dir: ["train_split"]
-  val_processed_dir: ["validation_split"]
+  train_processed_dir:
+  val_processed_dir:
   test_processed_dir:
   dataset: "scalable"
   <<: *time_info

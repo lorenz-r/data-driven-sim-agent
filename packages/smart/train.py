@@ -95,6 +95,19 @@ if __name__ == "__main__":
     parser.add_argument("--train_batch_size", type=int, default=None)
     parser.add_argument("--val_batch_size", type=int, default=None)
 
+    parser.add_argument(
+        "--train_path",
+        type=str,
+        default=None,
+        help="Optional override for training data path; if not provided, will use path from config",
+    )
+    parser.add_argument(
+        "--val_path",
+        type=str,
+        default=None,
+        help="Optional override for validation data path; if not provided, will use path from config",
+    )
+
     # Optuna passes a trial number to the training script for each run, which can be used for logging and tracking purposes. We'll include it as an optional argument in case it's needed, but it won't affect the training logic directly.
     parser.add_argument(
         "--trial_number",
@@ -102,6 +115,8 @@ if __name__ == "__main__":
         default=0,
         help="Optional trial number for hyperparameter search runs; used for logging purposes",
     )
+
+    parser.add_argument("--devices", type=int, default=None, help="Number of GPU devices to use for training")
 
     args = parser.parse_args()
     config = load_config_act(args.config)
@@ -124,6 +139,15 @@ if __name__ == "__main__":
 
     if args.val_batch_size is not None:
         config.Dataset.val_batch_size = args.val_batch_size
+
+    if args.train_path is not None:
+        config.Dataset.train_raw_dir = args.train_path
+
+    if args.val_path is not None:
+        config.Dataset.val_raw_dir = args.val_path
+
+    if args.devices is not None:
+        config.Trainer.devices = args.devices
 
     Predictor = Predictor_hash[config.Model.predictor]
 
