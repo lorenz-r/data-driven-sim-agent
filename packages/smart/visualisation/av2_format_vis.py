@@ -3,7 +3,6 @@ from pathlib import Path
 import argparse
 
 import numpy as np
-import pickle
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
@@ -14,7 +13,6 @@ from av2.datasets.motion_forecasting import scenario_serialization
 from av2.datasets.motion_forecasting.data_schema import (
     ArgoverseScenario,
     Track,
-    ObjectState,
     TrackCategory,
     ObjectType,
 )

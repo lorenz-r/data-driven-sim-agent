@@ -1,9 +1,9 @@
 import torch
-import numpy as np
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 import argparse
 import pickle
 from pathlib import Path
+
 from av2.datasets.motion_forecasting.data_schema import (
     ArgoverseScenario,
     Track,
@@ -15,7 +15,7 @@ from av2.map.map_api import ArgoverseStaticMap
 from av2.map.lane_segment import LaneSegment, LaneType, LaneMarkType
 from av2.map.pedestrian_crossing import PedestrianCrossing
 from av2.map.map_primitives import Polyline, Point
-from av2.datasets.motion_forecasting import scenario_serialization
+#from av2.datasets.motion_forecasting import scenario_serialization
 
 # --- Constants (must match data_preprocess_av2.py) ---
 NUM_TIMESTEPS = 110
@@ -264,15 +264,7 @@ def smart_prediction_to_argoverse(
 
 
 def main():
-    import argparse
-    import pickle
-    from pathlib import Path
 
-    try:
-        from av2.datasets.motion_forecasting import scenario_serialization
-        HAS_AV2 = True
-    except ImportError:
-        HAS_AV2 = False
 
     parser = argparse.ArgumentParser(description="Convert SMART output to AV2 format")
     parser.add_argument(
