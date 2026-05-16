@@ -14,6 +14,8 @@ from smart.datamodules import MultiDataModule
 from smart.model import SMART
 from smart.utils.log import Logging
 from smart.metrics.utils import get_training_metrics
+import pickle
+from tqdm import tqdm
 
 
 class EpochLossTracker(pl.Callback):
@@ -53,7 +55,90 @@ class EpochLossTracker(pl.Callback):
             return self.start_loss - self.end_loss
         return None
 
+def validate_dataset(datamodule, remove_bad_files=False):
+    """
+    Validates dataset samples before training.
 
+<<<<<<< HEAD
+=======
+    Attempts to:
+    - load pickle
+    - run preprocessing
+
+    Invalid samples are logged and optionally deleted.
+
+    Returns:
+        list[str]: paths of invalid files
+    """
+
+    logger = Logging().log(level="DEBUG")
+
+    logger.info("Setting up datamodule for validation...")
+    datamodule.setup()
+
+    datasets = {
+        "train": datamodule.train_dataset,
+        "val": datamodule.val_dataset,
+    }
+
+    if hasattr(datamodule, "test_dataset"):
+        datasets["test"] = datamodule.test_dataset
+
+    bad_files = []
+
+    for split_name, dataset in datasets.items():
+
+        logger.info(f"Validating {split_name} dataset...")
+        logger.info(f"Number of samples: {len(dataset)}")
+
+        for idx in tqdm(range(len(dataset)), desc=f"Checking {split_name}"):
+
+            path = dataset.raw_paths[idx]
+
+            try:
+                with open(path, "rb") as handle:
+                    data = pickle.load(handle)
+
+                # IMPORTANT:
+                # create fresh processor instance each time
+                # avoids hidden mutable-state bugs
+                processor = dataset.token_processor.__class__(2048)
+
+                processor.preprocess(data)
+
+            except Exception as e:
+
+                logger.error(
+                    f"[INVALID] split={split_name} idx={idx} path={path}"
+                )
+                logger.exception(e)
+
+                bad_files.append(path)
+
+                if remove_bad_files:
+                    try:
+                        os.remove(path)
+                        logger.warning(f"Removed malformed file: {path}")
+                    except Exception as remove_error:
+                        logger.error(
+                            f"Failed to remove {path}: {remove_error}"
+                        )
+
+    logger.info(f"Validation complete. Found {len(bad_files)} bad files.")
+
+    if len(bad_files) > 0:
+
+        blacklist_path = "bad_samples.txt"
+
+        with open(blacklist_path, "w") as f:
+            for path in bad_files:
+                f.write(path + "\n")
+
+        logger.warning(f"Saved bad file list to {blacklist_path}")
+
+    return bad_files
+
+>>>>>>> a2265b0 (added data validation)
 load_dotenv()
 
 # Set up the logging by creating a wandb account and getting the API key from the environment variable
@@ -116,6 +201,18 @@ if __name__ == "__main__":
         help="Optional trial number for hyperparameter search runs; used for logging purposes",
     )
 
+    parser.add_argument(
+         "--validate_dataset",
+        action="store_true",
+        help="Validate dataset before training",
+    )       
+
+    parser.add_argument(
+        "--remove_bad_files",
+        action="store_true",
+        help="Delete malformed dataset files during validation",
+    )
+
     parser.add_argument("--devices", type=int, default=None, help="Number of GPU devices to use for training")
 
     args = parser.parse_args()
@@ -156,6 +253,23 @@ if __name__ == "__main__":
 
     Data_config = config.Dataset
     datamodule = MultiDataModule(**vars(Data_config))
+
+    # Validate dataset before training to catch any malformed files early and avoid wasting time during training. This is especially important when working with large datasets where a single bad file can cause the entire training run to fail after hours of computation.
+    if args.validate_dataset:
+
+        bad_files = validate_dataset(
+            datamodule,
+            remove_bad_files=args.remove_bad_files,
+        )
+
+        print(f"\nFound {len(bad_files)} malformed files.\n")
+
+        if len(bad_files) > 0:
+            print("Malformed files written to bad_samples.txt")
+
+        # Exit after validation if desired
+        if args.remove_bad_files:
+            print("Malformed files removed.")
 
     if args.pretrain_ckpt == "":
         model = Predictor(config.Model)
