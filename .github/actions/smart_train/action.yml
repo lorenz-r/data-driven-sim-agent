@@ -69,22 +69,26 @@ runs:
         python -m pip install -q uv
         sudo apt-get install -y libgl1 libglib2.0-0
 
-    - name: Preprocess scenarios
-      shell: bash
-      working-directory: packages/smart
-      run: bash scripts/run_preprocess.sh "${{ inputs.preprocess_input }}" "${{ inputs.preprocess_output }}"
-
     - name: Install SMART dependencies
       shell: bash
       working-directory: packages/smart
-      run: uv sync
+      run: uv sync --package smart
+
+    - name: Preprocess scenarios
+      shell: bash
+      working-directory: packages/smart
+      run: |
+        uv run --package smart python data_preprocess_av2.py \
+          --input_dir "${{ inputs.preprocess_input }}" \
+          --output_dir "${{ inputs.preprocess_output }}" \
+          --num_workers 1
 
     - name: Run SMART training on CPU
       if: ${{ inputs.cpu == 'true' }}
       shell: bash
       working-directory: packages/smart
       run: |
-        uv run train.py --cpu --return_metrics "${{ inputs.metrics_path }}" \
+        uv run --package smart train.py --cpu --return_metrics "${{ inputs.metrics_path }}" \
           --config "${{ inputs.config }}"
 
     - name: Run SMART training
@@ -92,5 +96,5 @@ runs:
       shell: bash
       working-directory: packages/smart
       run: |
-        uv run train.py --return_metrics "${{ inputs.metrics_path }}" \
+        uv run --package smart train.py --return_metrics "${{ inputs.metrics_path }}" \
           --config "${{ inputs.config }}"

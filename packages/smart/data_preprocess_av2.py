@@ -2,10 +2,8 @@
 """
 Argoverse 2 Motion Forecasting → SMART preprocessing pipeline.
 
-Needs the AV2 environment set up (which is not compatible with SMART's environment).
-
 Run with:
-python data_preprocess_av2_stable.py --input_dir  ./data/av2_partial_py/train/ --output_dir ./data/av2_processed/training --num_workers 8
+python data_preprocess_av2.py --input_dir ./data/av2_partial_py/train/ --output_dir ./data/av2_processed/training --num_workers 8
 
 This version writes pickle files that match the structure produced by SMART's
 original Waymo preprocessing as closely as possible:

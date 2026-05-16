@@ -3,9 +3,9 @@ name = "smart"
 version = "0.2.0"
 description = "SMART: Scalable Multi-agent Realistic Motion Transformer"
 readme = "README.md"
-requires-python = ">=3.10,<3.12"
+requires-python = ">=3.11,<3.12"
 dependencies = [
-    "torch>=2.5.0,<2.6",
+    "torch>=2.6.0,<2.7",
     "pytorch-lightning==2.4.0",
     "torchmetrics>=1.6.0,<2",
     "torch-geometric==2.6.1",
@@ -22,15 +22,3 @@ dependencies = [
     "av2",
     "opencv-python"
 ]
-
-[[tool.uv.index]]
-url = "https://download.pytorch.org/whl/cu124"
-
-[tool.uv]
-index-strategy = "unsafe-best-match"
-find-links = ["https://data.pyg.org/whl/torch-2.5.0+cu124.html"]
-dependency-metadata = [
-    { name = "torch-cluster", requires-dist = ["scipy"] },
-    { name = "torch-scatter", requires-dist = [] },
-]
-no-build-isolation-package = ["torch-cluster", "torch-scatter"]

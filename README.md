@@ -16,6 +16,22 @@ uv run pytest -m "not gpu"       # CPU-only tests
 uv run pytest                    # all tests (needs GPU)
 ```
 
+#### SMART data preprocessing
+
+SMART training consumes preprocessed pickles rather than raw Argoverse 2 scenario files. Before training SMART:
+
+1. Download the Argoverse 2 motion forecasting scenarios into `packages/smart/data/av2_partial_py/train/`.
+2. From the repository root, preprocess the raw scenarios:
+
+   ```bash
+   uv run python packages/smart/data_preprocess_av2.py \
+     --input_dir packages/smart/data/av2_partial_py/train \
+     --output_dir packages/smart/data/av2_processed/training \
+     --num_workers 8
+   ```
+
+The default full-training config already reads from `packages/smart/data/av2_processed/training`. If you choose different paths, update the SMART config's `train_raw_dir` and `val_raw_dir` accordingly.
+
 #### Docker
 
 Build and run tests in an isolated container with GPU support:
@@ -26,7 +42,7 @@ docker rmi -f sim-agent 2>/dev/null || true && docker build -t sim-agent . && do
 
 **Technical stack:**
 - **Python 3.11** — Most compatible version for the current ecosystem
-- **PyTorch 2.8** — Latest stable release with CUDA 12 support
+- **PyTorch 2.6** — Shared workspace version with CUDA 12 support
 - **Flash Attention 2.8.3** — Prebuilt wheel for CUDA 12 / PyTorch 2.4+ / Python 3.11
 - **CUDA Runtime** — Bundled in PyTorch and Flash Attention wheels (no system CUDA install needed)
 - **Host requirement** — NVIDIA driver supporting CUDA 12.x
@@ -36,6 +52,7 @@ docker rmi -f sim-agent 2>/dev/null || true && docker build -t sim-agent . && do
 | Path | Description |
 |---|---|
 | `packages/sim-integration` | Core simulation integration library |
+| `packages/smart` | SMART motion generation model and AV2 preprocessing |
 | `tests/` | Bootstrap integration & test package |
 
 #### Hermeticity

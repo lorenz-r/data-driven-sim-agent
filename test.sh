@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-uv sync --all-packages
+uv sync --package data-driven-sim-agent --package argoverse-forecasting --package sim-integration --package integration-tests
 
 # Run linters, type checks and tests using uv to ensure the correct virtual env
 # Ruff: linting

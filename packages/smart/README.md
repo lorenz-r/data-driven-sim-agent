@@ -24,20 +24,13 @@ https://github.com/user-attachments/assets/74a61627-8444-4e54-bb10-d317dd2aacd9
 
 ## Requirements
 
-To set up the environment, you can use conda to create and activate a new environment with the necessary dependencies:
+In this monorepo, SMART dependencies are managed by the root `uv` workspace. From the repository root, install the SMART environment with:
 
 ```bash
-conda env create -f environment.yml
-conda activate SMART
-pip install -r requirements.txt
+uv sync --package smart
 ```
 
-If you encounter issues while installing pyg dependencies, execute the following script:
-```setup
-bash install_pyg.sh
-```
-
-Alternatively, you can configure the environment in your preferred way. Installing the latest versions of PyTorch, PyG, and PyTorch Lightning should suffice.
+For the Argoverse 2 preprocessing flow used by this repository, see the top-level README before starting training.
 
 ## Data installation
 

@@ -39,7 +39,7 @@ jobs:
             **/*.py
 
       - name: Install Dependencies
-        run: uv sync --all-packages
+        run: uv sync --package data-driven-sim-agent --package argoverse-forecasting --package sim-integration --package integration-tests
       
 
       - name: Run Ruff (Linting & Formatting)
@@ -87,7 +87,7 @@ jobs:
           enable-cache: true
 
       - name: Install
-        run: uv sync --all-packages
+        run: uv sync --package data-driven-sim-agent --package argoverse-forecasting --package sim-integration --package integration-tests
 
       - name: Test (all)
         run: uv run pytest --tb=short -q

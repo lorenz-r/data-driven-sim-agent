@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'packages/smart/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - '.github/actions/smart_train/**'
       - '.github/workflows/smart_ci.yml'
 
