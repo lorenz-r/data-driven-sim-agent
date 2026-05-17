@@ -60,8 +60,6 @@ def validate_dataset(datamodule, remove_bad_files=False):
     """
     Validates dataset samples before training.
 
-<<<<<<< HEAD
-=======
     Attempts to:
     - load pickle
     - run preprocessing
@@ -131,11 +129,6 @@ def validate_dataset(datamodule, remove_bad_files=False):
 
     return bad_files
 
-<<<<<<< HEAD
->>>>>>> a2265b0 (added data validation)
-=======
-
->>>>>>> b8ee2b1 (added handling of missing API key in train.py)
 load_dotenv()
 
 wandb_api_key = os.getenv("WANDB_API_KEY")
