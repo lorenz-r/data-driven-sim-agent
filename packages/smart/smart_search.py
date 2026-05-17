@@ -52,12 +52,12 @@ def objective(trial):
         "30",
         "--val_batch_size",
         "30",
-        #"--train_path",
-        #"tiny_train",
-        #"--val_path",
-        #"validation_tiny",
+        # "--train_path",
+        # "tiny_train",
+        # "--val_path",
+        # "validation_tiny",
         "--devices",
-        "2"
+        "2",
     ]
 
     print("\nRunning:")

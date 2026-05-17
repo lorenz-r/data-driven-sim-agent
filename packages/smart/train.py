@@ -55,6 +55,7 @@ class EpochLossTracker(pl.Callback):
             return self.start_loss - self.end_loss
         return None
 
+
 def validate_dataset(datamodule, remove_bad_files=False):
     """
     Validates dataset samples before training.
@@ -87,12 +88,10 @@ def validate_dataset(datamodule, remove_bad_files=False):
     bad_files = []
 
     for split_name, dataset in datasets.items():
-
         logger.info(f"Validating {split_name} dataset...")
         logger.info(f"Number of samples: {len(dataset)}")
 
         for idx in tqdm(range(len(dataset)), desc=f"Checking {split_name}"):
-
             path = dataset.raw_paths[idx]
 
             try:
@@ -107,10 +106,7 @@ def validate_dataset(datamodule, remove_bad_files=False):
                 processor.preprocess(data)
 
             except Exception as e:
-
-                logger.error(
-                    f"[INVALID] split={split_name} idx={idx} path={path}"
-                )
+                logger.error(f"[INVALID] split={split_name} idx={idx} path={path}")
                 logger.exception(e)
 
                 bad_files.append(path)
@@ -120,14 +116,11 @@ def validate_dataset(datamodule, remove_bad_files=False):
                         os.remove(path)
                         logger.warning(f"Removed malformed file: {path}")
                     except Exception as remove_error:
-                        logger.error(
-                            f"Failed to remove {path}: {remove_error}"
-                        )
+                        logger.error(f"Failed to remove {path}: {remove_error}")
 
     logger.info(f"Validation complete. Found {len(bad_files)} bad files.")
 
     if len(bad_files) > 0:
-
         blacklist_path = "bad_samples.txt"
 
         with open(blacklist_path, "w") as f:
@@ -138,13 +131,18 @@ def validate_dataset(datamodule, remove_bad_files=False):
 
     return bad_files
 
+<<<<<<< HEAD
 >>>>>>> a2265b0 (added data validation)
+=======
+
+>>>>>>> b8ee2b1 (added handling of missing API key in train.py)
 load_dotenv()
 
-# Set up the logging by creating a wandb account and getting the API key from the environment variable
-# After creating an account, share your email/username with the team to get access to the project and its resources; this way the logs can be stored in the shared project and everyone can access them.
-# If you wish to run without logging, simply comment out the wandb.login() line and the WandbLogger in the trainer configuration.
-wandb.login(key=os.getenv("WANDB_API_KEY"))
+wandb_api_key = os.getenv("WANDB_API_KEY")
+if wandb_api_key:
+    wandb.login(key=wandb_api_key)
+else:
+    print("WANDB_API_KEY not set — running without wandb logging")
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -202,10 +200,10 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-         "--validate_dataset",
+        "--validate_dataset",
         action="store_true",
         help="Validate dataset before training",
-    )       
+    )
 
     parser.add_argument(
         "--remove_bad_files",
@@ -213,7 +211,12 @@ if __name__ == "__main__":
         help="Delete malformed dataset files during validation",
     )
 
-    parser.add_argument("--devices", type=int, default=None, help="Number of GPU devices to use for training")
+    parser.add_argument(
+        "--devices",
+        type=int,
+        default=None,
+        help="Number of GPU devices to use for training",
+    )
 
     parser.add_argument(
         "--num_cpu_workers",
@@ -252,7 +255,7 @@ if __name__ == "__main__":
 
     if args.devices is not None:
         config.Trainer.devices = args.devices
-    
+
     if args.num_cpu_workers is not None:
         config.Dataset.num_cpu_workers = args.num_cpu_workers
 
@@ -266,7 +269,6 @@ if __name__ == "__main__":
 
     # Validate dataset before training to catch any malformed files early and avoid wasting time during training. This is especially important when working with large datasets where a single bad file can cause the entire training run to fail after hours of computation.
     if args.validate_dataset:
-
         bad_files = validate_dataset(
             datamodule,
             remove_bad_files=args.remove_bad_files,
@@ -323,20 +325,21 @@ if __name__ == "__main__":
     #     gradient_clip_val=0.5,
     # )
 
-    wandb_logger = WandbLogger(
-        project="smart-train",
-        name=f"op_trial-{args.trial_number}",
-    )
-
-    # Log the config values to wandb so they show up in the UI and are saved with the run. This is helpful for tracking what hyperparameters were used for each run, especially when doing hyperparameter sweeps.
-    # This causes issues if runs are not properly finished (e.g. due to early stopping or errors), so we'll comment it out for now and can re-enable it later if needed.
-    #wandb_logger.experiment.config.update(
-    #    {
-    #        "model": vars(config.Model),
-    #        "trainer": vars(config.Trainer),
-    #        "dataset": vars(config.Dataset),
-    #    }
-    #)
+    if wandb_api_key:
+        wandb_logger = WandbLogger(
+            project="smart-train",
+            name=f"op_trial-{args.trial_number}",
+        )
+        # Log the config values to wandb so they show up in the UI and are saved with the run.
+        # wandb_logger.experiment.config.update(
+        #    {
+        #        "model": vars(config.Model),
+        #        "trainer": vars(config.Trainer),
+        #        "dataset": vars(config.Dataset),
+        #    }
+        # )
+    else:
+        wandb_logger = None
 
     model_checkpoint = ModelCheckpoint(
         dirpath=args.save_ckpt_path,
@@ -409,4 +412,5 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Failed to write metrics file {args.return_metrics}: {e}")
 
-    wandb.finish()
+    if wandb_api_key:
+        wandb.finish()

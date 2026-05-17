@@ -5,7 +5,7 @@ import hashlib
 from pathlib import Path
 
 # ---------------- CONFIG ----------------
-SOURCE_DIR = Path("train")          # original large dataset
+SOURCE_DIR = Path("train")  # original large dataset
 
 TRAIN_OUT = Path("train_split")
 VAL_OUT = Path("validation_split")
@@ -39,14 +39,13 @@ def sample_without_overlap(all_files, train_size, val_size):
 
     if len(all_files) < total_needed:
         raise ValueError(
-            f"Not enough files: found {len(all_files)}, "
-            f"need {total_needed}"
+            f"Not enough files: found {len(all_files)}, need {total_needed}"
         )
 
     random.shuffle(all_files)
 
     train_files = all_files[:train_size]
-    val_files = all_files[train_size:train_size + val_size]
+    val_files = all_files[train_size : train_size + val_size]
 
     return train_files, val_files
 
@@ -112,11 +111,7 @@ def main():
     all_files = collect_files(SOURCE_DIR)
 
     # -------- SAMPLE --------
-    train_files, val_files = sample_without_overlap(
-        all_files,
-        TRAIN_SIZE,
-        VAL_SIZE
-    )
+    train_files, val_files = sample_without_overlap(all_files, TRAIN_SIZE, VAL_SIZE)
 
     # -------- CREATE OUTPUT DIRS --------
     TRAIN_OUT.mkdir(parents=True, exist_ok=True)
@@ -125,59 +120,27 @@ def main():
     # -------- COPY TRAIN --------
     print(f"Copying {len(train_files)} train files → {TRAIN_OUT}")
 
-    copy_files(
-        train_files,
-        SOURCE_DIR,
-        TRAIN_OUT
-    )
+    copy_files(train_files, SOURCE_DIR, TRAIN_OUT)
 
     # -------- COPY VALIDATION --------
     print(f"Copying {len(val_files)} validation files → {VAL_OUT}")
 
-    copy_files(
-        val_files,
-        SOURCE_DIR,
-        VAL_OUT
-    )
+    copy_files(val_files, SOURCE_DIR, VAL_OUT)
 
     # -------- MANIFESTS --------
-    write_manifest(
-        train_files,
-        SOURCE_DIR,
-        TRAIN_OUT / "train_manifest.txt"
-    )
+    write_manifest(train_files, SOURCE_DIR, TRAIN_OUT / "train_manifest.txt")
 
-    write_manifest(
-        val_files,
-        SOURCE_DIR,
-        VAL_OUT / "validation_manifest.txt"
-    )
+    write_manifest(val_files, SOURCE_DIR, VAL_OUT / "validation_manifest.txt")
 
     # -------- HASHES --------
-    train_hash = generate_dataset_hash(
-        train_files,
-        SOURCE_DIR
-    )
+    train_hash = generate_dataset_hash(train_files, SOURCE_DIR)
 
-    val_hash = generate_dataset_hash(
-        val_files,
-        SOURCE_DIR
-    )
+    val_hash = generate_dataset_hash(val_files, SOURCE_DIR)
 
     # -------- METADATA --------
-    write_metadata(
-        TRAIN_OUT,
-        train_hash,
-        "train",
-        TRAIN_SIZE
-    )
+    write_metadata(TRAIN_OUT, train_hash, "train", TRAIN_SIZE)
 
-    write_metadata(
-        VAL_OUT,
-        val_hash,
-        "validation",
-        VAL_SIZE
-    )
+    write_metadata(VAL_OUT, val_hash, "validation", VAL_SIZE)
 
     print("Done ✔")
     print(f"Train hash: {train_hash}")
