@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
-#from ..convert_smart_av2 import smart_prediction_to_argoverse
+# from ..convert_smart_av2 import smart_prediction_to_argoverse
 
 
 from av2.datasets.motion_forecasting import scenario_serialization
@@ -99,7 +99,8 @@ def visualize_scenario(
 
     for track in scenario.tracks:
         _draw_track(
-            ax, track,
+            ax,
+            track,
             timestep=timestep,
             show_boxes=show_boxes,
             show_trajectory=show_trajectory,
@@ -113,7 +114,11 @@ def visualize_scenario(
     return fig
 
 
-def _compute_axis_limits(scenario: ArgoverseScenario, static_map: Optional[ArgoverseStaticMap], padding: float = 10.0) -> tuple:
+def _compute_axis_limits(
+    scenario: ArgoverseScenario,
+    static_map: Optional[ArgoverseStaticMap],
+    padding: float = 10.0,
+) -> tuple:
     """Compute axis limits based on all tracks and map data."""
     x_coords = []
     y_coords = []
@@ -125,7 +130,7 @@ def _compute_axis_limits(scenario: ArgoverseScenario, static_map: Optional[Argov
 
     if static_map is not None:
         for lane in static_map.vector_lane_segments.values():
-            if hasattr(lane, 'polygon_boundary') and lane.polygon_boundary is not None:
+            if hasattr(lane, "polygon_boundary") and lane.polygon_boundary is not None:
                 x_coords.extend(lane.polygon_boundary[:, 0].tolist())
                 y_coords.extend(lane.polygon_boundary[:, 1].tolist())
         for crossing in static_map.vector_pedestrian_crossings.values():
@@ -205,21 +210,24 @@ def visualize_scenario_animation(
         return []
 
     ani = FuncAnimation(
-        fig, update,
+        fig,
+        update,
         frames=num_timesteps,
         interval=interval,
         blit=False,
     )
 
     if save_path:
-        ani.save(save_path, writer='pillow', fps=10)
+        ani.save(save_path, writer="pillow", fps=10)
     else:
         plt.show()
 
     return ani
 
 
-def _draw_map_static(ax: plt.Axes, static_map: ArgoverseStaticMap, city_name: str) -> List:
+def _draw_map_static(
+    ax: plt.Axes, static_map: ArgoverseStaticMap, city_name: str
+) -> List:
     artists = []
     for lane_id, lane in static_map.vector_lane_segments.items():
         if lane.lane_type.value == "VEHICLE":
@@ -234,7 +242,7 @@ def _draw_map_static(ax: plt.Axes, static_map: ArgoverseStaticMap, city_name: st
             artists.append(poly)
 
             centerline = static_map.get_lane_segment_centerline(lane_id)
-            line, = ax.plot(
+            (line,) = ax.plot(
                 centerline[:, 0],
                 centerline[:, 1],
                 color="#999999",
@@ -308,7 +316,10 @@ def _draw_track(
         return
 
     color = _get_track_color(track.category)
-    is_important = track.category in (TrackCategory.FOCAL_TRACK, TrackCategory.SCORED_TRACK)
+    is_important = track.category in (
+        TrackCategory.FOCAL_TRACK,
+        TrackCategory.SCORED_TRACK,
+    )
 
     if timestep is not None:
         state_at_t = None
@@ -327,12 +338,32 @@ def _draw_track(
                 xs, ys = zip(*coords)
                 is_focal = track.category == TrackCategory.FOCAL_TRACK
                 linewidth = 2.5 if is_focal else (3 if is_important else 1.5)
-                alpha = 1.0 if is_focal else (trajectory_alpha if is_important else trajectory_alpha * 0.5)
-                linestyle = '--' if is_focal else '-'
-                ax.plot(xs, ys, color=color, linewidth=linewidth, alpha=alpha, linestyle=linestyle, zorder=12)
+                alpha = (
+                    1.0
+                    if is_focal
+                    else (trajectory_alpha if is_important else trajectory_alpha * 0.5)
+                )
+                linestyle = "--" if is_focal else "-"
+                ax.plot(
+                    xs,
+                    ys,
+                    color=color,
+                    linewidth=linewidth,
+                    alpha=alpha,
+                    linestyle=linestyle,
+                    zorder=12,
+                )
                 if is_focal and len(coords) > 0:
-                    ax.scatter(xs[0], ys[0], color=color, s=20, marker='o', zorder=25, edgecolors='black', linewidths=1)
-                    
+                    ax.scatter(
+                        xs[0],
+                        ys[0],
+                        color=color,
+                        s=20,
+                        marker="o",
+                        zorder=25,
+                        edgecolors="black",
+                        linewidths=1,
+                    )
 
         if show_boxes:
             corners = _get_bounding_box(
@@ -354,18 +385,38 @@ def _draw_track(
         is_focal = track.category == TrackCategory.FOCAL_TRACK
 
         if show_trajectory:
-                coords = [(s.position[0], s.position[1]) for s in states]
-                xs, ys = zip(*coords)
+            coords = [(s.position[0], s.position[1]) for s in states]
+            xs, ys = zip(*coords)
 
-                linewidth = 2.5 if is_focal else (3 if is_important else 1.5)
-                alpha = 1.0 if is_focal else (trajectory_alpha if is_important else trajectory_alpha * 0.5)
-                linestyle = '--' if is_focal else '-'
+            linewidth = 2.5 if is_focal else (3 if is_important else 1.5)
+            alpha = (
+                1.0
+                if is_focal
+                else (trajectory_alpha if is_important else trajectory_alpha * 0.5)
+            )
+            linestyle = "--" if is_focal else "-"
 
-                ax.plot(xs, ys, color=color, linewidth=linewidth, alpha=alpha, linestyle=linestyle, zorder=12)
+            ax.plot(
+                xs,
+                ys,
+                color=color,
+                linewidth=linewidth,
+                alpha=alpha,
+                linestyle=linestyle,
+                zorder=12,
+            )
 
-                if is_focal and len(coords) > 0:
-                    ax.scatter(xs[0], ys[0], color=color, s=20, marker='o', zorder=25, edgecolors='black', linewidths=1)
-                    
+            if is_focal and len(coords) > 0:
+                ax.scatter(
+                    xs[0],
+                    ys[0],
+                    color=color,
+                    s=20,
+                    marker="o",
+                    zorder=25,
+                    edgecolors="black",
+                    linewidths=1,
+                )
 
         last_state = states[-1]
         if show_boxes:
@@ -388,13 +439,16 @@ def _draw_track(
 
 def _init_track_artists(ax: plt.Axes, track: Track) -> dict:
     color = _get_track_color(track.category)
-    is_important = track.category in (TrackCategory.FOCAL_TRACK, TrackCategory.SCORED_TRACK)
+    is_important = track.category in (
+        TrackCategory.FOCAL_TRACK,
+        TrackCategory.SCORED_TRACK,
+    )
 
     artists = {}
 
     if is_important:
-        line, = ax.plot([], [], color=color, linewidth=2, alpha=0.3, zorder=10)
-        artists['trajectory'] = line
+        (line,) = ax.plot([], [], color=color, linewidth=2, alpha=0.3, zorder=10)
+        artists["trajectory"] = line
 
     box = mpatches.Polygon(
         [[0, 0], [0, 0], [0, 0], [0, 0]],
@@ -406,9 +460,9 @@ def _init_track_artists(ax: plt.Axes, track: Track) -> dict:
         zorder=15,
     )
     ax.add_patch(box)
-    artists['box'] = box
-    artists['color'] = color
-    artists['obj_type'] = track.object_type
+    artists["box"] = box
+    artists["color"] = color
+    artists["obj_type"] = track.object_type
 
     return artists
 
@@ -424,26 +478,26 @@ def _update_track_animation(
     if timestep in states:
         state = states[timestep]
 
-        if 'trajectory' in artists:
+        if "trajectory" in artists:
             past_states = [s for s in track.object_states if s.timestep <= timestep]
             if past_states:
                 xs = [s.position[0] for s in past_states]
                 ys = [s.position[1] for s in past_states]
-                artists['trajectory'].set_data(xs, ys)
+                artists["trajectory"].set_data(xs, ys)
                 is_focal = track.category == TrackCategory.FOCAL_TRACK
                 if is_focal:
-                    artists['trajectory'].set_linewidth(2.0)
-                    artists['trajectory'].set_alpha(0.9)
+                    artists["trajectory"].set_linewidth(2.0)
+                    artists["trajectory"].set_alpha(0.9)
 
         corners = _get_bounding_box(
             state.position,
             state.heading,
             track.object_type,
         )
-        artists['box'].set_xy(corners)
-        artists['box'].set_edgecolor(artists.get('color', '#000000'))
+        artists["box"].set_xy(corners)
+        artists["box"].set_edgecolor(artists.get("color", "#000000"))
     else:
-        artists['box'].set_xy([[0, 0], [0, 0], [0, 0], [0, 0]])
+        artists["box"].set_xy([[0, 0], [0, 0], [0, 0], [0, 0]])
 
 
 def _get_track_color(category: TrackCategory) -> str:
@@ -462,7 +516,7 @@ def _add_legend(ax: plt.Axes) -> None:
         mpatches.Patch(color=COLORS["other"], label="Other"),
     ]
     ax.legend(handles=patches, loc="lower left", fontsize=9)
-    
+
 
 def test_visualize_scenario(
     data_dir: Optional[str] = None,
@@ -523,11 +577,15 @@ def test_visualize_scenario(
     if not map_files:
         raise FileNotFoundError(f"No map archive in {scenario_dir}")
 
-    scenario: ArgoverseScenario = scenario_serialization.load_argoverse_scenario_parquet(parquet_files[0])
+    scenario: ArgoverseScenario = (
+        scenario_serialization.load_argoverse_scenario_parquet(parquet_files[0])
+    )
     static_map: ArgoverseStaticMap = ArgoverseStaticMap.from_json(map_files[0])
 
     print(f"Loaded scenario: {scenario.scenario_id}")
-    print(f"  Duration: {len(scenario.timestamps_ns)} timesteps (~{(scenario.timestamps_ns[-1] - scenario.timestamps_ns[0])/1e9:.1f}s)")
+    print(
+        f"  Duration: {len(scenario.timestamps_ns)} timesteps (~{(scenario.timestamps_ns[-1] - scenario.timestamps_ns[0]) / 1e9:.1f}s)"
+    )
     print(f"  Tracks: {len(scenario.tracks)}")
 
     if animate:
@@ -551,42 +609,44 @@ def test_visualize_scenario(
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Visualize AV2 scenario or SMART prediction"
+    )
 
-
-    parser = argparse.ArgumentParser(description="Visualize AV2 scenario or SMART prediction")
-
-    
     parser.add_argument(
-        '--input', '-i',
+        "--input",
+        "-i",
         type=str,
         required=True,
-        help='Path to input file (parquet for AV2)'
+        help="Path to input file (parquet for AV2)",
     )
     parser.add_argument(
-        '--output', '-o',
+        "--output",
+        "-o",
         type=str,
         default=None,
-        help='Output folder for animation or image'
+        help="Output folder for animation or image",
     )
     parser.add_argument(
-        '--animate', '-a',
-        action='store_true',
-        help='Create animation instead of static image'
+        "--animate",
+        "-a",
+        action="store_true",
+        help="Create animation instead of static image",
     )
     parser.add_argument(
-        '--timestep', '-t',
+        "--timestep",
+        "-t",
         type=int,
         default=None,
-        help='Show only this timestep (static mode)'
+        help="Show only this timestep (static mode)",
     )
-
 
     args = parser.parse_args()
 
     input_path = Path(args.input)
     input_dir = input_path.parent
 
-    if input_path.suffix == '.parquet':
+    if input_path.suffix == ".parquet":
         scenario = scenario_serialization.load_argoverse_scenario_parquet(input_path)
         scenario_id = input_path.stem
         print(f"Loaded scenario: {scenario.scenario_id}")
@@ -611,7 +671,7 @@ if __name__ == "__main__":
     if static_map:
         print(f"Loaded static map from: {map_files[0].name}")
 
-    is_pred = 'pred' in input_dir.parts
+    is_pred = "pred" in input_dir.parts
 
     if args.output:
         output_dir = Path(args.output)
@@ -622,14 +682,22 @@ if __name__ == "__main__":
     output_dir.mkdir(parents=True, exist_ok=True)
 
     suffix = "pred" if is_pred else ""
-    filename = f"{scenario_id}{suffix}.gif" if args.animate else f"{scenario_id}{suffix}_plot.png"
+    filename = (
+        f"{scenario_id}{suffix}.gif"
+        if args.animate
+        else f"{scenario_id}{suffix}_plot.png"
+    )
     output_path = output_dir / filename
 
     if args.animate:
         print(f"Saving animation to {output_path}...")
-        visualize_scenario_animation(scenario, static_map=static_map, save_path=str(output_path))
+        visualize_scenario_animation(
+            scenario, static_map=static_map, save_path=str(output_path)
+        )
         print(f"Animation saved to {output_path}")
     else:
-        fig = visualize_scenario(scenario, static_map=static_map, timestep=args.timestep)
+        fig = visualize_scenario(
+            scenario, static_map=static_map, timestep=args.timestep
+        )
         plt.savefig(output_path)
         print(f"Saved to {output_path}")
