@@ -1,23 +1,88 @@
+import argparse
+import hashlib
 import os
 import random
 import shutil
-import hashlib
 from pathlib import Path
 
-# ---------------- CONFIG ----------------
-SOURCE_DIR = Path("data/processed/train")
-TRAIN_OUT = Path("train_split")
 
-SOURCE_VAL_DIR = Path("data/processed/val")
-VAL_OUT = Path("validation_split")
+DEFAULT_SOURCE_DIR = Path("data/processed/train")
+DEFAULT_TRAIN_OUT = Path("train_split")
 
-TRAIN_SIZE = 16_000
-VAL_SIZE = 4_000
+DEFAULT_SOURCE_VAL_DIR = Path("data/processed/val")
+DEFAULT_VAL_OUT = Path("validation_split")
 
-SEED = 42
+DEFAULT_TRAIN_SIZE = 16_000
+DEFAULT_VAL_SIZE = 4_000
 
-HASH_FILE_CONTENTS = False
-# ----------------------------------------
+DEFAULT_SEED = 42
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Create reproducible train/validation dataset splits "
+            "from preprocessed SMART AV2 data."
+        )
+    )
+
+    parser.add_argument(
+        "--source-dir",
+        type=Path,
+        default=DEFAULT_SOURCE_DIR,
+        help="Source directory for training samples."
+    )
+
+    parser.add_argument(
+        "--source-val-dir",
+        type=Path,
+        default=DEFAULT_SOURCE_VAL_DIR,
+        help="Source directory for validation samples."
+    )
+
+    parser.add_argument(
+        "--train-out",
+        type=Path,
+        default=DEFAULT_TRAIN_OUT,
+        help="Output directory for train split."
+    )
+
+    parser.add_argument(
+        "--val-out",
+        type=Path,
+        default=DEFAULT_VAL_OUT,
+        help="Output directory for validation split."
+    )
+
+    parser.add_argument(
+        "--train-size",
+        type=int,
+        default=DEFAULT_TRAIN_SIZE,
+        help="Number of train samples."
+    )
+
+    parser.add_argument(
+        "--val-size",
+        type=int,
+        default=DEFAULT_VAL_SIZE,
+        help="Number of validation samples."
+    )
+
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help="Random seed for reproducibility."
+    )
+
+    parser.add_argument(
+        "--hash-file-contents",
+        action="store_true",
+        help="Include file contents in dataset hash."
+    )
+
+    return parser.parse_args()
 
 
 def collect_files(source_dir: Path):
@@ -34,7 +99,8 @@ def collect_files(source_dir: Path):
 def sample_files(all_files, sample_size):
     if len(all_files) < sample_size:
         raise ValueError(
-            f"Not enough files: found {len(all_files)}, need {sample_size}"
+            f"Not enough files: found {len(all_files)}, "
+            f"need {sample_size}"
         )
 
     random.shuffle(all_files)
@@ -67,68 +133,106 @@ def hash_file_contents(file_path):
     return sha256.hexdigest()
 
 
-def generate_dataset_hash(file_list, source_root):
+def generate_dataset_hash(
+    file_list,
+    source_root,
+    hash_contents=False
+):
     sha256 = hashlib.sha256()
 
     for file_path in sorted(file_list):
         relative_path = str(file_path.relative_to(source_root))
         sha256.update(relative_path.encode())
 
-        if HASH_FILE_CONTENTS:
+        if hash_contents:
             content_hash = hash_file_contents(file_path)
             sha256.update(content_hash.encode())
 
     return sha256.hexdigest()
 
 
+def process_split(
+    source_dir: Path,
+    output_dir: Path,
+    sample_size: int,
+    manifest_path: Path,
+    hash_path: Path,
+    seed: int,
+    hash_contents: bool,
+    split_name: str,
+):
+    all_files = collect_files(source_dir)
+
+    print(
+        f"Found {len(all_files)} files in {source_dir}"
+    )
+
+    sampled_files = sample_files(all_files, sample_size)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print(
+        f"Copying {len(sampled_files)} "
+        f"{split_name} files → {output_dir}"
+    )
+
+    copy_files(
+        sampled_files,
+        source_dir,
+        output_dir
+    )
+
+    write_manifest(
+        sampled_files,
+        source_dir,
+        manifest_path
+    )
+
+    dataset_hash = generate_dataset_hash(
+        sampled_files,
+        source_dir,
+        hash_contents=hash_contents
+    )
+
+    with open(hash_path, "w") as f:
+        f.write(f"seed={seed}\n")
+        f.write(f"hash={dataset_hash}\n")
+
+    print(
+        f"{split_name.capitalize()} dataset hash: "
+        f"{dataset_hash}"
+    )
+
+
 def main():
-    random.seed(SEED)
+    args = parse_args()
 
-    # -------- TRAIN --------
-    train_all_files = collect_files(SOURCE_DIR)
-    train_files = sample_files(train_all_files, TRAIN_SIZE)
+    random.seed(args.seed)
 
-    TRAIN_OUT.mkdir(parents=True, exist_ok=True)
-
-    print(f"Copying {len(train_files)} train files → {TRAIN_OUT}")
-    copy_files(train_files, SOURCE_DIR, TRAIN_OUT)
-
-    write_manifest(
-        train_files,
-        SOURCE_DIR,
-        TRAIN_OUT / "train_manifest.txt"
+    process_split(
+        source_dir=args.source_dir,
+        output_dir=args.train_out,
+        sample_size=args.train_size,
+        manifest_path=SCRIPT_DIR / "train_manifest.txt",
+        hash_path=SCRIPT_DIR / "train_dataset_hash.txt",
+        seed=args.seed,
+        hash_contents=args.hash_file_contents,
+        split_name="train",
     )
 
-    train_hash = generate_dataset_hash(train_files, SOURCE_DIR)
-
-    with open(TRAIN_OUT / "dataset_hash.txt", "w") as f:
-        f.write(f"seed={SEED}\n")
-        f.write(f"hash={train_hash}\n")
-
-    # -------- VALIDATION --------
-    val_all_files = collect_files(SOURCE_VAL_DIR)
-    val_files = sample_files(val_all_files, VAL_SIZE)
-
-    VAL_OUT.mkdir(parents=True, exist_ok=True)
-
-    print(f"Copying {len(val_files)} validation files → {VAL_OUT}")
-    copy_files(val_files, SOURCE_VAL_DIR, VAL_OUT)
-
-    write_manifest(
-        val_files,
-        SOURCE_VAL_DIR,
-        VAL_OUT / "validation_manifest.txt"
+    process_split(
+        source_dir=args.source_val_dir,
+        output_dir=args.val_out,
+        sample_size=args.val_size,
+        manifest_path=SCRIPT_DIR / "validation_manifest.txt",
+        hash_path=SCRIPT_DIR / "validation_dataset_hash.txt",
+        seed=args.seed,
+        hash_contents=args.hash_file_contents,
+        split_name="validation",
     )
-
-    val_hash = generate_dataset_hash(val_files, SOURCE_VAL_DIR)
-
-    with open(VAL_OUT / "dataset_hash.txt", "w") as f:
-        f.write(f"seed={SEED}\n")
-        f.write(f"hash={val_hash}\n")
 
     print("Done ✔")
 
 
-# This script creates reproducible train and validation datasets by sampling from the ALREADY PREPROCESSED source directories.
 if __name__ == "__main__":
     main()

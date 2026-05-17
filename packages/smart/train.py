@@ -215,6 +215,13 @@ if __name__ == "__main__":
 
     parser.add_argument("--devices", type=int, default=None, help="Number of GPU devices to use for training")
 
+    parser.add_argument(
+        "--num_cpu_workers",
+        type=int,
+        default=None,
+        help="Number of CPU workers for data loading; if not provided, will use value from config",
+    )
+
     args = parser.parse_args()
     config = load_config_act(args.config)
 
@@ -245,6 +252,9 @@ if __name__ == "__main__":
 
     if args.devices is not None:
         config.Trainer.devices = args.devices
+    
+    if args.num_cpu_workers is not None:
+        config.Dataset.num_cpu_workers = args.num_cpu_workers
 
     Predictor = Predictor_hash[config.Model.predictor]
 
