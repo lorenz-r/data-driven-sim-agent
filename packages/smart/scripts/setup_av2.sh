@@ -157,8 +157,8 @@ if [[ "$CREATE_SPLITS" == "1" ]]; then
     export HASH_FILE_CONTENTS
 
     python "$SCRIPT_DIR/create_datasets.py" \
-        --train_size "$TRAIN_SIZE" \
-        --val_size "$VAL_SIZE" \
+        --train-size "$TRAIN_SIZE" \
+        --val-size "$VAL_SIZE" \
         --seed "$SPLIT_SEED" \
 
 fi
