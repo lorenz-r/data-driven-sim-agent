@@ -49,7 +49,7 @@ def run_inference(
         logger = Logging().log(level="DEBUG")
         print(f"Loading checkpoint: {checkpoint_path}")
         model.load_params_from_file(
-            checkpoint_path, logger=None, to_cpu=(device == "cpu")
+            checkpoint_path, logger=logger, to_cpu=(device == "cpu")
         )
     model.eval()
 
