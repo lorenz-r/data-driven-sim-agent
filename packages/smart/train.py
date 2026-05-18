@@ -349,6 +349,7 @@ if __name__ == "__main__":
         every_n_epochs=1,
         save_top_k=5,
         mode="min",
+        save_last=True,
     )
     lr_monitor = LearningRateMonitor(logging_interval="epoch")
     loss_tracker = EpochLossTracker(loss_key=args.loss_key)

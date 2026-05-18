@@ -299,7 +299,7 @@ class SMART(pl.LightningModule):
             % (filename, "CPU" if to_cpu else "GPU")
         )
         loc_type = torch.device("cpu") if to_cpu else None
-        checkpoint = torch.load(filename, map_location=loc_type, weights_only=False)
+        checkpoint = torch.load(filename, map_location=loc_type)
         model_state_disk = checkpoint["state_dict"]
 
         version = checkpoint.get("version", None)
