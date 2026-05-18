@@ -345,10 +345,10 @@ if __name__ == "__main__":
     model_checkpoint = ModelCheckpoint(
         dirpath=args.save_ckpt_path,
         filename="{epoch:02d}",
-        monitor="val_cls_acc",
+        monitor="train_loss_epoch",
         every_n_epochs=1,
         save_top_k=5,
-        mode="max",
+        mode="min",
     )
     lr_monitor = LearningRateMonitor(logging_interval="epoch")
     loss_tracker = EpochLossTracker(loss_key=args.loss_key)
