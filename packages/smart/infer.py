@@ -10,6 +10,7 @@ from smart.model.smart import SMART
 from smart.datasets.preprocess import TokenProcessor
 from torch_geometric.data import HeteroData
 from smart.utils.config import load_config_act
+from smart.utils.log import Logging
 # from convert_smart_av2 import smart_prediction_to_argoverse
 # from av2.datasets.motion_forecasting import scenario_serialization
 
@@ -45,6 +46,7 @@ def run_inference(
 
     model = SMART(config.Model)
     if checkpoint_path and Path(checkpoint_path).exists():
+        logger = Logging().log(level="DEBUG")
         print(f"Loading checkpoint: {checkpoint_path}")
         model.load_params_from_file(
             checkpoint_path, logger=None, to_cpu=(device == "cpu")
