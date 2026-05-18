@@ -30,7 +30,7 @@ COPY tests/ tests/
 # no system CUDA install needed. Only the host NVIDIA driver is required.
 # ---------------------------------------------------------------------------
 RUN --mount=type=cache,target=/tmp/.uv-cache \
-    UV_FROZEN=1 uv sync --all-packages --extra gpu
+    UV_FROZEN=1 uv sync --all-packages
 
 # ---------------------------------------------------------------------------
 # Runtime — use with: docker run --gpus all ...

@@ -29,10 +29,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Optimizer
 
-from logger import Logger
-import utils.baseline_config as config
-import utils.baseline_utils as baseline_utils
-from utils.lstm_utils import ModelUtils, LSTMDataset
+from argoverse_forecasting.logger import Logger
+import argoverse_forecasting.utils.baseline_config as config
+import argoverse_forecasting.utils.baseline_utils as baseline_utils
+from argoverse_forecasting.utils.lstm_utils import ModelUtils, LSTMDataset
 
 use_cuda = torch.cuda.is_available()
 if use_cuda:

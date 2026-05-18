@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from utils.baseline_config import (
+from argoverse_forecasting.utils.baseline_config import (
     PADDING_TYPE,
     STATIONARY_THRESHOLD,
     VELOCITY_THRESHOLD,

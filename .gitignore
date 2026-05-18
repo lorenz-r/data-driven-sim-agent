@@ -29,7 +29,9 @@ htmlcov/
 
 # Additional files
 .env
-packages/smart/data
-packages/smart/wandb
-packages/smart/Miniconda3-latest-Linux-x86_64.sh
-packages/smart/lightning_logs
+/packages/smart/data
+/packages/smart/wandb
+/packages/smart/Miniconda3-latest-Linux-x86_64.sh
+/packages/smart/lightning_logs
+/packages/smart-preprocess/target/
+/.sim_integration_out/

@@ -16,7 +16,7 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.pipeline import Pipeline
 
-import utils.baseline_utils as baseline_utils
+import argoverse_forecasting.utils.baseline_utils as baseline_utils
 
 PREDICTION_HORIZONS = [30]
 

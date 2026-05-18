@@ -1,4 +1,5 @@
 from argparse import ArgumentParser
+from pathlib import Path
 from typing import Optional
 import json
 import os
@@ -138,11 +139,15 @@ if wandb_api_key:
 else:
     print("WANDB_API_KEY not set — running without wandb logging")
 
+_SCRIPT_DIR = Path(__file__).parent
+
 if __name__ == "__main__":
     parser = ArgumentParser()
     Predictor_hash = {"smart": SMART}
     parser.add_argument(
-        "--config", type=str, default="configs/train/train_overfitting.yaml"
+        "--config",
+        type=str,
+        default=str(_SCRIPT_DIR / "configs/train/train_overfitting.yaml"),
     )
 
     # Add arguments to override config values from the command line. This is helpful for top-level hyperparameter search scripts that want to sweep over a few parameters without needing to create a separate config file for each run.
@@ -175,14 +180,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--train_path",
         type=str,
+        nargs="+",
         default=None,
-        help="Optional override for training data path; if not provided, will use path from config",
+        help="One or more training data directories; overrides config if provided.",
     )
     parser.add_argument(
         "--val_path",
         type=str,
+        nargs="+",
         default=None,
-        help="Optional override for validation data path; if not provided, will use path from config",
+        help="One or more validation data directories; overrides config if provided.",
     )
 
     # Optuna passes a trial number to the training script for each run, which can be used for logging and tracking purposes. We'll include it as an optional argument in case it's needed, but it won't affect the training logic directly.
@@ -400,6 +407,7 @@ if __name__ == "__main__":
         print("──────────────────────────────────────────\n")
 
         try:
+            Path(args.return_metrics).parent.mkdir(parents=True, exist_ok=True)
             with open(args.return_metrics, "w") as fh:
                 json.dump(metrics, fh, indent=2)
             print(f"Wrote metrics to {args.return_metrics}")

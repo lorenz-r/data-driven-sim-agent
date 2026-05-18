@@ -60,14 +60,16 @@ class AttentionLayer(MessagePassing):
         r: Optional[torch.Tensor],
         edge_index: torch.Tensor,
     ) -> torch.Tensor:
-        if isinstance(x, torch.Tensor):
+        if isinstance(
+            x, torch.Tensor
+        ):  # self attention => source and destination identical
             x_src = x_dst = self.attn_prenorm_x_src(x)
-        else:
+        else:  # cross attention => source and destination different
             x_src, x_dst = x
             x_src = self.attn_prenorm_x_src(x_src)
             x_dst = self.attn_prenorm_x_dst(x_dst)
             x = x[1]
-        if self.has_pos_emb and r is not None:
+        if self.has_pos_emb and r is not None:  # r is the RPE
             r = self.attn_prenorm_r(r)
         x = x + self.attn_postnorm(self._attn_block(x_src, x_dst, r, edge_index))
         x = x + self.ff_postnorm(self._ff_block(self.ff_prenorm(x)))
@@ -79,7 +81,7 @@ class AttentionLayer(MessagePassing):
         k_j: torch.Tensor,
         v_j: torch.Tensor,
         r: Optional[torch.Tensor],
-        index: torch.Tensor,
+        index: torch.Tensor,  # this is just here for efficient computations under the hood
         ptr: Optional[torch.Tensor],
     ) -> torch.Tensor:
         if self.has_pos_emb and r is not None:
@@ -94,7 +96,9 @@ class AttentionLayer(MessagePassing):
     def update(self, inputs: torch.Tensor, x_dst: torch.Tensor) -> torch.Tensor:
         inputs = inputs.view(-1, self.num_heads * self.head_dim)
         g = torch.sigmoid(self.to_g(torch.cat([inputs, x_dst], dim=-1)))
-        return inputs + g * (self.to_s(x_dst) - inputs)
+        return inputs + g * (
+            self.to_s(x_dst) - inputs
+        )  # gated update to the destination nodes
 
     def _attn_block(
         self,
@@ -103,8 +107,12 @@ class AttentionLayer(MessagePassing):
         r: Optional[torch.Tensor],
         edge_index: torch.Tensor,
     ) -> torch.Tensor:
-        q = self.to_q(x_dst).view(-1, self.num_heads, self.head_dim)
-        k = self.to_k(x_src).view(-1, self.num_heads, self.head_dim)
+        q = self.to_q(x_dst).view(
+            -1, self.num_heads, self.head_dim
+        )  # destination attends to the source context, hence queries made from x_dst
+        k = self.to_k(x_src).view(
+            -1, self.num_heads, self.head_dim
+        )  # context (keys and values) is formed from the source
         v = self.to_v(x_src).view(-1, self.num_heads, self.head_dim)
         agg = self.propagate(edge_index=edge_index, x_dst=x_dst, q=q, k=k, v=v, r=r)
         return self.to_out(agg)

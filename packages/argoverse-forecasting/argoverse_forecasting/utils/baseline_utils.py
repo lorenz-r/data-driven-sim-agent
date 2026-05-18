@@ -16,7 +16,7 @@ from shapely.geometry import LineString, LinearRing
 from shapely.affinity import affine_transform, rotate
 from sklearn.model_selection import GridSearchCV
 
-from utils.baseline_config import (
+from argoverse_forecasting.utils.baseline_config import (
     BASELINE_INPUT_FEATURES,
     BASELINE_OUTPUT_FEATURES,
     FEATURE_FORMAT,

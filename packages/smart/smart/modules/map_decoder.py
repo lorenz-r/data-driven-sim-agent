@@ -96,7 +96,9 @@ class SMARTMapDecoder(nn.Module):
         pt_token_emb_src = self.token_emb(
             token_sample_pt.view(token_sample_pt.shape[0], -1)
         )
-        pt_token_emb = pt_token_emb_src[data["pt_token"]["token_idx"]]
+        pt_token_emb = pt_token_emb_src[
+            data["pt_token"]["token_idx"]
+        ]  # embeddings for the current map
 
         if self.input_dim == 2:
             x_pt = pt_token_emb
@@ -107,12 +109,18 @@ class SMARTMapDecoder(nn.Module):
 
         token2pl = data[("pt_token", "to", "map_polygon")]["edge_index"]
         token_light_type = data["map_polygon"]["light_type"][token2pl[1]]
+
+        # categorical semantic embeddings
         x_pt_categorical_embs = [
             self.type_pt_emb(data["pt_token"]["type"].long()),
             self.polygon_type_emb(data["pt_token"]["pl_type"].long()),
             self.light_pl_emb(token_light_type.long()),
         ]
-        x_pt = x_pt + torch.stack(x_pt_categorical_embs).sum(dim=0)
+        x_pt = x_pt + torch.stack(x_pt_categorical_embs).sum(
+            dim=0
+        )  # semantically enriched map embeddings
+
+        # build a subgraph of nodes within the specified radius (shape: [2, N_map_tokens])
         edge_index_pt2pt = radius_graph(
             x=pos_pt[:, :2],
             r=self.pl2pl_radius,
@@ -120,8 +128,11 @@ class SMARTMapDecoder(nn.Module):
             loop=False,
             max_num_neighbors=100,
         )
+
         if self.mask_pt:
             edge_index_pt2pt = subgraph(subset=mask_s, edge_index=edge_index_pt2pt)[0]
+
+        # calculate relative feature vectors
         rel_pos_pt2pt = pos_pt[edge_index_pt2pt[0]] - pos_pt[edge_index_pt2pt[1]]
         rel_orient_pt2pt = wrap_angle(
             orient_pt[edge_index_pt2pt[0]] - orient_pt[edge_index_pt2pt[1]]
@@ -153,10 +164,13 @@ class SMARTMapDecoder(nn.Module):
             )
         else:
             raise ValueError("{} is not a valid dimension".format(self.input_dim))
+
+        # relative positional embeddings of the above calculated vectors (RPE)
         r_pt2pt = self.r_pt2pt_emb(continuous_inputs=r_pt2pt, categorical_embs=None)
+
+        # encoder forward call and outputs
         for i in range(self.num_layers):
             x_pt = self.pt2pt_layers[i](x_pt, r_pt2pt, edge_index_pt2pt)
-
         next_token_prob = self.token_predict_head(x_pt[pt_pred_mask])
         next_token_prob_softmax = torch.softmax(next_token_prob, dim=-1)
         _, next_token_idx = torch.topk(next_token_prob_softmax, k=10, dim=-1)

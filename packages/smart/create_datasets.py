@@ -187,6 +187,53 @@ def main():
 
     random.seed(args.seed)
 
+    # Single-pool mode: when source and val source are the same directory,
+    # sample train + val together without overlap.
+    if args.source_dir.resolve() == args.source_val_dir.resolve():
+        all_files = collect_files(args.source_dir)
+        need = args.train_size + args.val_size
+        if len(all_files) < need:
+            raise ValueError(
+                f"Not enough files: found {len(all_files)}, "
+                f"need {args.train_size} + {args.val_size} = {need}"
+            )
+        random.shuffle(all_files)
+        train_files = all_files[: args.train_size]
+        val_files = all_files[args.train_size : need]
+
+        for files, src, out, name, manifest, hash_file in [
+            (
+                train_files,
+                args.source_dir,
+                args.train_out,
+                "train",
+                SCRIPT_DIR / "train_manifest.txt",
+                SCRIPT_DIR / "train_dataset_hash.txt",
+            ),
+            (
+                val_files,
+                args.source_dir,
+                args.val_out,
+                "validation",
+                SCRIPT_DIR / "validation_manifest.txt",
+                SCRIPT_DIR / "validation_dataset_hash.txt",
+            ),
+        ]:
+            out.mkdir(parents=True, exist_ok=True)
+            print(f"Copying {len(files)} {name} files → {out}")
+            copy_files(files, src, out)
+            write_manifest(files, src, manifest)
+            dataset_hash = generate_dataset_hash(
+                files, src, hash_contents=args.hash_file_contents
+            )
+            with open(hash_file, "w") as f:
+                f.write(f"seed={args.seed}\n")
+                f.write(f"hash={dataset_hash}\n")
+            print(f"-{name.capitalize()} dataset hash: {dataset_hash}")
+
+        print("Done ✔")
+        return
+
     process_split(
         source_dir=args.source_dir,
         output_dir=args.train_out,

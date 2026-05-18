@@ -9,8 +9,8 @@ import pickle as pkl
 
 from argoverse.evaluation.eval_forecasting import compute_forecasting_metrics
 from argoverse.map_representation.map_api import ArgoverseMap
-from utils.baseline_config import FEATURE_FORMAT
-from utils.baseline_utils import viz_predictions
+from argoverse_forecasting.utils.baseline_config import FEATURE_FORMAT
+from argoverse_forecasting.utils.baseline_utils import viz_predictions
 
 
 def parse_arguments():

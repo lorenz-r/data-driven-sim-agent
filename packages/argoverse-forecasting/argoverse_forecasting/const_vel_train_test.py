@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pickle as pkl
 
-from utils.baseline_config import FEATURE_FORMAT
+from argoverse_forecasting.utils.baseline_config import FEATURE_FORMAT
 
 
 def parse_arguments():

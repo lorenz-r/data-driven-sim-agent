@@ -73,7 +73,10 @@ class SMARTAgentDecoder(nn.Module):
         self.type_a_emb = nn.Embedding(4, hidden_dim)
         self.shape_emb = MLPLayer(3, hidden_dim, hidden_dim)
 
-        # Fourier is used for position and heading features, MLP is used for categorical features such as agent type and shape. The embeddings are then fused together for the final agent feature. The reason for using Fourier embedding for position and heading is that it can better capture the periodicity and relative differences in these features, which are important for modeling the motion of agents. The categorical features are embedded using MLP because they do not have the same properties as continuous features and can be better captured by a learnable embedding.
+        # Fourier is used for position and heading features, MLP is used for categorical features such as agent type and shape.
+        # The embeddings are then fused together for the final agent feature.
+        # The reason for using Fourier embedding for position and heading is that it can better capture the periodicity and relative differences in these features, which are important for modeling the motion of agents.
+        # The categorical features are embedded using MLP because they do not have the same properties as continuous features and can be better captured by a learnable embedding.
         self.x_a_emb = FourierEmbedding(
             input_dim=input_dim_x_a,
             hidden_dim=hidden_dim,

@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+RUST_PKG="packages/smart-preprocess"
+
 # Prefer running tooling from UV-managed environments so no external install is required.
 if command -v uv >/dev/null 2>&1; then
   echo "Running ruff format via uv (ephemeral or workspace-provided)..."
-  # Use uv to provide ruff if available in the workspace or install ephemeral
   uv run --with ruff -- ruff format .
   echo "ruff formatting complete."
+
+  # Rust: apply cargo fmt
+  if command -v cargo &>/dev/null; then
+      echo "Running cargo fmt..."
+      cargo fmt --manifest-path "$RUST_PKG/Cargo.toml"
+      echo "cargo fmt complete."
+  else
+      echo "cargo not found — skipping Rust format. Install via https://rustup.rs/" >&2
+  fi
   exit 0
 fi
 
@@ -18,5 +28,13 @@ fi
 
 echo "Running ruff format..."
 ruff format .
-
 echo "ruff formatting complete."
+
+# Rust: apply cargo fmt
+if command -v cargo &>/dev/null; then
+    echo "Running cargo fmt..."
+    cargo fmt --manifest-path "$RUST_PKG/Cargo.toml"
+    echo "cargo fmt complete."
+else
+    echo "cargo not found — skipping Rust format. Install via https://rustup.rs/" >&2
+fi

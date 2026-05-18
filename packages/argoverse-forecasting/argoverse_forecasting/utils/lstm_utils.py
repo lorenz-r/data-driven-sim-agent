@@ -11,7 +11,7 @@ import torch.nn as nn
 from torch.optim import Optimizer
 from torch.utils.data import Dataset
 
-import utils.baseline_config as config
+import argoverse_forecasting.utils.baseline_config as config
 
 use_cuda = torch.cuda.is_available()
 if use_cuda:

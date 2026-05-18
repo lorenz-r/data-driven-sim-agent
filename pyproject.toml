@@ -26,6 +26,7 @@ members = [
     "packages/argoverse-forecasting",
     "packages/sim-integration",
     "packages/smart",
+    "packages/smart-preprocess",
     "tests"
     ]
 
@@ -33,6 +34,8 @@ members = [
 sim-integration = { workspace = true }
 argoverse-forecasting = { workspace = true }
 integration-tests = { workspace = true }
+smart = { workspace = true }
+smart-preprocess = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests/src"]
@@ -50,4 +53,5 @@ exclude = [
 [dependency-groups]
 dev = [
     "pre-commit>=4.6.0",
+    "maturin>=1.0",
 ]

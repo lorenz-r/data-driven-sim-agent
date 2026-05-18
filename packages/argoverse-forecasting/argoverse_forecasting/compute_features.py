@@ -16,9 +16,12 @@ from joblib import Parallel, delayed
 import numpy as np
 import pandas as pd
 
-from utils.baseline_config import RAW_DATA_FORMAT, _FEATURES_SMALL_SIZE
-from utils.map_features_utils import MapFeaturesUtils
-from utils.social_features_utils import SocialFeaturesUtils
+from argoverse_forecasting.utils.baseline_config import (
+    RAW_DATA_FORMAT,
+    _FEATURES_SMALL_SIZE,
+)
+from argoverse_forecasting.utils.map_features_utils import MapFeaturesUtils
+from argoverse_forecasting.utils.social_features_utils import SocialFeaturesUtils
 
 
 def parse_arguments() -> argparse.Namespace:

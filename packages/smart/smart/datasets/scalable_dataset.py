@@ -1,5 +1,6 @@
 import os
 import pickle
+from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union
 from torch_geometric.data import Dataset
 from smart.utils.log import Logging
@@ -41,14 +42,16 @@ class MultiDataset(Dataset):
         self._raw_paths = []
         self._raw_file_dataset = []
         if raw_dir is not None:
+            # Accept a single str/Path as well as a list.
+            if isinstance(raw_dir, (str, Path)):
+                raw_dir = [raw_dir]
             self._raw_dir = raw_dir
             for raw_path in self._raw_dir:
-                raw_path = os.path.expanduser(os.path.normpath(raw_path))
-                dataset = "waymo"
-                file_list = os.listdir(raw_path)
+                p = Path(raw_path).expanduser().resolve()
+                file_list = sorted(os.listdir(p))
                 self._raw_file_names.extend(file_list)
-                self._raw_paths.extend([os.path.join(raw_path, f) for f in file_list])
-                self._raw_file_dataset.extend([dataset for _ in range(len(file_list))])
+                self._raw_paths.extend([str(p / f) for f in file_list])
+                self._raw_file_dataset.extend(["waymo"] * len(file_list))
         if self.root is not None:
             split_datainfo = os.path.join(root, "split_datainfo.pkl")
             with open(split_datainfo, "rb+") as f:

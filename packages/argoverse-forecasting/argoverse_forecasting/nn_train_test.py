@@ -15,8 +15,8 @@ from typing import Dict, Union
 import pandas as pd
 import time
 
-import utils.baseline_utils as baseline_utils
-from utils.nn_utils import Regressor
+import argoverse_forecasting.utils.baseline_utils as baseline_utils
+from argoverse_forecasting.utils.nn_utils import Regressor
 
 
 def parse_arguments():

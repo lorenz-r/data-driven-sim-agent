@@ -13,7 +13,7 @@ from argoverse.utils.centerline_utils import (
     remove_overlapping_lane_seq,
 )
 from argoverse.utils.mpl_plotting_utils import visualize_centerline
-from utils.baseline_config import (
+from argoverse_forecasting.utils.baseline_config import (
     _MANHATTAN_THRESHOLD,
     _DFS_THRESHOLD_FRONT_SCALE,
     _DFS_THRESHOLD_BACK_SCALE,

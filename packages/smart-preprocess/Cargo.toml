@@ -1,0 +1,23 @@
+[package]
+name = "smart_preprocess"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "smart_preprocess"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3       = { version = "0.23", features = ["extension-module"] }
+numpy      = "0.23"
+parquet    = { version = "53", default-features = false, features = ["arrow", "snap"] }
+arrow      = { version = "53", default-features = false, features = ["ffi"] }
+serde      = { version = "1",  features = ["derive"] }
+serde_json = "1"
+indexmap   = { version = "2", features = ["serde"] }
+anyhow     = "1"
+
+[profile.release]
+opt-level   = 3
+lto         = "fat"
+codegen-units = 1

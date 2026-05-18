@@ -1,0 +1,17 @@
+[project]
+name = "smart-preprocess"
+version = "0.1.0"
+description = "Fast AV2 preprocessing for SMART (Rust/PyO3)"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "torch>=2.0",
+    "numpy>=1.23",
+    "tqdm>=4.66,<5",
+]
+
+[build-system]
+requires = ["maturin>=1.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]

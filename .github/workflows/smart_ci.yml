@@ -32,15 +32,6 @@ jobs:
           preprocess_input: ${{ env.PREPROCESS_INPUT }}
           preprocess_output: ${{ env.PREPROCESS_OUTPUT }}
 
-      - name: Check training metrics
-        working-directory: packages/smart
-        run: |
-          cat metrics.json
-          accuracy=$(jq '.accuracy'      metrics.json)
-          loss_dec=$(jq '.loss_decrease' metrics.json)
-          awk -v d="$loss_dec" \
-            'BEGIN { if (d < 0) { print "\n FAIL: loss increased by " -d; exit 1 } }'
-            
   overfit-gpu:
     runs-on: ubuntu-latest  # swap to self-hosted GPU runner when available
     if: false               # disabled until GPU runner exists
@@ -58,14 +49,4 @@ jobs:
           storage: ${{ env.STORAGE }}
           preprocess_input: ${{ env.PREPROCESS_INPUT }}
           preprocess_output: ${{ env.PREPROCESS_OUTPUT }}
-
-      - name: Check training metrics
-        working-directory: packages/smart
-        run: |
-          cat metrics.json
-          accuracy=$(jq '.accuracy'      metrics.json)
-          loss_dec=$(jq '.loss_decrease' metrics.json)
-          awk -v a="$accuracy" -v m=${{ env.MIN_ACCURACY }} \
-            'BEGIN { if (a < m) { print "\n FAIL: accuracy " a " < " m; exit 1 } }'
-          awk -v d="$loss_dec" \
-            'BEGIN { if (d < 0) { print "\n FAIL: loss increased by " -d; exit 1 } }'
+          min_accuracy: ${{ env.MIN_ACCURACY }}
