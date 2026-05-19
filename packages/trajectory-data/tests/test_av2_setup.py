@@ -16,14 +16,18 @@ def _make_raw_split(directory: Path, split: str, n: int) -> None:
         (scenario / f"sample_{i:04d}.pkl").write_bytes(f"{split}-{i}".encode())
 
 
-def test_run_preprocess_writes_cache_metadata_and_current_symlink(tmp_path: Path) -> None:
+def test_run_preprocess_writes_cache_metadata_and_current_symlink(
+    tmp_path: Path,
+) -> None:
     raw_dir = tmp_path / "raw"
     processed_dir = tmp_path / "processed"
     _make_raw_split(raw_dir, "train", 3)
 
     calls: list[tuple[str, Path, Path]] = []
 
-    def preprocess_split(input_dir: Path, output_dir: Path, split: str) -> tuple[int, int]:
+    def preprocess_split(
+        input_dir: Path, output_dir: Path, split: str
+    ) -> tuple[int, int]:
         calls.append((split, input_dir, output_dir))
         for src in sorted(input_dir.rglob("*.pkl")):
             dest = output_dir / src.relative_to(input_dir)
