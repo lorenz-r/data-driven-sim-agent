@@ -36,12 +36,16 @@ bash test.sh
 | `packages/sim-integration` | Core simulation integration library |
 | `packages/smart` | SMART motion generation model and training |
 | `packages/smart-preprocess` | Rust/PyO3 AV2 preprocessor (`smart_preprocess` Python extension) |
-| `packages/trajectory-data` | Shared trajectory dataset download and split utilities |
+| `packages/trajectory-data` | Shared trajectory dataset download, cache, setup, and split utilities |
 | `tests/` | Bootstrap integration & test package |
 
 #### SMART data pipeline
 
 ##### 1. Full setup (download + preprocess + optional splits)
+
+AV2 download/cache/split orchestration lives in `packages/trajectory-data`.
+`packages/smart/scripts/setup_av2.py` is the SMART wrapper that calls the Rust
+preprocessor and writes SMART `.pkl` files.
 
 ```bash
 # Dev: stream first 100 scenarios, preprocess, no splits
@@ -66,7 +70,7 @@ Key flags:
 | `--downloads-dir` | `~/argoverse_cache` | Where the raw TARs are stored (see below) |
 | `--skip-download` | off | Skip download, go straight to preprocessing |
 | `--skip-preprocess` | off | Download only |
-| `--create-splits` | off | Run the shared trajectory-data splitter after preprocessing |
+| `--create-splits` | off | Run the shared `trajectory-data` splitter after preprocessing |
 
 ##### 2. Download cache
 
@@ -107,7 +111,7 @@ Results on 100 real scenarios: **38× speedup** (183 vs 4.8 scenarios/s),
 
 ```bash
 # Data preprocessing
-uv run packages/smart/scripts/setup_av2.py \
+uv run python packages/smart/scripts/setup_av2.py \
   --dev \
   --scenarios 10000 \
   --create-splits \

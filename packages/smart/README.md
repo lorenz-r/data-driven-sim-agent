@@ -30,7 +30,9 @@ In this monorepo, SMART dependencies are managed by the root `uv` workspace. Fro
 uv sync --package smart
 ```
 
-For the Argoverse 2 preprocessing flow used by this repository, see the top-level README before starting training.
+For the Argoverse 2 flow used by this repository, see the top-level README
+before starting training. Shared AV2 download/cache/split logic lives in
+`packages/trajectory-data`; SMART owns the conversion to SMART training files.
 
 ## Data installation
 
