@@ -2,13 +2,24 @@
 FROM ubuntu:24.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    LANG=C.UTF-8
+    LANG=C.UTF-8 \
+    CARGO_HOME=/root/.cargo \
+    RUSTUP_HOME=/root/.rustup \
+    PATH="/root/.cargo/bin:${PATH}"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         build-essential && \
     rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Rust
+# ---------------------------------------------------------------------------
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup-init.sh && \
+    sh rustup-init.sh -y --profile minimal && \
+    rm rustup-init.sh
+
 
 # ---------------------------------------------------------------------------
 # UV — pinned version for hermetic builds
