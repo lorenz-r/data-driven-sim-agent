@@ -1,0 +1,5 @@
+.venv
+data
+packages/smart/data
+**/__pycache__
+.git
