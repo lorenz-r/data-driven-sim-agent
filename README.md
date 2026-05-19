@@ -36,6 +36,7 @@ bash test.sh
 | `packages/sim-integration` | Core simulation integration library |
 | `packages/smart` | SMART motion generation model and training |
 | `packages/smart-preprocess` | Rust/PyO3 AV2 preprocessor (`smart_preprocess` Python extension) |
+| `packages/trajectory-data` | Shared trajectory dataset download and split utilities |
 | `tests/` | Bootstrap integration & test package |
 
 #### SMART data pipeline
@@ -65,7 +66,7 @@ Key flags:
 | `--downloads-dir` | `~/argoverse_cache` | Where the raw TARs are stored (see below) |
 | `--skip-download` | off | Skip download, go straight to preprocessing |
 | `--skip-preprocess` | off | Download only |
-| `--create-splits` | off | Run `create_datasets.py` after preprocessing |
+| `--create-splits` | off | Run the shared trajectory-data splitter after preprocessing |
 
 ##### 2. Download cache
 

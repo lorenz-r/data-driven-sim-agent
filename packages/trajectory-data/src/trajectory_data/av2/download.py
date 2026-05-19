@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-download_av2.py  –  Download AV2 motion-forecasting scenarios.
+Download AV2 motion-forecasting scenarios.
 
 Modes
 -----
@@ -26,8 +26,8 @@ The first directory that either already exists or can be created is used.
 
 Usage
 -----
-    uv run python packages/smart/scripts/download_av2.py --dev --scenarios 100
-    uv run python packages/smart/scripts/download_av2.py --full
+    uv run python -m trajectory_data.av2.download --dev --scenarios 100
+    uv run python -m trajectory_data.av2.download --full
 """
 
 from __future__ import annotations
@@ -420,8 +420,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--out",
         type=Path,
-        default=Path(__file__).parent.parent / "data" / "raw",
-        help="Output directory (default: packages/smart/data/raw)",
+        default=Path("data/raw"),
+        help="Output directory (default: data/raw)",
     )
     p.add_argument("--train-url", default=TRAIN_URL)
     p.add_argument("--val-url", default=VAL_URL)

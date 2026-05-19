@@ -27,6 +27,7 @@ members = [
     "packages/sim-integration",
     "packages/smart",
     "packages/smart-preprocess",
+    "packages/trajectory-data",
     "tests"
     ]
 
@@ -36,9 +37,10 @@ argoverse-forecasting = { workspace = true }
 integration-tests = { workspace = true }
 smart = { workspace = true }
 smart-preprocess = { workspace = true }
+trajectory-data = { workspace = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests/src"]
+testpaths = ["tests/src", "packages/trajectory-data/tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 markers = [
     "gpu: marks tests requiring a GPU",

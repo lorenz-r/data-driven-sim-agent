@@ -1,9 +1,14 @@
+"""Create reproducible train/validation splits from processed trajectory files."""
+
+from __future__ import annotations
+
 import argparse
 import hashlib
 import os
 import random
 import shutil
 from pathlib import Path
+from typing import Sequence
 
 
 DEFAULT_SOURCE_DIR = Path("data/processed/train")
@@ -17,14 +22,12 @@ DEFAULT_VAL_SIZE = 2_000
 
 DEFAULT_SEED = 42
 
-SCRIPT_DIR = Path(__file__).resolve().parent
 
-
-def parse_args():
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Create reproducible train/validation dataset splits "
-            "from preprocessed SMART AV2 data."
+            "from processed trajectory files."
         )
     )
 
@@ -83,7 +86,7 @@ def parse_args():
         help="Include file contents in dataset hash.",
     )
 
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def collect_files(source_dir: Path):
@@ -182,41 +185,51 @@ def process_split(
     print(f"{split_name.capitalize()} dataset hash: {dataset_hash}")
 
 
-def main():
-    args = parse_args()
+def create_splits(
+    *,
+    source_dir: Path,
+    source_val_dir: Path,
+    train_out: Path,
+    val_out: Path,
+    train_size: int,
+    val_size: int,
+    seed: int = DEFAULT_SEED,
+    hash_contents: bool = False,
+) -> None:
+    """Create train/validation splits from one or two processed-data pools."""
 
-    random.seed(args.seed)
+    random.seed(seed)
 
     # Single-pool mode: when source and val source are the same directory,
     # sample train + val together without overlap.
-    if args.source_dir.resolve() == args.source_val_dir.resolve():
-        all_files = collect_files(args.source_dir)
-        need = args.train_size + args.val_size
+    if source_dir.resolve() == source_val_dir.resolve():
+        all_files = collect_files(source_dir)
+        need = train_size + val_size
         if len(all_files) < need:
             raise ValueError(
                 f"Not enough files: found {len(all_files)}, "
-                f"need {args.train_size} + {args.val_size} = {need}"
+                f"need {train_size} + {val_size} = {need}"
             )
         random.shuffle(all_files)
-        train_files = all_files[: args.train_size]
-        val_files = all_files[args.train_size : need]
+        train_files = all_files[:train_size]
+        val_files = all_files[train_size:need]
 
         for files, src, out, name, manifest, hash_file in [
             (
                 train_files,
-                args.source_dir,
-                args.train_out,
+                source_dir,
+                train_out,
                 "train",
-                SCRIPT_DIR / "train_manifest.txt",
-                SCRIPT_DIR / "train_dataset_hash.txt",
+                train_out / "train_manifest.txt",
+                train_out / "train_dataset_hash.txt",
             ),
             (
                 val_files,
-                args.source_dir,
-                args.val_out,
+                source_dir,
+                val_out,
                 "validation",
-                SCRIPT_DIR / "validation_manifest.txt",
-                SCRIPT_DIR / "validation_dataset_hash.txt",
+                val_out / "validation_manifest.txt",
+                val_out / "validation_dataset_hash.txt",
             ),
         ]:
             out.mkdir(parents=True, exist_ok=True)
@@ -224,10 +237,10 @@ def main():
             copy_files(files, src, out)
             write_manifest(files, src, manifest)
             dataset_hash = generate_dataset_hash(
-                files, src, hash_contents=args.hash_file_contents
+                files, src, hash_contents=hash_contents
             )
             with open(hash_file, "w") as f:
-                f.write(f"seed={args.seed}\n")
+                f.write(f"seed={seed}\n")
                 f.write(f"hash={dataset_hash}\n")
             print(f"-{name.capitalize()} dataset hash: {dataset_hash}")
 
@@ -235,28 +248,42 @@ def main():
         return
 
     process_split(
-        source_dir=args.source_dir,
-        output_dir=args.train_out,
-        sample_size=args.train_size,
-        manifest_path=SCRIPT_DIR / "train_manifest.txt",
-        hash_path=SCRIPT_DIR / "train_dataset_hash.txt",
-        seed=args.seed,
-        hash_contents=args.hash_file_contents,
+        source_dir=source_dir,
+        output_dir=train_out,
+        sample_size=train_size,
+        manifest_path=train_out / "train_manifest.txt",
+        hash_path=train_out / "train_dataset_hash.txt",
+        seed=seed,
+        hash_contents=hash_contents,
         split_name="train",
     )
 
     process_split(
-        source_dir=args.source_val_dir,
-        output_dir=args.val_out,
-        sample_size=args.val_size,
-        manifest_path=SCRIPT_DIR / "validation_manifest.txt",
-        hash_path=SCRIPT_DIR / "validation_dataset_hash.txt",
-        seed=args.seed,
-        hash_contents=args.hash_file_contents,
+        source_dir=source_val_dir,
+        output_dir=val_out,
+        sample_size=val_size,
+        manifest_path=val_out / "validation_manifest.txt",
+        hash_path=val_out / "validation_dataset_hash.txt",
+        seed=seed,
+        hash_contents=hash_contents,
         split_name="validation",
     )
 
     print("Done ✔")
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
+    create_splits(
+        source_dir=args.source_dir,
+        source_val_dir=args.source_val_dir,
+        train_out=args.train_out,
+        val_out=args.val_out,
+        train_size=args.train_size,
+        val_size=args.val_size,
+        seed=args.seed,
+        hash_contents=args.hash_file_contents,
+    )
 
 
 if __name__ == "__main__":

@@ -34,7 +34,6 @@ import argparse
 import hashlib
 import io
 import json
-import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -246,38 +245,23 @@ def run_splits(
     val_src = cache_dir / "val"
 
     # In --dev mode there is no val split — fall back to the train pool.
-    # create_datasets.py detects source-dir == source-val-dir and samples
+    # The shared trajectory-data splitter detects equal source dirs and samples
     # without overlap.
     if not val_src.exists() or not any(val_src.iterdir()):
         print(f"  val/ not found or empty in {cache_dir}, carving val from train pool.")
         val_src = train_src
 
-    create_datasets = SMART_ROOT / "create_datasets.py"
-    subprocess.run(
-        [
-            "uv",
-            "run",
-            "python",
-            str(create_datasets),
-            "--source-dir",
-            str(train_src),
-            "--source-val-dir",
-            str(val_src),
-            "--train-out",
-            str(train_out),
-            "--val-out",
-            str(val_out),
-            "--train-size",
-            str(train_size),
-            "--val-size",
-            str(val_size),
-            "--seed",
-            str(seed),
-            *(["--hash-file-contents"] if hash_contents else []),
-        ],
-        check=True,
-        cwd=SMART_ROOT,
-        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    from trajectory_data.splits import create_splits
+
+    create_splits(
+        source_dir=train_src,
+        source_val_dir=val_src,
+        train_out=train_out,
+        val_out=val_out,
+        train_size=train_size,
+        val_size=val_size,
+        seed=seed,
+        hash_contents=hash_contents,
     )
 
 
@@ -363,8 +347,7 @@ def main() -> None:
         # TAR via a cheap HEAD request.  In dev mode we just use a placeholder
         # (dev scenarios carry no stable identity across re-streams).
         if args.mode == "full":
-            sys.path.insert(0, str(Path(__file__).parent))
-            from download_av2 import _head, TRAIN_URL
+            from trajectory_data.av2.download import TRAIN_URL, _head
 
             url = args.train_url if hasattr(args, "train_url") else TRAIN_URL
             tar_etag, _ = _head(url)
@@ -372,8 +355,7 @@ def main() -> None:
             tar_etag = "dev-no-cache"
         print(f"Skipping download; ETag: {tar_etag}")
     else:
-        sys.path.insert(0, str(Path(__file__).parent))
-        from download_av2 import ensure_downloaded
+        from trajectory_data.av2.download import ensure_downloaded
 
         print("=" * 55)
         print("STEP 1 — Download")

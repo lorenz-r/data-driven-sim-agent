@@ -20,7 +20,8 @@ dependencies = [
     "wandb>=0.26,<1",
     "python-dotenv>=1.0,<2",
     "av2",
-    "opencv-python"
+    "opencv-python",
+    "trajectory-data",
 ]
 
 [build-system]

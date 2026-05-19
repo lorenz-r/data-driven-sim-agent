@@ -19,6 +19,7 @@ members = [
     "sim-integration",
     "smart",
     "smart-preprocess",
+    "trajectory-data",
 ]
 
 [[manifest.dependency-metadata]]
@@ -1622,6 +1623,7 @@ dependencies = [
     { name = "torch-scatter", version = "2.1.2+pt26cu124", source = { registry = "https://data.pyg.org/whl/torch-2.6.0+cu124.html" }, marker = "(platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32')" },
     { name = "torchmetrics" },
     { name = "tqdm" },
+    { name = "trajectory-data" },
     { name = "wandb" },
 ]
 
@@ -1642,6 +1644,7 @@ requires-dist = [
     { name = "torch-scatter", specifier = ">=2.1.2,<2.2" },
     { name = "torchmetrics", specifier = ">=1.6.0,<2" },
     { name = "tqdm", specifier = ">=4.66,<5" },
+    { name = "trajectory-data", editable = "packages/trajectory-data" },
     { name = "wandb", specifier = ">=0.26,<1" },
 ]
 
@@ -1828,6 +1831,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd
 wheels = [
     { url = "https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl", hash = "sha256:ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf", size = 78374, upload-time = "2026-02-03T17:35:50.982Z" },
 ]
+
+[[package]]
+name = "trajectory-data"
+version = "0.1.0"
+source = { editable = "packages/trajectory-data" }
 
 [[package]]
 name = "triton"
