@@ -172,7 +172,7 @@ def visualize_scenario_animation(
         for state in track.object_states:
             if state.timestep > max_timestep:
                 max_timestep = state.timestep
-    num_timesteps = max_timestep + 1
+    num_timesteps = int(max_timestep) + 1
 
     fig, ax = plt.subplots(figsize=(12, 10))
     ax.set_aspect("equal")
