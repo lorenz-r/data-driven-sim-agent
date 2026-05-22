@@ -9,6 +9,11 @@ build/
 # UV
 .uv-cache/
 
+# Local environment files
+.env
+.env.*
+!.env.example
+
 # IDE
 .idea/
 .vscode/
@@ -28,7 +33,6 @@ htmlcov/
 *.ckpt
 
 # Additional files
-.env
 /packages/smart/data
 /packages/smart/wandb
 /packages/smart/Miniconda3-latest-Linux-x86_64.sh
