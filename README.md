@@ -145,6 +145,8 @@ uv run packages/smart/train.py \
   --hidden_dim 128 \
   --save_ckpt_path checkpoints/run_01 \
   --return_metrics metrics/run_01.json \
+  --profile simple \
+  --profile_dir profiles/run_01 \
   --max_epochs 100 \
   --train_batch_size 32 \
   --val_batch_size 32 \
@@ -189,3 +191,42 @@ docker run --rm --gpus all sim-agent
 SMART training uses wandb. Add your API key to a `.env` file in `packages/smart/`
 (see comments in `packages/smart/train.py`). To run without logging, comment out
 the wandb calls in that file.
+
+#### Training profiling
+
+Training profiling is opt-in from the command line. For Azure VM runs, start with
+the lightweight Lightning timing log:
+
+```bash
+uv run packages/smart/train.py \
+  --config packages/smart/configs/train/train_scalable.yaml \
+  --train_path datasets/train \
+  --val_path datasets/val \
+  --profile simple \
+  --profile_dir profiles/azure_run_01
+```
+
+The run prints the profiler file paths at the end. If wandb is enabled, the
+files are also attached to the training run as a `training-profile` artifact.
+Use `--no_profile_wandb` to keep the files local only.
+
+Available modes:
+
+| Mode | Output | Use case |
+|---|---|---|
+| `simple` | compact text timing log | quick answer to what takes longest |
+| `advanced` | detailed cProfile text log + one merged `.prof` file | deeper Python-side bottlenecks |
+| `pytorch` | Chrome/TensorBoard trace files | GPU/operator-level inspection |
+
+The merged `.prof` file from `--profile advanced` can be opened with SnakeViz:
+
+```bash
+uv tool run snakeviz profiles/azure_run_01/*.merged.prof
+```
+
+Lightning creates one raw `.prof` per profiled action internally. Training merges
+those into the `*.merged.prof` file and removes the per-action files by default.
+Pass `--keep_profile_action_files` if you want to inspect individual actions.
+
+PyTorch traces can become large on full training runs, so prefer `simple` first
+and use `pytorch` on a short profiling run.

@@ -3,11 +3,15 @@ from pathlib import Path
 from typing import Optional
 import json
 import os
+import pstats
 import pytorch_lightning as pl
 from dotenv import load_dotenv
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.profilers import AdvancedProfiler
+from pytorch_lightning.profilers import PyTorchProfiler
+from pytorch_lightning.profilers import SimpleProfiler
 from pytorch_lightning.strategies import DDPStrategy
 import wandb
 from smart.utils.config import load_config_act
@@ -55,6 +59,97 @@ class EpochLossTracker(pl.Callback):
         if self.start_loss is not None and self.end_loss is not None:
             return self.start_loss - self.end_loss
         return None
+
+
+def _profile_file_snapshot(profile_dir: Path) -> dict[Path, tuple[int, int]]:
+    if not profile_dir.exists():
+        return {}
+    return {
+        path: (path.stat().st_mtime_ns, path.stat().st_size)
+        for path in profile_dir.rglob("*")
+        if path.is_file()
+    }
+
+
+def _profile_files(
+    profile_dir: Path,
+    before: dict[Path, tuple[int, int]],
+) -> list[Path]:
+    if not profile_dir.exists():
+        return []
+    return sorted(
+        path
+        for path in profile_dir.rglob("*")
+        if path.is_file()
+        and before.get(path) != (path.stat().st_mtime_ns, path.stat().st_size)
+    )
+
+
+def _build_profiler(profile: str, profile_dir: Path, profile_name: str):
+    if profile == "off":
+        return None
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+    if profile == "simple":
+        return SimpleProfiler(dirpath=str(profile_dir), filename=f"{profile_name}.txt")
+    if profile == "advanced":
+        return AdvancedProfiler(
+            dirpath=str(profile_dir),
+            filename=f"{profile_name}.txt",
+            dump_stats=True,
+        )
+    if profile == "pytorch":
+        return PyTorchProfiler(
+            dirpath=str(profile_dir),
+            filename=profile_name,
+            export_to_chrome=True,
+            profile_memory=True,
+            record_shapes=True,
+            with_stack=True,
+        )
+
+    raise ValueError(f"Unknown profiler: {profile}")
+
+
+def _merge_profiler_stats(
+    profile_files: list[Path],
+    merged_path: Path,
+    keep_action_files: bool,
+) -> list[Path]:
+    prof_files = [
+        path for path in profile_files if path.suffix == ".prof" and path != merged_path
+    ]
+    if not prof_files:
+        return profile_files
+
+    stats = pstats.Stats(str(prof_files[0]))
+    for path in prof_files[1:]:
+        stats.add(str(path))
+    stats.dump_stats(str(merged_path))
+
+    if not keep_action_files:
+        for path in prof_files:
+            path.unlink(missing_ok=True)
+
+    retained_files = [
+        path for path in profile_files if path.suffix != ".prof" or keep_action_files
+    ]
+    return sorted({*retained_files, merged_path})
+
+
+def _log_profile_outputs_to_wandb(
+    wandb_logger: Optional[WandbLogger],
+    profile_files: list[Path],
+) -> None:
+    if wandb_logger is None or not profile_files:
+        return
+
+    artifact = wandb.Artifact("training-profile", type="profile")
+    for path in profile_files:
+        artifact.add_file(str(path), name=path.name)
+        wandb_logger.experiment.save(str(path), policy="now")
+    wandb_logger.experiment.log_artifact(artifact)
 
 
 def validate_dataset(datamodule, remove_bad_files=False):
@@ -452,7 +547,6 @@ def run_training(
 
     return metrics
 
-
 if __name__ == "__main__":
     parser = ArgumentParser()
     Predictor_hash = {"smart": SMART}
@@ -537,8 +631,53 @@ if __name__ == "__main__":
         default=None,
         help="Number of CPU workers for data loading; if not provided, will use value from config",
     )
+    parser.add_argument(
+        "--profile",
+        choices=("off", "simple", "advanced", "pytorch"),
+        default="off",
+        help=(
+            "Enable training profiling. 'simple' writes a compact timing log, "
+            "'advanced' writes cProfile details, and 'pytorch' writes a Chrome/"
+            "TensorBoard trace."
+        ),
+    )
+    parser.add_argument(
+        "--profile_dir",
+        type=str,
+        default="profiles",
+        help="Directory where profiler outputs are written.",
+    )
+    parser.add_argument(
+        "--profile_name",
+        type=str,
+        default=None,
+        help=(
+            "Profiler output base name. Defaults to smart_profile_trial-<trial_number>."
+        ),
+    )
+    parser.add_argument(
+        "--no_profile_wandb",
+        action="store_true",
+        help="Do not upload profiler outputs to the active wandb run.",
+    )
+    parser.add_argument(
+        "--keep_profile_action_files",
+        action="store_true",
+        help=(
+            "Keep per-action .prof files from the advanced profiler. By default "
+            "they are merged into one SnakeViz-friendly .prof file and removed."
+        ),
+    )
 
     args = parser.parse_args()
+
+    load_dotenv()
+    wandb_api_key = os.getenv("WANDB_API_KEY")
+    if wandb_api_key:
+        wandb.login(key=wandb_api_key)
+    else:
+        print("WANDB_API_KEY not set — running without wandb logging")
+
     config = load_config_act(args.config)
 
     # Override config values from CLI if provided
@@ -570,7 +709,7 @@ if __name__ == "__main__":
         config.Trainer.devices = args.devices
 
     if args.num_cpu_workers is not None:
-        config.Dataset.num_cpu_workers = args.num_cpu_workers
+        config.Dataset.num_workers = args.num_cpu_workers
 
     Predictor = Predictor_hash[config.Model.predictor]
 
@@ -614,6 +753,13 @@ if __name__ == "__main__":
 
     if args.cpu:
         trainer_config.accelerator = "cpu"
+
+    profile_dir = Path(args.profile_dir)
+    profile_name = args.profile_name or f"smart_profile_trial-{args.trial_number}"
+    profile_files_before = {}
+    if args.profile != "off":
+        profile_files_before = _profile_file_snapshot(profile_dir)
+    profiler = _build_profiler(args.profile, profile_dir, profile_name)
 
     # model_checkpoint = ModelCheckpoint(
     #     dirpath=args.save_ckpt_path,
@@ -678,12 +824,31 @@ if __name__ == "__main__":
         num_sanity_val_steps=0,
         gradient_clip_val=0.5,
         logger=wandb_logger,
+        profiler=profiler,
     )
 
     if args.ckpt_path == "":
         trainer.fit(model, datamodule)
     else:
         trainer.fit(model, datamodule, ckpt_path=args.ckpt_path)
+
+    profile_files = _profile_files(profile_dir, profile_files_before)
+    if args.profile != "off" and trainer.is_global_zero:
+        if args.profile == "advanced":
+            profile_files = _merge_profiler_stats(
+                profile_files=profile_files,
+                merged_path=profile_dir / f"{profile_name}.merged.prof",
+                keep_action_files=args.keep_profile_action_files,
+            )
+        if profile_files:
+            print("\n── Profiling outputs ─────────────────────")
+            for path in profile_files:
+                print(f"  {path}")
+            print("──────────────────────────────────────────\n")
+            if not args.no_profile_wandb:
+                _log_profile_outputs_to_wandb(wandb_logger, profile_files)
+        else:
+            print(f"No profiler files found in {profile_dir}")
 
     if args.return_metrics:
         metrics = get_training_metrics(
