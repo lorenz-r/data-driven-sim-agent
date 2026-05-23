@@ -2,6 +2,9 @@ import argparse
 import yaml
 from trainers.profiling import add_profiler_args
 from trainers.trainer_registry import TRAINER_REGISTRY
+from core.logging.logger_factory import (
+    create_logger,
+)
 
 # ============================================================
 # Config Utilities
@@ -225,6 +228,8 @@ if __name__ == "__main__":
 
     print(f"Using batch size: {batch_size}")
 
-    trainer = get_trainer(config)
+    wandb_logger = create_logger(config)
+
+    trainer = get_trainer(config, wandb_logger)
     results = trainer.train()
     print("Training results:", results)

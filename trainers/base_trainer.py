@@ -2,8 +2,9 @@ from abc import ABC, abstractmethod
 
 
 class BaseTrainer(ABC):
-    def __init__(self, config):
+    def __init__(self, config, wandb_logger=None):
         self.config = config
+        self.wandb_logger = wandb_logger
 
     @abstractmethod
     def train(self):

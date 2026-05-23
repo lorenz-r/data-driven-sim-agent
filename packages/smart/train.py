@@ -9,7 +9,6 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.strategies import DDPStrategy
-import wandb
 from smart.utils.config import load_config_act
 from smart.datamodules import MultiDataModule
 from smart.model import SMART
@@ -132,21 +131,7 @@ def validate_dataset(datamodule, remove_bad_files=False):
 
     return bad_files
 
-
 _SCRIPT_DIR = Path(__file__).resolve().parent
-
-
-def _login_wandb_if_available() -> Optional[str]:
-    load_dotenv()
-    load_dotenv(_SCRIPT_DIR / ".env")
-
-    wandb_api_key = os.getenv("WANDB_API_KEY")
-    if not wandb_api_key:
-        print("WANDB_API_KEY not set — running without wandb logging")
-        return None
-
-    wandb.login(key=wandb_api_key)
-    return wandb_api_key
 
 
 def run_training(
@@ -155,6 +140,7 @@ def run_training(
     validate_dataset_first: bool = False,
     remove_bad_files: bool = False,
     trial_number: int = 1000,  # When moving logging to top-level, do not forget to move this param as well
+    wandb_logger = None,  # Allow passing in an optional logger instance
     training_profiler: Optional[TrainingProfiler] = None,
 ):
     """
@@ -319,19 +305,7 @@ def run_training(
     # Logging
     # =========================================================
 
-    wandb_logger = None
-
     if config["logging"]["wandb_logging"]:
-        wandb_api_key = _login_wandb_if_available()
-
-        if wandb_api_key:
-            wandb_logger = WandbLogger(
-                project=config["logging"]["project_name"],
-                name=config["logging"].get(
-                    "run_name",
-                    f"trial-{trial_number}",
-                ),
-            )
 
             # SAFE CONFIG LOGGING
             #
@@ -469,9 +443,6 @@ def run_training(
     # =========================================================
     # Cleanup
     # =========================================================
-
-    if wandb_logger is not None:
-        wandb.finish()
 
     return metrics
 
