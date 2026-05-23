@@ -14,8 +14,8 @@ Dataset:
   num_workers: 1
   pin_memory: True
   persistent_workers: True
-  train_raw_dir: ["train_split"]
-  val_raw_dir: ["validation_split"]
+  train_raw_dir: ["packages/smart/train_split"]
+  val_raw_dir: ["packages/smart/validation_split"]
   test_raw_dir:
   transform: WaymoTargetBuilder
   train_processed_dir:
@@ -27,8 +27,8 @@ Dataset:
 Trainer:
   strategy: ddp_find_unused_parameters_false
   accelerator: "gpu"
-  devices: 2
-  max_epochs: 150
+  devices: 1
+  max_epochs: 30
   save_ckpt_path:
   num_nodes: 1
   mode:

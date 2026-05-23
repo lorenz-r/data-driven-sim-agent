@@ -107,7 +107,23 @@ uv run python packages/smart/scripts/benchmark_preprocess.py --scenarios 100
 Results on 100 real scenarios: **38× speedup** (183 vs 4.8 scenarios/s),
 100/100 field-level matches within tolerance.
 
+### Training
+
+Training has been refactored into a top level script to make it easier to switch between models and orchestrate hyperparameter searches. A quick explanation of the new components:
+
+- train.py: The general training script. Starts the training and calls model-specific trainers.
+- configs/train_params.yaml: Global training parameters. They will be used by train.py (unless overwritten by CLI arguments)
+- trainers/: Directory for managing the different trainers. They bridge the variety of approaches and configurations different models may use and make the unififed top-level interface possible.
+
+Example command for running the training:
+
+```bash
+uv run python train.py --model smart --learning-rate 0.000019 --train-path train_split_ --val-path train_split_test_copy/ --max-epochs 10 --weight-decay 0.01 --save_ckpt_path smart-checkpoints/run_01
+```
+
 ##### Training Command (on 2xA100 machine)
+
+This is the legacy approach of accessing SMART directly. The general training is preferred, but in case of bugs, the commands below can be used.
 
 ```bash
 # Data preprocessing

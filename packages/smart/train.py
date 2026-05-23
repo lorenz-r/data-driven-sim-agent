@@ -139,7 +139,293 @@ if wandb_api_key:
 else:
     print("WANDB_API_KEY not set — running without wandb logging")
 
-_SCRIPT_DIR = Path(__file__).parent
+_SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def run_training(
+    config: dict,
+    return_metrics_path: str = "",
+    validate_dataset_first: bool = False,
+    remove_bad_files: bool = False,
+    trial_number: int = 1000,  # When moving logging to top-level, do not forget to move this param as well
+):
+    """
+    Unified SMART training entrypoint.
+
+    Parameters
+    ----------
+    config : dict
+        Unified top-level project config from train.py
+
+    return_metrics_path : str
+        Optional JSON output path for metrics.
+
+    validate_dataset_first : bool
+        Validate dataset before training.
+
+    remove_bad_files : bool
+        Remove malformed files during validation.
+
+    trial_number : int
+        Optional Optuna trial number.
+    """
+
+    Predictor_hash = {
+        "smart": SMART,
+    }
+
+    # =========================================================
+    # Load SMART-native config
+    # =========================================================
+
+    smart_config = load_config_act(
+        str(_SCRIPT_DIR / "configs/train/train_overfitting.yaml")
+    )
+
+    # =========================================================
+    # Map unified config -> SMART config terminology
+    # =========================================================
+
+    # -------------------------
+    # Dataset
+    # -------------------------
+
+    smart_config.Dataset.train_raw_dir = [config["data"]["train_path"]]
+
+    smart_config.Dataset.val_raw_dir = [config["data"]["val_path"]]
+
+    smart_config.Dataset.train_batch_size = config["data"]["batch_size"]
+
+    smart_config.Dataset.val_batch_size = config["data"]["val_batch_size"]
+
+    smart_config.Dataset.num_cpu_workers = config["data"]["data_workers"]
+
+    # -------------------------
+    # Training
+    # -------------------------
+
+    smart_config.Trainer.max_epochs = config["training"]["max_epochs"]
+
+    smart_config.Trainer.devices = config["training"]["devices"]
+
+    # -------------------------
+    # Optimization
+    # -------------------------
+
+    smart_config.Model.lr = config["optimization"]["learning_rate"]
+
+    smart_config.Model.weight_decay = config["optimization"]["weight_decay"]
+
+    # Optional overrides if present
+    if "dropout" in config["model"]:
+        smart_config.Model.dropout = config["model"]["dropout"]
+
+    if "hidden_dim" in config["model"]:
+        smart_config.Model.hidden_dim = config["model"]["hidden_dim"]
+
+    # =========================================================
+    # Predictor
+    # =========================================================
+
+    Predictor = Predictor_hash[smart_config.Model.predictor]
+
+    # =========================================================
+    # Datamodule
+    # =========================================================
+
+    datamodule = MultiDataModule(**vars(smart_config.Dataset))
+
+    # =========================================================
+    # Dataset Validation
+    # =========================================================
+
+    if validate_dataset_first:
+        bad_files = validate_dataset(
+            datamodule,
+            remove_bad_files=remove_bad_files,
+        )
+
+        print(f"\nFound {len(bad_files)} malformed files.\n")
+
+    # =========================================================
+    # Model
+    # =========================================================
+
+    pretrain_ckpt = config["resume"].get(
+        "pretrain_checkpoint",
+        "",
+    )
+
+    if pretrain_ckpt == "":
+        model = Predictor(smart_config.Model)
+
+    else:
+        logger = Logging().log(level="DEBUG")
+
+        model = Predictor(smart_config.Model)
+
+        model.load_params_from_file(
+            filename=pretrain_ckpt,
+            logger=logger,
+        )
+
+    # =========================================================
+    # Strategy
+    # =========================================================
+
+    trainer_config = smart_config.Trainer
+
+    if trainer_config.devices > 1:
+        strategy = DDPStrategy(
+            find_unused_parameters=True,
+            gradient_as_bucket_view=True,
+        )
+
+    else:
+        strategy = "auto"
+
+    # =========================================================
+    # Logging
+    # =========================================================
+
+    wandb_logger = None
+
+    if config["logging"]["wandb_logging"]:
+        wandb_logger = WandbLogger(
+            project=config["logging"]["project_name"],
+            name=config["logging"].get(
+                "run_name",
+                f"trial-{trial_number}",
+            ),
+        )
+
+        # SAFE CONFIG LOGGING
+        #
+        # Avoid logging raw objects/classes.
+        # Only log primitive serializable values.
+
+        flat_config = {
+            "learning_rate": config["optimization"]["learning_rate"],
+            "batch_size": config["data"]["batch_size"],
+            "max_epochs": config["training"]["max_epochs"],
+            "devices": config["training"]["devices"],
+            "weight_decay": config["optimization"]["weight_decay"],
+        }
+
+        wandb_logger.experiment.config.update(flat_config)
+
+    # =========================================================
+    # Callbacks
+    # =========================================================
+
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=config["checkpointing"]["save_dir"],
+        filename="{epoch:02d}",
+        monitor=config["checkpointing"]["checkpoint_metric"],
+        save_top_k=config["checkpointing"]["top_k_checkpoints"],
+        mode=config["checkpointing"]["mode"],
+        every_n_epochs=1,
+        save_last=True,
+    )
+
+    lr_monitor = LearningRateMonitor(logging_interval="epoch")
+
+    loss_tracker = EpochLossTracker(loss_key="train_loss")
+
+    callbacks = [
+        checkpoint_callback,
+        lr_monitor,
+        loss_tracker,
+    ]
+
+    # =========================================================
+    # Early Stopping
+    # =========================================================
+
+    if config["early_stopping"]["enabled"]:
+        from pytorch_lightning.callbacks import (
+            EarlyStopping,
+        )
+
+        early_stop_callback = EarlyStopping(
+            monitor=config["early_stopping"]["monitor"],
+            patience=config["early_stopping"]["patience"],
+            mode=config["early_stopping"]["mode"],
+        )
+
+        callbacks.append(early_stop_callback)
+
+    # =========================================================
+    # Trainer
+    # =========================================================
+
+    trainer = pl.Trainer(
+        accelerator=trainer_config.accelerator,
+        devices=trainer_config.devices,
+        strategy=strategy,
+        accumulate_grad_batches=trainer_config.accumulate_grad_batches,
+        num_nodes=trainer_config.num_nodes,
+        callbacks=callbacks,  # Only early stopping is conditional, the rest are always included
+        max_epochs=trainer_config.max_epochs,
+        num_sanity_val_steps=0,
+        gradient_clip_val=0.5,
+        logger=wandb_logger,
+    )
+
+    # =========================================================
+    # Resume Checkpoint
+    # =========================================================
+
+    ckpt_path = config["resume"].get(
+        "checkpoint_path",
+        "",
+    )
+
+    if ckpt_path == "":
+        trainer.fit(model, datamodule)
+
+    else:
+        trainer.fit(
+            model,
+            datamodule,
+            ckpt_path=ckpt_path,
+        )
+
+    # =========================================================
+    # Metrics Export
+    # =========================================================
+
+    metrics = get_training_metrics(
+        model_checkpoint=checkpoint_callback,
+        trainer=trainer,
+        loss_tracker=loss_tracker,
+        metric_name="val_cls_acc",
+    )
+
+    if return_metrics_path:
+        try:
+            Path(return_metrics_path).parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            with open(return_metrics_path, "w") as fh:
+                json.dump(metrics, fh, indent=2)
+
+            print(f"Wrote metrics to {return_metrics_path}")
+
+        except Exception as e:
+            print(f"Failed to write metrics file: {e}")
+
+    # =========================================================
+    # Cleanup
+    # =========================================================
+
+    if wandb_logger is not None:
+        wandb.finish()
+
+    return metrics
+
 
 if __name__ == "__main__":
     parser = ArgumentParser()

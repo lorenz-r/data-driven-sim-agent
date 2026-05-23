@@ -1,0 +1,144 @@
+# ============================================================
+# Training Configuration
+# ============================================================
+
+# ------------------------------------------------------------
+# Dataset / Input Configuration
+# ------------------------------------------------------------
+data:
+  train_path: "data/train_split"
+  val_path: "data/val_split"
+
+  # Optional manifest files to restrict the dataset
+  # Leave empty ("") to use the full split
+  train_manifest: ""
+  val_manifest: ""
+  val_batch_size: 15
+
+  # Data loading
+  batch_size: 15
+  data_workers: 1
+  shuffle_train: true
+  pin_memory: true
+  persistent_workers: false
+
+# ------------------------------------------------------------
+# Training Configuration
+# ------------------------------------------------------------
+training:
+  max_epochs: 35
+  devices: 1
+
+  # Mixed precision training
+  precision: "32"
+
+  # Gradient handling
+  gradient_clip_val: 0.0
+  accumulate_grad_batches: 1
+
+  # Reproducibility
+  seed: 42
+  deterministic: false
+
+# ------------------------------------------------------------
+# Optimization / Hyperparameters
+# ------------------------------------------------------------
+optimization:
+  optimizer: "adamw"
+
+  # Learning rate
+  learning_rate: 0.001
+
+  # Weight decay / regularization
+  weight_decay: 0.0001
+
+  # Optimizer parameters
+  beta1: 0.9
+  beta2: 0.999
+  epsilon: 1e-8
+
+  # Momentum (used for SGD-type optimizers)
+  momentum: 0.9
+
+  # Learning rate scheduler
+  scheduler: "cosine"
+
+  scheduler_params:
+    step_size: 10
+    gamma: 0.1
+    eta_min: 1e-6
+    warmup_epochs: 0
+
+# ------------------------------------------------------------
+# Early Stopping
+# ------------------------------------------------------------
+early_stopping:
+  enabled: false
+
+  monitor: "val_loss"
+  mode: "min"
+
+  patience: 5
+  min_delta: 0.0
+
+# ------------------------------------------------------------
+# Checkpointing
+# ------------------------------------------------------------
+checkpointing:
+  save_last: true
+
+  # Number of best checkpoints to keep
+  top_k_checkpoints: 5
+
+  # Metric used for ranking checkpoints
+  # SMART uses val_cls_acc, but we may need to generalize this
+  checkpoint_metric: "val_cls_acc"
+
+  # "min" for losses, "max" for accuracies
+  mode: "max"
+
+  save_dir: "checkpoints"
+
+# ------------------------------------------------------------
+# Logging / Experiment Tracking
+# ------------------------------------------------------------
+logging:
+  wandb_logging: true
+
+  project_name: "ml-training"
+  run_name: ""
+
+  log_every_n_steps: 50
+
+# ------------------------------------------------------------
+# Validation / Evaluation
+# ------------------------------------------------------------
+evaluation:
+  validate_every_n_epochs: 1
+
+# ------------------------------------------------------------
+# Resume / Pretrained Models
+# ------------------------------------------------------------
+resume:
+  checkpoint_path: ""
+
+  # Resume optimizer/scheduler states
+  resume_training_state: true
+
+# ------------------------------------------------------------
+# Model Configuration
+# ------------------------------------------------------------
+model:
+  model_name: "smart"
+
+  pretrained: false
+
+  dropout: 0.1
+
+# ------------------------------------------------------------
+# Output Paths
+# ------------------------------------------------------------
+output:
+  output_dir: "outputs"
+  tensorboard_dir: "outputs/tensorboard"
+  predictions_dir: "outputs/predictions"
