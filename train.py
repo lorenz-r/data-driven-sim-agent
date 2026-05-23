@@ -114,6 +114,8 @@ def parse_args():
     # --------------------------------------------------------
     parser.add_argument("--wandb-logging", action="store_true")
     parser.add_argument("--no-wandb-logging", action="store_true")
+    parser.add_argument("--project-name", type=str)
+    parser.add_argument("--run-name", type=str)
 
     # --------------------------------------------------------
     # Early Stopping
@@ -166,6 +168,8 @@ def build_config():
         "profile": "profiling.profile",
         "profile_dir": "profiling.profile_dir",
         "profile_name": "profiling.profile_name",
+        "project_name": "logging.project_name",
+        "run_name": "logging.run_name",
     }
 
     # Apply CLI overrides
