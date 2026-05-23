@@ -201,7 +201,7 @@ def build_config():
     return config
 
 
-def get_trainer(config):
+def get_trainer(config, wandb_logger):
 
     model_name = config["model"]["model_name"].lower()
 
@@ -214,7 +214,7 @@ def get_trainer(config):
 
     trainer_cls = TRAINER_REGISTRY[model_name]
 
-    return trainer_cls(config)
+    return trainer_cls(config, wandb_logger)
 
 
 # ============================================================
