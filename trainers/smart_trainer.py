@@ -6,8 +6,8 @@ from trainers.base_trainer import BaseTrainer
 
 
 class SmartTrainer(BaseTrainer):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, wandb_logger=None):
+        super().__init__(config, wandb_logger)
 
     def train(self):
         print("Training with SmartTrainer...")
