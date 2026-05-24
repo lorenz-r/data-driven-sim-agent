@@ -114,6 +114,9 @@ logging:
   notes: ""
   offline: false
   group: ""
+  log_model_artifacts: true
+
+  artifact_mode: "all"
 
 # ------------------------------------------------------------
 # Profiling

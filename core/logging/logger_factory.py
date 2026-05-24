@@ -63,7 +63,7 @@ def create_logger(config):
             "output_dir"
         ],
 
-        log_model=False,
+        log_model=config["logging"].get("log_model_artifacts", False),
     )
 
     # --------------------------------------------------------
