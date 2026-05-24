@@ -39,3 +39,5 @@ htmlcov/
 /packages/smart/lightning_logs
 /packages/smart-preprocess/target/
 /.sim_integration_out/
+wandb
+data

@@ -131,15 +131,20 @@ def validate_dataset(datamodule, remove_bad_files=False):
     return bad_files
 
 
-load_dotenv()
-
-wandb_api_key = os.getenv("WANDB_API_KEY")
-if wandb_api_key:
-    wandb.login(key=wandb_api_key)
-else:
-    print("WANDB_API_KEY not set — running without wandb logging")
-
 _SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def _login_wandb_if_available() -> Optional[str]:
+    load_dotenv()
+    load_dotenv(_SCRIPT_DIR / ".env")
+
+    wandb_api_key = os.getenv("WANDB_API_KEY")
+    if not wandb_api_key:
+        print("WANDB_API_KEY not set — running without wandb logging")
+        return None
+
+    wandb.login(key=wandb_api_key)
+    return wandb_api_key
 
 
 def run_training(
@@ -198,7 +203,16 @@ def run_training(
 
     smart_config.Dataset.val_batch_size = config["data"]["val_batch_size"]
 
-    smart_config.Dataset.num_cpu_workers = config["data"]["data_workers"]
+    smart_config.Dataset.num_workers = config["data"]["data_workers"]
+
+    if "shuffle_train" in config["data"]:
+        smart_config.Dataset.shuffle = config["data"]["shuffle_train"]
+
+    if "pin_memory" in config["data"]:
+        smart_config.Dataset.pin_memory = config["data"]["pin_memory"]
+
+    if "persistent_workers" in config["data"]:
+        smart_config.Dataset.persistent_workers = config["data"]["persistent_workers"]
 
     # -------------------------
     # Training
@@ -207,6 +221,14 @@ def run_training(
     smart_config.Trainer.max_epochs = config["training"]["max_epochs"]
 
     smart_config.Trainer.devices = config["training"]["devices"]
+
+    if "accumulate_grad_batches" in config["training"]:
+        smart_config.Trainer.accumulate_grad_batches = config["training"][
+            "accumulate_grad_batches"
+        ]
+
+    if "precision" in config["training"]:
+        smart_config.Trainer.precision = config["training"]["precision"]
 
     # -------------------------
     # Optimization
@@ -291,28 +313,31 @@ def run_training(
     wandb_logger = None
 
     if config["logging"]["wandb_logging"]:
-        wandb_logger = WandbLogger(
-            project=config["logging"]["project_name"],
-            name=config["logging"].get(
-                "run_name",
-                f"trial-{trial_number}",
-            ),
-        )
+        wandb_api_key = _login_wandb_if_available()
 
-        # SAFE CONFIG LOGGING
-        #
-        # Avoid logging raw objects/classes.
-        # Only log primitive serializable values.
+        if wandb_api_key:
+            wandb_logger = WandbLogger(
+                project=config["logging"]["project_name"],
+                name=config["logging"].get(
+                    "run_name",
+                    f"trial-{trial_number}",
+                ),
+            )
 
-        flat_config = {
-            "learning_rate": config["optimization"]["learning_rate"],
-            "batch_size": config["data"]["batch_size"],
-            "max_epochs": config["training"]["max_epochs"],
-            "devices": config["training"]["devices"],
-            "weight_decay": config["optimization"]["weight_decay"],
-        }
+            # SAFE CONFIG LOGGING
+            #
+            # Avoid logging raw objects/classes.
+            # Only log primitive serializable values.
 
-        wandb_logger.experiment.config.update(flat_config)
+            flat_config = {
+                "learning_rate": config["optimization"]["learning_rate"],
+                "batch_size": config["data"]["batch_size"],
+                "max_epochs": config["training"]["max_epochs"],
+                "devices": config["training"]["devices"],
+                "weight_decay": config["optimization"]["weight_decay"],
+            }
+
+            wandb_logger.experiment.config.update(flat_config)
 
     # =========================================================
     # Callbacks
@@ -368,7 +393,8 @@ def run_training(
         callbacks=callbacks,  # Only early stopping is conditional, the rest are always included
         max_epochs=trainer_config.max_epochs,
         num_sanity_val_steps=0,
-        gradient_clip_val=0.5,
+        gradient_clip_val=config["training"].get("gradient_clip_val", 0.5),
+        precision=trainer_config.precision,
         logger=wandb_logger,
     )
 
@@ -611,6 +637,8 @@ if __name__ == "__main__":
     #     num_sanity_val_steps=0,
     #     gradient_clip_val=0.5,
     # )
+
+    wandb_api_key = _login_wandb_if_available()
 
     if wandb_api_key:
         wandb_logger = WandbLogger(

@@ -118,7 +118,7 @@ Training has been refactored into a top level script to make it easier to switch
 Example command for running the training:
 
 ```bash
-uv run python train.py --model smart --learning-rate 0.000019 --train-path train_split_ --val-path train_split_test_copy/ --max-epochs 10 --weight-decay 0.01 --save_ckpt_path smart-checkpoints/run_01
+uv run python train.py --model smart --learning-rate 0.000019 --train-path train_split_ --val-path train_split_test_copy/ --max-epochs 10 --weight-decay 0.01 --save-ckpt-path smart-checkpoints/run_01
 ```
 
 ##### Training Command (on 2xA100 machine)

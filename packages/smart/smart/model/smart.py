@@ -57,6 +57,7 @@ class SMART(pl.LightningModule):
         self.model_config = model_config
         self.warmup_steps = model_config.warmup_steps
         self.lr = model_config.lr
+        self.weight_decay = getattr(model_config, "weight_decay", 0.0)
         self.total_steps = model_config.total_steps
         self.dataset = model_config.dataset
         self.input_dim = model_config.input_dim
@@ -269,7 +270,11 @@ class SMART(pl.LightningModule):
         self.batch_metric = defaultdict(list)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+        )
 
         def lr_lambda(current_step):
             if current_step + 1 < self.warmup_steps:

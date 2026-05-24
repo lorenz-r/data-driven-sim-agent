@@ -87,6 +87,13 @@ def parse_args():
     # --------------------------------------------------------
     # Checkpointing
     # --------------------------------------------------------
+    parser.add_argument(
+        "--save-ckpt-path",
+        "--save_ckpt_path",
+        dest="save_ckpt_path",
+        type=str,
+        help="Directory where Lightning checkpoints are written",
+    )
     parser.add_argument("--top-k-checkpoints", type=int)
     parser.add_argument("--checkpoint-metric", type=str)
 
@@ -133,6 +140,7 @@ def build_config():
         "weight_decay": "optimization.weight_decay",
         "optimizer": "optimization.optimizer",
         "scheduler": "optimization.scheduler",
+        "save_ckpt_path": "checkpointing.save_dir",
         "top_k_checkpoints": "checkpointing.top_k_checkpoints",
         "checkpoint_metric": "checkpointing.checkpoint_metric",
     }
