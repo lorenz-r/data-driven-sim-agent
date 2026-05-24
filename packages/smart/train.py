@@ -472,6 +472,7 @@ def run_training(
 
     return metrics
 
+
 if __name__ == "__main__":
     parser = ArgumentParser()
     Predictor_hash = {"smart": SMART}
