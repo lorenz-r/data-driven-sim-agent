@@ -8,6 +8,8 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profilers import AdvancedProfiler
 from pytorch_lightning.profilers import PyTorchProfiler
 from pytorch_lightning.profilers import SimpleProfiler
+import torch
+from torch.profiler import ProfilerActivity
 import wandb
 
 
@@ -68,7 +70,7 @@ class TrainingProfiler:
 
         self.profile = profile
         self.profile_dir = profile_dir
-        self.profile_name = profile_name
+        self.profile_name = self._normalize_profile_name(profile_name)
         self.upload_to_wandb = upload_to_wandb
         self.keep_action_files = keep_action_files
         self._files_before: dict[Path, tuple[int, int]] = {}
@@ -98,22 +100,30 @@ class TrainingProfiler:
         if self.profile == "simple":
             return SimpleProfiler(
                 dirpath=str(self.profile_dir),
-                filename=f"{self.profile_name}.txt",
+                filename=self.profile_name,
             )
         if self.profile == "advanced":
             return AdvancedProfiler(
                 dirpath=str(self.profile_dir),
-                filename=f"{self.profile_name}.txt",
+                filename=self.profile_name,
                 dump_stats=True,
             )
         if self.profile == "pytorch":
+            activities = [ProfilerActivity.CPU]
+            if torch.cuda.is_available():
+                activities.append(ProfilerActivity.CUDA)
+
             return PyTorchProfiler(
                 dirpath=str(self.profile_dir),
                 filename=self.profile_name,
                 export_to_chrome=True,
+                group_by_input_shapes=True,
                 profile_memory=True,
                 record_shapes=True,
+                row_limit=100,
+                sort_by_key="cuda_time_total",
                 with_stack=True,
+                activities=activities,
             )
 
         raise ValueError(f"Unknown profiler: {self.profile}")
@@ -155,9 +165,16 @@ class TrainingProfiler:
             path
             for path in self.profile_dir.rglob("*")
             if path.is_file()
+            and path.stat().st_size > 0
             and self._files_before.get(path)
             != (path.stat().st_mtime_ns, path.stat().st_size)
         )
+
+    @staticmethod
+    def _normalize_profile_name(profile_name: str) -> str:
+        while profile_name.endswith(".txt"):
+            profile_name = profile_name[: -len(".txt")]
+        return profile_name
 
     def _merge_stats(self, profile_files: list[Path]) -> list[Path]:
         merged_path = self.profile_dir / f"{self.profile_name}.merged.prof"
