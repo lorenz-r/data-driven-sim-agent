@@ -155,6 +155,7 @@ def run_training(
     validate_dataset_first: bool = False,
     remove_bad_files: bool = False,
     trial_number: int = 1000,  # When moving logging to top-level, do not forget to move this param as well
+    training_profiler: Optional[TrainingProfiler] = None,
 ):
     """
     Unified SMART training entrypoint.
@@ -175,6 +176,9 @@ def run_training(
 
     trial_number : int
         Optional Optuna trial number.
+
+    training_profiler : TrainingProfiler | None
+        Optional profiler configured by the top-level trainer.
     """
 
     Predictor_hash = {
@@ -386,6 +390,14 @@ def run_training(
     # Trainer
     # =========================================================
 
+    if training_profiler is None:
+        training_profiler = TrainingProfiler.from_config(
+            config.get("profiling", {}),
+            default_profile_name=f"smart_profile_trial-{trial_number}",
+        )
+
+    profiler = training_profiler.build()
+
     trainer = pl.Trainer(
         accelerator=trainer_config.accelerator,
         devices=trainer_config.devices,
@@ -398,6 +410,7 @@ def run_training(
         gradient_clip_val=config["training"].get("gradient_clip_val", 0.5),
         precision=trainer_config.precision,
         logger=wandb_logger,
+        profiler=profiler,
     )
 
     # =========================================================
@@ -418,6 +431,11 @@ def run_training(
             datamodule,
             ckpt_path=ckpt_path,
         )
+
+    training_profiler.finalize(
+        wandb_logger=wandb_logger,
+        is_global_zero=trainer.is_global_zero,
+    )
 
     # =========================================================
     # Metrics Export
@@ -625,7 +643,10 @@ if __name__ == "__main__":
     if args.cpu:
         trainer_config.accelerator = "cpu"
 
-    training_profiler = TrainingProfiler.from_args(args)
+    training_profiler = TrainingProfiler.from_args(
+        args,
+        default_profile_name=f"smart_profile_trial-{args.trial_number}",
+    )
     profiler = training_profiler.build()
 
     # model_checkpoint = ModelCheckpoint(

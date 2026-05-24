@@ -111,6 +111,19 @@ logging:
   log_every_n_steps: 50
 
 # ------------------------------------------------------------
+# Profiling
+# ------------------------------------------------------------
+profiling:
+  # off | simple | advanced | pytorch
+  profile: "off"
+
+  profile_dir: "profiles"
+  profile_name: ""
+
+  upload_to_wandb: true
+  keep_action_files: false
+
+# ------------------------------------------------------------
 # Validation / Evaluation
 # ------------------------------------------------------------
 evaluation:

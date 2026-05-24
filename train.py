@@ -1,5 +1,6 @@
 import argparse
 import yaml
+from trainers.profiling import add_profiler_args
 from trainers.trainer_registry import TRAINER_REGISTRY
 
 # ============================================================
@@ -108,6 +109,11 @@ def parse_args():
     # --------------------------------------------------------
     parser.add_argument("--early-stopping", action="store_true")
 
+    # --------------------------------------------------------
+    # Profiling
+    # --------------------------------------------------------
+    add_profiler_args(parser)
+
     return parser.parse_args()
 
 
@@ -121,6 +127,7 @@ def build_config():
 
     # Load YAML defaults
     config = load_yaml_config(args.config)
+    config.setdefault("profiling", {})
 
     # Mapping:
     # CLI arg -> YAML key path
@@ -143,6 +150,9 @@ def build_config():
         "save_ckpt_path": "checkpointing.save_dir",
         "top_k_checkpoints": "checkpointing.top_k_checkpoints",
         "checkpoint_metric": "checkpointing.checkpoint_metric",
+        "profile": "profiling.profile",
+        "profile_dir": "profiling.profile_dir",
+        "profile_name": "profiling.profile_name",
     }
 
     # Apply CLI overrides
@@ -161,6 +171,12 @@ def build_config():
 
     if args.early_stopping:
         config["early_stopping"]["enabled"] = True
+
+    if args.no_profile_wandb:
+        config["profiling"]["upload_to_wandb"] = False
+
+    if args.keep_profile_action_files:
+        config["profiling"]["keep_action_files"] = True
 
     return config
 

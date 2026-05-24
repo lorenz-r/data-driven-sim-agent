@@ -118,7 +118,7 @@ Training has been refactored into a top level script to make it easier to switch
 Example command for running the training:
 
 ```bash
-uv run python train.py --model smart --learning-rate 0.000019 --train-path train_split_ --val-path train_split_test_copy/ --max-epochs 10 --weight-decay 0.01 --save-ckpt-path smart-checkpoints/run_01
+uv run python train.py --model smart --learning-rate 0.000019 --train-path train_split_ --val-path train_split_test_copy/ --max-epochs 10 --weight-decay 0.01 --save-ckpt-path smart-checkpoints/run_01 --profile simple --profile-dir profiles/run_01
 ```
 
 ##### Training Command (on 2xA100 machine)
@@ -145,8 +145,6 @@ uv run packages/smart/train.py \
   --hidden_dim 128 \
   --save_ckpt_path checkpoints/run_01 \
   --return_metrics metrics/run_01.json \
-  --profile simple \
-  --profile_dir profiles/run_01 \
   --max_epochs 100 \
   --train_batch_size 32 \
   --val_batch_size 32 \
@@ -198,17 +196,18 @@ Training profiling is opt-in from the command line. For Azure VM runs, start wit
 the lightweight Lightning timing log:
 
 ```bash
-uv run packages/smart/train.py \
-  --config packages/smart/configs/train/train_scalable.yaml \
-  --train_path datasets/train \
-  --val_path datasets/val \
+uv run python train.py \
+  --model smart \
+  --train-path datasets/train \
+  --val-path datasets/val \
   --profile simple \
-  --profile_dir profiles/azure_run_01
+  --profile-dir profiles/azure_run_01
 ```
 
 The run prints the profiler file paths at the end. If wandb is enabled, the
 files are also attached to the training run as a `training-profile` artifact.
-Use `--no_profile_wandb` to keep the files local only.
+Use `--no-profile-wandb` to keep the files local only. The same settings are
+also available in `configs/train_params.yaml` under `profiling`.
 
 Available modes:
 
@@ -226,7 +225,7 @@ uv tool run snakeviz profiles/azure_run_01/*.merged.prof
 
 Lightning creates one raw `.prof` per profiled action internally. Training merges
 those into the `*.merged.prof` file and removes the per-action files by default.
-Pass `--keep_profile_action_files` if you want to inspect individual actions.
+Pass `--keep-profile-action-files` if you want to inspect individual actions.
 
 PyTorch traces can become large on full training runs, so prefer `simple` first
 and use `pytorch` on a short profiling run.
