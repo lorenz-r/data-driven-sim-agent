@@ -96,6 +96,13 @@ def parse_args():
         type=str,
         help="Directory where Lightning checkpoints are written",
     )
+    parser.add_argument(
+        "--return-metrics",
+        "--return_metrics",
+        dest="return_metrics",
+        type=str,
+        help="Path to write JSON training metrics",
+    )
     parser.add_argument("--top-k-checkpoints", type=int)
     parser.add_argument("--checkpoint-metric", type=str)
 
@@ -129,6 +136,7 @@ def build_config():
     # Load YAML defaults
     config = load_yaml_config(args.config)
     config.setdefault("profiling", {})
+    config.setdefault("output", {})
 
     # Mapping:
     # CLI arg -> YAML key path
@@ -149,6 +157,7 @@ def build_config():
         "optimizer": "optimization.optimizer",
         "scheduler": "optimization.scheduler",
         "save_ckpt_path": "checkpointing.save_dir",
+        "return_metrics": "output.metrics_path",
         "top_k_checkpoints": "checkpointing.top_k_checkpoints",
         "checkpoint_metric": "checkpointing.checkpoint_metric",
         "profile": "profiling.profile",

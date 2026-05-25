@@ -90,8 +90,27 @@ jobs:
             --profile-dir profiles/smart_ci \
             --cpu \
             --devices 1 \
-            --max-epochs 1 \
+            --max-epochs 3 \
             --batch-size 1 \
             --data-workers 0 \
             --no-wandb-logging \
-            --save-ckpt-path checkpoints/smart_ci
+            --save-ckpt-path checkpoints/smart_ci \
+            --return-metrics metrics/smart_ci.json
+
+      - name: Check SMART loss decreases
+        run: |
+          python - <<'PY'
+          import json
+          import sys
+
+          with open("metrics/smart_ci.json") as f:
+              metrics = json.load(f)
+
+          loss_decrease = metrics.get("loss_decrease")
+          print(json.dumps(metrics, indent=2))
+
+          if loss_decrease is None:
+              sys.exit("FAIL: loss_decrease was not recorded")
+          if loss_decrease <= 0:
+              sys.exit(f"FAIL: loss did not decrease; loss_decrease={loss_decrease}")
+          PY
