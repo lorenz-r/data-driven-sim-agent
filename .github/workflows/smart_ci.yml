@@ -1,52 +1,97 @@
-name: SMART Sanity + Overfit
+name: SMART Setup + Train
 
 on:
   pull_request:
     paths:
       - 'packages/smart/**'
+      - 'packages/smart-preprocess/**'
+      - 'packages/trajectory-data/**'
+      - 'configs/**'
+      - 'train.py'
+      - 'trainers/**'
       - 'pyproject.toml'
       - 'uv.lock'
-      - '.github/actions/smart_train/**'
       - '.github/workflows/smart_ci.yml'
-
-env:
-  STORAGE: ${{ github.event.inputs.storage || 'packages/smart/data/raw' }}
-  PREPROCESS_INPUT: ${{ github.event.inputs.preprocess_input || 'data/raw/train' }}
-  PREPROCESS_OUTPUT: ${{ github.event.inputs.preprocess_output || 'data/processed/train' }}
-  MIN_ACCURACY: "0.9"
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: "Raw AV2 scenarios to stream through setup_av2.py"
+        required: false
+        default: "8"
+      train_size:
+        description: "Processed samples copied into the CI train split"
+        required: false
+        default: "1"
+      val_size:
+        description: "Processed samples copied into the CI validation split"
+        required: false
+        default: "1"
 
 jobs:
-  sanity-check:
+  setup-and-train:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Run SMART training pipeline
-        uses: ./.github/actions/smart_train
-        with:
-          config: configs/train/sanity_check.yaml
-          cpu: 'true'
-          scenarios: '1'
-          storage: ${{ env.STORAGE }}
-          preprocess_input: ${{ env.PREPROCESS_INPUT }}
-          preprocess_output: ${{ env.PREPROCESS_OUTPUT }}
-
-  overfit-gpu:
-    runs-on: ubuntu-latest  # swap to self-hosted GPU runner when available
-    if: false               # disabled until GPU runner exists
     timeout-minutes: 30
+    env:
+      SMART_SCENARIOS: ${{ github.event.inputs.scenarios || '8' }}
+      SMART_TRAIN_SIZE: ${{ github.event.inputs.train_size || '1' }}
+      SMART_VAL_SIZE: ${{ github.event.inputs.val_size || '1' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run SMART training pipeline
-        uses: ./.github/actions/smart_train
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
         with:
-          config: configs/train/train_overfitting.yaml
-          cpu: 'false'
-          scenarios: '1'
-          storage: ${{ env.STORAGE }}
-          preprocess_input: ${{ env.PREPROCESS_INPUT }}
-          preprocess_output: ${{ env.PREPROCESS_OUTPUT }}
-          min_accuracy: ${{ env.MIN_ACCURACY }}
+          enable-cache: true
+          cache-suffix: "py3.11"
+
+      - name: Read Rust toolchain version
+        id: rust
+        run: echo "toolchain=$(grep -m1 '^channel' rust-toolchain.toml | tr -d ' \"' | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.toolchain }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/smart-preprocess
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libglib2.0-0
+
+      - name: Install Python workspace
+        run: uv sync --all-packages
+
+      - name: Set up AV2 SMART data
+        run: |
+          uv run python packages/smart/scripts/setup_av2.py \
+            --dev \
+            --scenarios "$SMART_SCENARIOS" \
+            --create-splits \
+            --train-size "$SMART_TRAIN_SIZE" \
+            --val-size "$SMART_VAL_SIZE" \
+            --split-seed 42 \
+            --train-split-out datasets/train \
+            --val-split-out datasets/val \
+            --hash-file-contents
+
+      - name: Train SMART on one CI sample
+        run: |
+          uv run python train.py \
+            --model smart \
+            --train-path datasets/train \
+            --val-path datasets/val \
+            --profile simple \
+            --profile-dir profiles/smart_ci \
+            --cpu \
+            --devices 1 \
+            --max-epochs 1 \
+            --batch-size 1 \
+            --data-workers 0 \
+            --no-wandb-logging \
+            --save-ckpt-path checkpoints/smart_ci

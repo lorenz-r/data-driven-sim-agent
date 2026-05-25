@@ -226,6 +226,9 @@ def run_training(
 
     smart_config.Trainer.max_epochs = config["training"]["max_epochs"]
 
+    if "accelerator" in config["training"]:
+        smart_config.Trainer.accelerator = config["training"]["accelerator"]
+
     smart_config.Trainer.devices = config["training"]["devices"]
 
     if "accumulate_grad_batches" in config["training"]:

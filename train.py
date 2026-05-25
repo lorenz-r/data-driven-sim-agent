@@ -70,6 +70,7 @@ def parse_args():
     # Training
     # --------------------------------------------------------
     parser.add_argument("--max-epochs", type=int)
+    parser.add_argument("--cpu", action="store_true", help="Force training on CPU")
     parser.add_argument("--devices", type=int)
 
     parser.add_argument("--precision", type=str)
@@ -171,6 +172,9 @@ def build_config():
 
     if args.early_stopping:
         config["early_stopping"]["enabled"] = True
+
+    if args.cpu:
+        config["training"]["accelerator"] = "cpu"
 
     if args.no_profile_wandb:
         config["profiling"]["upload_to_wandb"] = False
