@@ -48,7 +48,10 @@ class MultiDataset(Dataset):
             self._raw_dir = raw_dir
             for raw_path in self._raw_dir:
                 p = Path(raw_path).expanduser().resolve()
-                file_list = sorted(os.listdir(p))
+                file_list = sorted(
+                    f for f in os.listdir(p)
+                    if f.endswith(".pkl")
+                )
                 self._raw_file_names.extend(file_list)
                 self._raw_paths.extend([str(p / f) for f in file_list])
                 self._raw_file_dataset.extend(["waymo"] * len(file_list))
@@ -99,5 +102,30 @@ class MultiDataset(Dataset):
     def get(self, idx: int):
         with open(self.raw_paths[idx], "rb") as handle:
             data = pickle.load(handle)
+
         data = self.token_processor.preprocess(data)
+
         return data
+
+    def __getitem__(self, idx):
+        file_path = self.raw_paths[idx]
+
+        try:
+            data = self.get(idx)
+
+            if data is None:
+                return None
+
+            if self.transform is not None:
+                data = self.transform(data)
+
+            return data
+
+        except Exception as e:
+            self.logger.error(
+                f"[{self.split}] Failed processing sample: {file_path} | "
+                f"Index: {idx} | "
+                f"Error: {type(e).__name__}: {e}"
+            )
+
+            return None

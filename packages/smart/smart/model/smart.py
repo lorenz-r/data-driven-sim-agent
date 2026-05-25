@@ -152,6 +152,8 @@ class SMART(pl.LightningModule):
             return contextlib.nullcontext()
 
     def training_step(self, data, batch_idx):
+        if data is None:
+            return None
         data = self.match_token_map(data)
         data = self.sample_pt_pred(data)
         if isinstance(data, Batch):
@@ -179,6 +181,8 @@ class SMART(pl.LightningModule):
         return loss
 
     def validation_step(self, data, batch_idx):
+        if data is None:
+            return None
         data = self.match_token_map(data)
         data = self.sample_pt_pred(data)
         if isinstance(data, Batch):

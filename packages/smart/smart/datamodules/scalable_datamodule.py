@@ -4,6 +4,7 @@ import pytorch_lightning as pl
 from torch_geometric.loader import DataLoader
 from smart.datasets.scalable_dataset import MultiDataset
 from smart.transforms import WaymoTargetBuilder
+from torch_geometric.data import Batch
 
 
 class MultiDataModule(pl.LightningDataModule):
@@ -113,6 +114,7 @@ class MultiDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             persistent_workers=self.persistent_workers,
+            collate_fn=safe_collate,
         )
 
     def val_dataloader(self):
@@ -123,6 +125,7 @@ class MultiDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             persistent_workers=self.persistent_workers,
+            collate_fn=safe_collate,
         )
 
     def test_dataloader(self):
@@ -133,4 +136,13 @@ class MultiDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             persistent_workers=self.persistent_workers,
+            collate_fn=safe_collate,
         )
+    
+def safe_collate(batch):
+    batch = [item for item in batch if item is not None]
+
+    if len(batch) == 0:
+        return None
+
+    return Batch.from_data_list(batch)
