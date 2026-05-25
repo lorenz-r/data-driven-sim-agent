@@ -16,6 +16,8 @@ from smart.utils.log import Logging
 from smart.metrics.utils import get_training_metrics
 from smart.utils.profiling import TrainingProfiler
 from smart.utils.profiling import add_profiler_args
+from smart.utils.profiling import TrainingProfiler
+from smart.utils.profiling import add_profiler_args
 import pickle
 from tqdm import tqdm
 
@@ -141,7 +143,7 @@ def run_training(
     remove_bad_files: bool = False,
     trial_number: int = 1000,  # When moving logging to top-level, do not forget to move this param as well
     wandb_logger = None,  # Allow passing in an optional logger instance
-    training_profiler: Optional[TrainingProfiler] = None,
+    training_profiler: Optional[TrainingProfiler] = None,  # Optional training profiler for performance analysis
 ):
     """
     Unified SMART training entrypoint.
@@ -162,7 +164,7 @@ def run_training(
 
     trial_number : int
         Optional Optuna trial number.
-
+        
     training_profiler : TrainingProfiler | None
         Optional profiler configured by the top-level trainer.
     """
@@ -206,6 +208,15 @@ def run_training(
     if "persistent_workers" in config["data"]:
         smart_config.Dataset.persistent_workers = config["data"]["persistent_workers"]
 
+    if "shuffle_train" in config["data"]:
+        smart_config.Dataset.shuffle = config["data"]["shuffle_train"]
+
+    if "pin_memory" in config["data"]:
+        smart_config.Dataset.pin_memory = config["data"]["pin_memory"]
+
+    if "persistent_workers" in config["data"]:
+        smart_config.Dataset.persistent_workers = config["data"]["persistent_workers"]
+
     # -------------------------
     # Training
     # -------------------------
@@ -216,6 +227,14 @@ def run_training(
         smart_config.Trainer.accelerator = config["training"]["accelerator"]
 
     smart_config.Trainer.devices = config["training"]["devices"]
+
+    if "accumulate_grad_batches" in config["training"]:
+        smart_config.Trainer.accumulate_grad_batches = config["training"][
+            "accumulate_grad_batches"
+        ]
+
+    if "precision" in config["training"]:
+        smart_config.Trainer.precision = config["training"]["precision"]
 
     if "accumulate_grad_batches" in config["training"]:
         smart_config.Trainer.accumulate_grad_batches = config["training"][
@@ -366,6 +385,14 @@ def run_training(
     # =========================================================
     # Trainer
     # =========================================================
+
+    if training_profiler is None:
+        training_profiler = TrainingProfiler.from_config(
+            config.get("profiling", {}),
+            default_profile_name=f"smart_profile_trial-{trial_number}",
+        )
+
+    profiler = training_profiler.build()
 
     if training_profiler is None:
         training_profiler = TrainingProfiler.from_config(
