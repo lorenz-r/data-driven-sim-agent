@@ -47,3 +47,5 @@ htmlcov/
 /.sim_integration_out/
 wandb
 data
+wandb/
+outputs/
