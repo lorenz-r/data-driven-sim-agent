@@ -138,7 +138,8 @@ class MultiDataModule(pl.LightningDataModule):
             persistent_workers=self.persistent_workers,
             collate_fn=safe_collate,
         )
-    
+
+
 def safe_collate(batch):
     batch = [item for item in batch if item is not None]
 

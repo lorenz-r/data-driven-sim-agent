@@ -48,10 +48,7 @@ class MultiDataset(Dataset):
             self._raw_dir = raw_dir
             for raw_path in self._raw_dir:
                 p = Path(raw_path).expanduser().resolve()
-                file_list = sorted(
-                    f for f in os.listdir(p)
-                    if f.endswith(".pkl")
-                )
+                file_list = sorted(f for f in os.listdir(p) if f.endswith(".pkl"))
                 self._raw_file_names.extend(file_list)
                 self._raw_paths.extend([str(p / f) for f in file_list])
                 self._raw_file_dataset.extend(["waymo"] * len(file_list))
