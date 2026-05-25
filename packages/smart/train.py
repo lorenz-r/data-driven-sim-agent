@@ -16,6 +16,12 @@ from smart.utils.log import Logging
 from smart.metrics.utils import get_training_metrics
 from smart.utils.profiling import TrainingProfiler
 from smart.utils.profiling import add_profiler_args
+from smart.utils.agent_token_builder import ensure_agent_tokens
+from smart.utils.token_paths import (
+    default_agent_token_path,
+    default_map_token_path,
+    resolve_token_path,
+)
 import pickle
 import wandb
 from tqdm import tqdm
@@ -102,7 +108,11 @@ def validate_dataset(datamodule, remove_bad_files=False):
                 # IMPORTANT:
                 # create fresh processor instance each time
                 # avoids hidden mutable-state bugs
-                processor = dataset.token_processor.__class__(2048)
+                processor = dataset.token_processor.__class__(
+                    dataset.token_size,
+                    agent_token_path=str(dataset.agent_token_path),
+                    map_token_path=str(dataset.map_token_path),
+                )
 
                 processor.preprocess(data)
 
@@ -134,6 +144,62 @@ def validate_dataset(datamodule, remove_bad_files=False):
 
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def maybe_build_agent_tokens_from_config(config) -> None:
+    build_if_missing = getattr(config.Dataset, "build_agent_tokens_if_missing", False)
+    token_size = config.Model.decoder.token_size
+    agent_token_path = resolve_token_path(
+        getattr(
+            config.Model,
+            "agent_token_path",
+            getattr(config.Dataset, "agent_token_path", None),
+        ),
+        default_agent_token_path(token_size),
+    )
+
+    if build_if_missing:
+        ensure_agent_tokens(
+            raw_dirs=config.Dataset.train_raw_dir,
+            output_path=agent_token_path,
+            token_size=token_size,
+            build_if_missing=True,
+            max_samples_per_type=getattr(
+                config.Dataset, "agent_token_build_max_samples", 1_000_000
+            ),
+            seed=getattr(config.Dataset, "agent_token_build_seed", 42),
+            kdisks_max_attempts=getattr(
+                config.Dataset,
+                "agent_token_build_kdisks_max_attempts",
+                1_000_000,
+            ),
+        )
+
+    config.Dataset.agent_token_path = str(agent_token_path)
+    config.Model.agent_token_path = str(agent_token_path)
+    map_token_path = resolve_token_path(
+        getattr(
+            config.Model,
+            "map_token_path",
+            getattr(config.Dataset, "map_token_path", None),
+        ),
+        default_map_token_path(),
+    )
+    config.Dataset.map_token_path = str(map_token_path)
+    config.Model.map_token_path = str(map_token_path)
+
+
+def _login_wandb_if_available() -> Optional[str]:
+    load_dotenv()
+    load_dotenv(_SCRIPT_DIR / ".env")
+
+    wandb_api_key = os.getenv("WANDB_API_KEY")
+    if not wandb_api_key:
+        print("WANDB_API_KEY not set — running without wandb logging")
+        return None
+
+    wandb.login(key=wandb_api_key)
+    return wandb_api_key
 
 
 def run_training(
@@ -210,14 +276,44 @@ def run_training(
     if "persistent_workers" in config["data"]:
         smart_config.Dataset.persistent_workers = config["data"]["persistent_workers"]
 
-    if "shuffle_train" in config["data"]:
-        smart_config.Dataset.shuffle = config["data"]["shuffle_train"]
+    tokens_config = None
+    if "smart" in config and "tokens" in config["smart"]:
+        tokens_config = config["smart"]["tokens"]
+    elif "tokens" in config:
+        tokens_config = config["tokens"]
 
-    if "pin_memory" in config["data"]:
-        smart_config.Dataset.pin_memory = config["data"]["pin_memory"]
+    if tokens_config is not None:
+        smart_config.Dataset.agent_token_path = tokens_config.get(
+            "agent_token_path",
+            smart_config.Dataset.get("agent_token_path", None),
+        )
+        smart_config.Dataset.map_token_path = tokens_config.get(
+            "map_token_path",
+            smart_config.Dataset.get("map_token_path", None),
+        )
+        smart_config.Dataset.build_agent_tokens_if_missing = tokens_config.get(
+            "build_agent_tokens_if_missing",
+            False,
+        )
+        smart_config.Dataset.agent_token_build_max_samples = tokens_config.get(
+            "agent_token_build_max_samples",
+            smart_config.Dataset.get("agent_token_build_max_samples", 1_000_000),
+        )
+        smart_config.Dataset.agent_token_build_seed = tokens_config.get(
+            "agent_token_build_seed",
+            smart_config.Dataset.get("agent_token_build_seed", 42),
+        )
+        smart_config.Dataset.agent_token_build_kdisks_max_attempts = tokens_config.get(
+            "agent_token_build_kdisks_max_attempts",
+            smart_config.Dataset.get(
+                "agent_token_build_kdisks_max_attempts",
+                1_000_000,
+            ),
+        )
+        smart_config.Model.agent_token_path = smart_config.Dataset.agent_token_path
+        smart_config.Model.map_token_path = smart_config.Dataset.map_token_path
 
-    if "persistent_workers" in config["data"]:
-        smart_config.Dataset.persistent_workers = config["data"]["persistent_workers"]
+    maybe_build_agent_tokens_from_config(smart_config)
 
     # -------------------------
     # Training
@@ -326,6 +422,18 @@ def run_training(
     # Logging
     # =========================================================
 
+    if wandb_logger is None and config["logging"]["wandb_logging"]:
+        wandb_api_key = _login_wandb_if_available()
+
+        if wandb_api_key:
+            wandb_logger = WandbLogger(
+                project=config["logging"]["project_name"],
+                name=config["logging"].get(
+                    "run_name",
+                    f"trial-{trial_number}",
+                ),
+            )
+
     if config["logging"]["wandb_logging"]:
         # SAFE CONFIG LOGGING
         #
@@ -340,7 +448,8 @@ def run_training(
             "weight_decay": config["optimization"]["weight_decay"],
         }
 
-        wandb_logger.experiment.config.update(flat_config)
+        if wandb_logger is not None:
+            wandb_logger.experiment.config.update(flat_config)
 
     # =========================================================
     # Callbacks
@@ -517,6 +626,13 @@ if __name__ == "__main__":
         default=None,
         help="One or more validation data directories; overrides config if provided.",
     )
+    parser.add_argument("--agent_token_path", type=str, default=None)
+    parser.add_argument("--map_token_path", type=str, default=None)
+    parser.add_argument(
+        "--build_agent_tokens_if_missing",
+        action="store_true",
+        help="Explicitly build SMART agent tokens from train_path if the file is missing.",
+    )
 
     # Optuna passes a trial number to the training script for each run, which can be used for logging and tracking purposes. We'll include it as an optional argument in case it's needed, but it won't affect the training logic directly.
     parser.add_argument(
@@ -589,11 +705,24 @@ if __name__ == "__main__":
     if args.val_path is not None:
         config.Dataset.val_raw_dir = args.val_path
 
+    if args.agent_token_path is not None:
+        config.Dataset.agent_token_path = args.agent_token_path
+        config.Model.agent_token_path = args.agent_token_path
+
+    if args.map_token_path is not None:
+        config.Dataset.map_token_path = args.map_token_path
+        config.Model.map_token_path = args.map_token_path
+
+    if args.build_agent_tokens_if_missing:
+        config.Dataset.build_agent_tokens_if_missing = True
+
     if args.devices is not None:
         config.Trainer.devices = args.devices
 
     if args.num_cpu_workers is not None:
         config.Dataset.num_workers = args.num_cpu_workers
+
+    maybe_build_agent_tokens_from_config(config)
 
     Predictor = Predictor_hash[config.Model.predictor]
 

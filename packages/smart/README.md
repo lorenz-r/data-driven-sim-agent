@@ -86,6 +86,38 @@ python train.py --config ${config_path}
 
 The default config path is `configs/train/train_scalable.yaml`. Ensure you have downloaded and prepared the Waymo data for training.
 
+### Token vocabularies
+
+SMART tokenizes agent motion and map geometry before training. The configurable
+token paths are:
+
+```yaml
+Dataset:
+  agent_token_path: "smart/tokens/cluster_frame_5_2048.pkl"
+  map_token_path: "smart/tokens/map_traj_token5.pkl"
+  build_agent_tokens_if_missing: False
+
+Model:
+  agent_token_path: "smart/tokens/cluster_frame_5_2048.pkl"
+  map_token_path: "smart/tokens/map_traj_token5.pkl"
+```
+
+To build an AV2-specific agent motion vocabulary, run from the repository root:
+
+```bash
+uv run python packages/smart/scripts/build_agent_tokens.py \
+  --raw-dir data/train_split \
+  --output packages/smart/smart/tokens/cluster_frame_5_2048_av2.pkl \
+  --token-size 2048
+```
+
+The script collects relative six-frame trajectory chunks from SMART-format
+`.pkl` files and passes them to the existing K-disks clustering code in
+`scripts/traj_clstering.py`. Use only the training split for this step. If a
+configured token file is missing, training fails by default; set
+`build_agent_tokens_if_missing: True` only when you intentionally want training
+startup to build the agent vocabulary.
+
 ## Evaluation
 
 To evaluate the model, run:

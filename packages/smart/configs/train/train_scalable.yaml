@@ -5,6 +5,10 @@ time_info: &time_info
   use_intention: True
   token_size: 2048
 
+token_info: &token_info
+  agent_token_path: "smart/tokens/cluster_frame_5_2048.pkl"
+  map_token_path: "smart/tokens/map_traj_token5.pkl"
+
 Dataset:
   root:
   train_batch_size: 10
@@ -22,7 +26,11 @@ Dataset:
   val_processed_dir:
   test_processed_dir:
   dataset: "scalable"
-  <<: *time_info
+  <<: [*time_info, *token_info]
+  build_agent_tokens_if_missing: False
+  agent_token_build_max_samples: 1000000
+  agent_token_build_kdisks_max_attempts: 1000000
+  agent_token_build_seed: 42
 
 Trainer:
   strategy: ddp_find_unused_parameters_false
@@ -45,7 +53,7 @@ Model:
   output_dim: 2
   output_head: False
   num_heads: 8
-  <<: *time_info
+  <<: [*time_info, *token_info]
   head_dim: 16
   dropout: 0.1
   num_freq_bands: 64

@@ -107,12 +107,41 @@ uv run python packages/smart/scripts/benchmark_preprocess.py --scenarios 100
 Results on 100 real scenarios: **38× speedup** (183 vs 4.8 scenarios/s),
 100/100 field-level matches within tolerance.
 
+##### 4. SMART token vocabularies
+
+SMART uses discrete vocabularies for agent motion tokens and map tokens. The
+default files live in `packages/smart/smart/tokens/` and are inherited from the
+SMART codebase. For AV2-native experiments, build an agent motion vocabulary
+from the AV2 training split only:
+
+```bash
+uv run python packages/smart/scripts/build_agent_tokens.py \
+  --raw-dir data/train_split \
+  --output packages/smart/smart/tokens/cluster_frame_5_2048_av2.pkl \
+  --token-size 2048
+```
+
+The builder reuses SMART's existing K-disks clustering implementation in
+`packages/smart/scripts/traj_clstering.py`. Training does not create tokens
+unless explicitly configured to do so.
+
+With the top-level model-agnostic trainer, keep SMART-specific settings under
+the `smart:` namespace in `configs/train_params.yaml`:
+
+```yaml
+smart:
+  tokens:
+    agent_token_path: "packages/smart/smart/tokens/cluster_frame_5_2048_av2.pkl"
+    map_token_path: "packages/smart/smart/tokens/map_traj_token5.pkl"
+    build_agent_tokens_if_missing: false
+```
+
 ### Training
 
 Training has been refactored into a top level script to make it easier to switch between models and orchestrate hyperparameter searches. A quick explanation of the new components:
 
 - train.py: The general training script. Starts the training and calls model-specific trainers.
-- configs/train_params.yaml: Global training parameters. They will be used by train.py (unless overwritten by CLI arguments)
+- configs/train_params.yaml: Global training parameters plus optional model-specific namespaces. The generic `train.py` only handles shared CLI arguments; model-specific settings are consumed by the selected trainer.
 - trainers/: Directory for managing the different trainers. They bridge the variety of approaches and configurations different models may use and make the unififed top-level interface possible.
 
 Example command for running the training:

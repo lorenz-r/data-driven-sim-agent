@@ -67,7 +67,11 @@ def run_inference(
         data_sample = data_sample
 
     # 3. Preprocess
-    token_processor = TokenProcessor(2048)
+    token_processor = TokenProcessor(
+        config.Model.decoder.token_size,
+        agent_token_path=getattr(config.Model, "agent_token_path", None),
+        map_token_path=getattr(config.Model, "map_token_path", None),
+    )
     data_sample = token_processor.preprocess(data_sample)
 
     # 4. Run inference

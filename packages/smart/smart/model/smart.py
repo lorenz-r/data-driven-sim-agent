@@ -15,6 +15,14 @@ import numpy as np
 import pickle
 from collections import defaultdict
 import os
+from pathlib import Path
+
+from smart.utils.token_paths import (
+    default_agent_token_path,
+    default_map_token_path,
+    missing_token_error,
+    resolve_token_path,
+)
 
 
 def cal_polygon_contour(x, y, theta, width, length):
@@ -69,12 +77,20 @@ class SMART(pl.LightningModule):
         self.num_freq_bands = model_config.num_freq_bands
         self.vis_map = False
         self.noise = True
-        module_dir = os.path.dirname(os.path.dirname(__file__))
-        self.map_token_traj_path = os.path.join(
-            module_dir, "tokens/map_traj_token5.pkl"
+        token_size = model_config.decoder.token_size
+        self.map_token_traj_path = str(
+            resolve_token_path(
+                getattr(model_config, "map_token_path", None),
+                default_map_token_path(),
+            )
         )
         self.init_map_token()
-        self.token_path = os.path.join(module_dir, "tokens/cluster_frame_5_2048.pkl")
+        self.token_path = str(
+            resolve_token_path(
+                getattr(model_config, "agent_token_path", None),
+                default_agent_token_path(token_size),
+            )
+        )
         token_data = self.get_trajectory_token()
         self.encoder = SMARTDecoder(
             dataset=model_config.dataset,
@@ -93,7 +109,7 @@ class SMART(pl.LightningModule):
             time_span=model_config.decoder.time_span,
             map_token={"traj_src": self.map_token["traj_src"]},
             token_data=token_data,
-            token_size=model_config.decoder.token_size,
+            token_size=token_size,
         )
         self.minADE = minADE(max_guesses=1)
         self.minFDE = minFDE(max_guesses=1)
@@ -106,13 +122,25 @@ class SMART(pl.LightningModule):
         self.rollout_num = 1
 
     def get_trajectory_token(self):
+        if not os.path.exists(self.token_path):
+            raise missing_token_error(Path(self.token_path), "Agent")
         token_data = pickle.load(open(self.token_path, "rb"))
         self.trajectory_token = token_data["token"]
         self.trajectory_token_traj = token_data["traj"]
         self.trajectory_token_all = token_data["token_all"]
+        expected_token_size = self.model_config.decoder.token_size
+        for category, token in self.trajectory_token.items():
+            if token.shape[0] != expected_token_size:
+                raise ValueError(
+                    f"Agent token file {self.token_path} has {token.shape[0]} "
+                    f"{category} tokens, but config token_size is "
+                    f"{expected_token_size}."
+                )
         return token_data
 
     def init_map_token(self):
+        if not os.path.exists(self.map_token_traj_path):
+            raise missing_token_error(Path(self.map_token_traj_path), "Map")
         self.argmin_sample_len = 3
         map_token_traj = pickle.load(open(self.map_token_traj_path, "rb"))
         self.map_token = {

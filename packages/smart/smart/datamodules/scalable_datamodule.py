@@ -39,6 +39,12 @@ class MultiDataModule(pl.LightningDataModule):
         processor="ntp",
         use_intention=False,
         token_size=512,
+        agent_token_path=None,
+        map_token_path=None,
+        build_agent_tokens_if_missing=False,
+        agent_token_build_max_samples=1_000_000,
+        agent_token_build_seed=42,
+        agent_token_build_kdisks_max_attempts=1_000_000,
         **kwargs,
     ) -> None:
         super(MultiDataModule, self).__init__()
@@ -60,6 +66,14 @@ class MultiDataModule(pl.LightningDataModule):
         self.processor = processor
         self.use_intention = use_intention
         self.token_size = token_size
+        self.agent_token_path = agent_token_path
+        self.map_token_path = map_token_path
+        self.build_agent_tokens_if_missing = build_agent_tokens_if_missing
+        self.agent_token_build_max_samples = agent_token_build_max_samples
+        self.agent_token_build_seed = agent_token_build_seed
+        self.agent_token_build_kdisks_max_attempts = (
+            agent_token_build_kdisks_max_attempts
+        )
         assert transform is not None
 
         train_transform = MultiDataModule.transforms[transform](
@@ -86,6 +100,14 @@ class MultiDataModule(pl.LightningDataModule):
             processor=self.processor,
             transform=self.train_transform,
             token_size=self.token_size,
+            agent_token_path=self.agent_token_path,
+            map_token_path=self.map_token_path,
+            build_agent_tokens_if_missing=self.build_agent_tokens_if_missing,
+            agent_token_build_max_samples=self.agent_token_build_max_samples,
+            agent_token_build_seed=self.agent_token_build_seed,
+            agent_token_build_kdisks_max_attempts=(
+                self.agent_token_build_kdisks_max_attempts
+            ),
         )
         self.val_dataset = MultiDataModule.dataset[self.dataset_class](
             None,
@@ -95,6 +117,8 @@ class MultiDataModule(pl.LightningDataModule):
             processor=self.processor,
             transform=self.val_transform,
             token_size=self.token_size,
+            agent_token_path=self.agent_token_path,
+            map_token_path=self.map_token_path,
         )
         self.test_dataset = MultiDataModule.dataset[self.dataset_class](
             None,
@@ -104,6 +128,8 @@ class MultiDataModule(pl.LightningDataModule):
             processor=self.processor,
             transform=self.test_transform,
             token_size=self.token_size,
+            agent_token_path=self.agent_token_path,
+            map_token_path=self.map_token_path,
         )
 
     def train_dataloader(self):

@@ -14,10 +14,32 @@ def assign_clusters(sub_X, centroids):
     return np.argmin(distances, axis=1)
 
 
-def Kdisk_cluster(X, N=256, tol=0.035, width=0, length=0, a_pos=None):
+DEFAULT_TOKEN_TOLERANCE = {"veh": 0.05, "cyc": 0.004, "ped": 0.004}
+
+
+def Kdisk_cluster(
+    X,
+    N=256,
+    tol=0.035,
+    width=0,
+    length=0,
+    a_pos=None,
+    max_attempts=None,
+    cal_mean_heading_flag=True,
+):
     S: list[np.ndarray] = []
     ret_traj_list = []
+    attempts = 0
     while len(S) < N:
+        attempts += 1
+        if max_attempts is not None and attempts > max_attempts:
+            raise RuntimeError(
+                f"Kdisk_cluster found {len(S)}/{N} clusters after {max_attempts} attempts"
+            )
+        if X.shape[0] == 0:
+            raise RuntimeError(
+                f"Kdisk_cluster ran out of samples at {len(S)}/{N} clusters"
+            )
         num_all = X.shape[0]
         # 随机选择第一个簇中心
         choice_index = np.random.choice(num_all)
@@ -26,7 +48,7 @@ def Kdisk_cluster(X, N=256, tol=0.035, width=0, length=0, a_pos=None):
             continue
         res_mask = np.sum((X - x0) ** 2, axis=(1, 2)) / 4 > (tol**2)
         del_mask = np.sum((X - x0) ** 2, axis=(1, 2)) / 4 <= (tol**2)
-        if cal_mean_heading:
+        if cal_mean_heading_flag:
             del_contour = X[del_mask]
             diff_xy = del_contour[:, 0, :] - del_contour[:, 3, :]
             del_heading = np.arctan2(diff_xy[:, 1], diff_xy[:, 0]).mean()
@@ -88,6 +110,64 @@ def cal_polygon_contour(x, y, theta, width, length):
     )
 
     return polygon_contour
+
+
+def _agent_shape(agent_type: str, shift: int):
+    if shift <= 2:
+        if agent_type == "veh":
+            return 1.0, 2.4
+        if agent_type == "cyc":
+            return 0.5, 1.5
+        return 0.5, 0.5
+
+    if agent_type == "veh":
+        return 2.0, 4.8
+    if agent_type == "cyc":
+        return 1.0, 2.0
+    return 1.0, 1.0
+
+
+def build_tokens_from_trajectories(
+    data,
+    num_cluster=2048,
+    shift=5,
+    max_samples_per_type=int(1e6),
+    seed=42,
+    tolerance=None,
+    max_attempts=None,
+):
+    np.random.seed(seed)
+    tolerance = tolerance or DEFAULT_TOKEN_TOLERANCE
+    res: dict[str, dict[str, np.ndarray]] = {"token": {}, "traj": {}, "token_all": {}}
+    for k, v in data.items():
+        a_pos = v
+        cal_num = min(max_samples_per_type, a_pos.shape[0])
+        a_pos = a_pos[np.random.choice(a_pos.shape[0], cal_num, replace=False)]
+        a_pos[:, :, -1] = wrap_angle(a_pos[:, :, -1])
+        width, length = _agent_shape(k, shift)
+        contour = cal_polygon_contour(
+            a_pos[:, shift, 0], a_pos[:, shift, 1], a_pos[:, shift, 2], width, length
+        )
+        centroids, ret_traj = Kdisk_cluster(
+            contour,
+            num_cluster,
+            tolerance[k],
+            width,
+            length,
+            a_pos[:, : shift + 1],
+            max_attempts=max_attempts,
+        )
+        contour = cal_polygon_contour(
+            ret_traj[:, :, 0].reshape(num_cluster * (shift + 1)),
+            ret_traj[:, :, 1].reshape(num_cluster * (shift + 1)),
+            ret_traj[:, :, 2].reshape(num_cluster * (shift + 1)),
+            width,
+            length,
+        )
+        res["token_all"][k] = contour.reshape(num_cluster, (shift + 1), 4, 2)
+        res["token"][k] = centroids
+        res["traj"][k] = ret_traj
+    return res
 
 
 if __name__ == "__main__":

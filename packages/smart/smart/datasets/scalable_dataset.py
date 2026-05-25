@@ -6,6 +6,13 @@ from torch_geometric.data import Dataset
 from smart.utils.log import Logging
 import numpy as np
 from .preprocess import TokenProcessor
+from smart.utils.agent_token_builder import ensure_agent_tokens
+from smart.utils.token_paths import (
+    default_agent_token_path,
+    default_map_token_path,
+    missing_token_error,
+    resolve_token_path,
+)
 
 
 def distance(point1, point2):
@@ -29,6 +36,12 @@ class MultiDataset(Dataset):
         processor=None,
         use_intention=False,
         token_size=512,
+        agent_token_path=None,
+        map_token_path=None,
+        build_agent_tokens_if_missing=False,
+        agent_token_build_max_samples=1_000_000,
+        agent_token_build_seed=42,
+        agent_token_build_kdisks_max_attempts=1_000_000,
     ) -> None:
         self.logger = Logging().log(level="DEBUG")
         self.root = root
@@ -61,6 +74,35 @@ class MultiDataset(Dataset):
             self._processed_file_names = split_datainfo[split]
         self.dim = dim
         self.num_historical_steps = num_historical_steps
+        self.token_size = token_size
+        self.agent_token_path = resolve_token_path(
+            agent_token_path,
+            default_agent_token_path(token_size),
+        )
+        self.map_token_path = resolve_token_path(
+            map_token_path,
+            default_map_token_path(),
+        )
+        if split == "train" and build_agent_tokens_if_missing:
+            raw_dirs = getattr(self, "_raw_dir", [])
+            if not raw_dirs:
+                raise ValueError(
+                    "Cannot build agent tokens because no train raw_dir was provided."
+                )
+            ensure_agent_tokens(
+                raw_dirs=raw_dirs,
+                output_path=self.agent_token_path,
+                token_size=token_size,
+                build_if_missing=True,
+                max_samples_per_type=agent_token_build_max_samples,
+                seed=agent_token_build_seed,
+                kdisks_max_attempts=agent_token_build_kdisks_max_attempts,
+            )
+        if not self.agent_token_path.exists():
+            raise missing_token_error(self.agent_token_path, "Agent")
+        if not self.map_token_path.exists():
+            raise missing_token_error(self.map_token_path, "Map")
+
         self._num_samples = (
             len(self._processed_file_names) - 1
             if processed_dir is not None
@@ -69,7 +111,11 @@ class MultiDataset(Dataset):
         self.logger.debug(
             "The number of {} dataset is ".format(split) + str(self._num_samples)
         )
-        self.token_processor = TokenProcessor(2048)
+        self.token_processor = TokenProcessor(
+            token_size,
+            agent_token_path=str(self.agent_token_path),
+            map_token_path=str(self.map_token_path),
+        )
         super(MultiDataset, self).__init__(
             root=root, transform=transform, pre_transform=None, pre_filter=None
         )

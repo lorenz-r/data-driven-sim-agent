@@ -4,8 +4,15 @@ from scipy.interpolate import interp1d
 from scipy.spatial.distance import euclidean
 import math
 import pickle
+from pathlib import Path
 from typing import Optional
 from smart.utils import wrap_angle
+from smart.utils.token_paths import (
+    default_agent_token_path,
+    default_map_token_path,
+    missing_token_error,
+    resolve_token_path,
+)
 import os
 
 
@@ -160,13 +167,13 @@ def assign_clusters(sub_X, centroids):
 
 
 class TokenProcessor:
-    def __init__(self, token_size):
-        module_dir = os.path.dirname(os.path.dirname(__file__))
-        self.agent_token_path = os.path.join(
-            module_dir, f"tokens/cluster_frame_5_{token_size}.pkl"
+    def __init__(self, token_size, agent_token_path=None, map_token_path=None):
+        self.token_size = token_size
+        self.agent_token_path = str(
+            resolve_token_path(agent_token_path, default_agent_token_path(token_size))
         )
-        self.map_token_traj_path = os.path.join(
-            module_dir, "tokens/map_traj_token5.pkl"
+        self.map_token_traj_path = str(
+            resolve_token_path(map_token_path, default_map_token_path())
         )
         self.noise = False
         self.disturb = False
@@ -186,6 +193,11 @@ class TokenProcessor:
         return data
 
     def get_trajectory_token(self):
+        if not os.path.exists(self.agent_token_path):
+            raise missing_token_error(Path(self.agent_token_path), "Agent")
+        if not os.path.exists(self.map_token_traj_path):
+            raise missing_token_error(Path(self.map_token_traj_path), "Map")
+
         agent_token_data = pickle.load(open(self.agent_token_path, "rb"))
         map_token_traj = pickle.load(open(self.map_token_traj_path, "rb"))
         self.trajectory_token = agent_token_data["token"]

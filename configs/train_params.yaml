@@ -157,6 +157,22 @@ model:
   dropout: 0.1
 
 # ------------------------------------------------------------
+# SMART-specific Configuration
+# ------------------------------------------------------------
+smart:
+  tokens:
+    agent_token_path: "packages/smart/smart/tokens/cluster_frame_5_2048.pkl"
+    map_token_path: "packages/smart/smart/tokens/map_traj_token5.pkl"
+
+    # Keep false by default so training never silently creates a new vocabulary.
+    # To build explicitly, either set this true or run:
+    # uv run python packages/smart/scripts/build_agent_tokens.py --raw-dir data/train_split
+    build_agent_tokens_if_missing: false
+    agent_token_build_max_samples: 1000000
+    agent_token_build_kdisks_max_attempts: 1000000
+    agent_token_build_seed: 42
+
+# ------------------------------------------------------------
 # Output Paths
 # ------------------------------------------------------------
 output:

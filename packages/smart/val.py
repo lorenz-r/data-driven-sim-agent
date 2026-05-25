@@ -18,6 +18,12 @@ if __name__ == "__main__":
     parser.add_argument("--save_ckpt_path", type=str, default="")
     args = parser.parse_args()
     config = load_config_act(args.config)
+    if not getattr(config.Model, "agent_token_path", None):
+        config.Model.agent_token_path = getattr(
+            config.Dataset, "agent_token_path", None
+        )
+    if not getattr(config.Model, "map_token_path", None):
+        config.Model.map_token_path = getattr(config.Dataset, "map_token_path", None)
 
     data_config = config.Dataset
     val_dataset = {
@@ -30,6 +36,9 @@ if __name__ == "__main__":
         transform=WaymoTargetBuilder(
             config.Model.num_historical_steps, config.Model.decoder.num_future_steps
         ),
+        token_size=data_config.token_size,
+        agent_token_path=getattr(data_config, "agent_token_path", None),
+        map_token_path=getattr(data_config, "map_token_path", None),
     )
     dataloader = DataLoader(
         val_dataset,
