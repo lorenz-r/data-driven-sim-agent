@@ -3,6 +3,7 @@ FROM ubuntu:24.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
+    UV_HTTP_TIMEOUT=300 \
     CARGO_HOME=/root/.cargo \
     RUSTUP_HOME=/root/.rustup \
     PATH="/root/.cargo/bin:${PATH}"

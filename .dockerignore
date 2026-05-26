@@ -1,5 +1,51 @@
-.venv
-data
-packages/smart/data
-**/__pycache__
+# Keep the build context limited to what Dockerfile copies.
+*
+
+!Dockerfile
+!.dockerignore
+!.python-version
+!pyproject.toml
+!uv.lock
+!packages/
+!packages/**
+!tests/
+!tests/**
+
+# VCS and local environments
 .git
+.github
+.venv
+.env
+*.env
+!.env.example
+!example.env
+
+# Python and tooling caches
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.uv-cache/
+.cache/
+
+# Rust build output
+**/target/
+
+# Data, model checkpoints, and experiment artifacts
+data/
+dataset/
+packages/smart/data/
+packages/smart/smart_checkpoints/
+smart-checkpoints/
+lightning_logs/
+**/lightning_logs/
+wandb/
+**/wandb/
+profiles/
+**/profiles/
+
+# Local editor and OS files
+.idea/
+.vscode/
+.DS_Store
