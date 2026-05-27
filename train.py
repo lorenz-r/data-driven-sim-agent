@@ -69,7 +69,7 @@ def parse_args():
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--data-workers", type=int)
 
-    parser.add_argument("--val-batch-size")
+    parser.add_argument("--val-batch-size", type=int)
 
     # --------------------------------------------------------
     # Training
