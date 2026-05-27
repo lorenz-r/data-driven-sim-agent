@@ -1,4 +1,3 @@
-from pathlib import Path
 from dotenv import load_dotenv
 
 from pytorch_lightning.loggers import (
@@ -26,11 +25,7 @@ def create_logger(config):
     api_key = os.getenv("WANDB_API_KEY")
 
     if api_key is None:
-
-        print(
-            "WARNING: WANDB_API_KEY "
-            "not found."
-        )
+        print("WARNING: WANDB_API_KEY not found.")
 
         return None
 
@@ -49,20 +44,12 @@ def create_logger(config):
     # --------------------------------------------------------
 
     logger = WandbLogger(
-
-        project=config["logging"][
-            "project_name"
-        ],
-
+        project=config["logging"]["project_name"],
         name=config["logging"].get(
             "run_name",
             None,
         ),
-
-        save_dir=config["output"][
-            "output_dir"
-        ],
-
+        save_dir=config["output"]["output_dir"],
         log_model=config["logging"].get("log_model_artifacts", False),
     )
 
@@ -71,11 +58,12 @@ def create_logger(config):
     # --------------------------------------------------------
 
     # Configs may still be overvwritten by SMART later, so we log the config at the end of the training loop instead of here. TODO: Make sure that the top level configuration counts for the whole thing --> we want to remove potential later overwrites to keep everything central.
-    #logger.experiment.config.update(
+    # logger.experiment.config.update(
     #    flatten_config(config)
-    #)
+    # )
 
     return logger
+
 
 def flatten_config(
     d,
@@ -86,15 +74,9 @@ def flatten_config(
     items = []
 
     for k, v in d.items():
-
-        new_key = (
-            f"{parent_key}{sep}{k}"
-            if parent_key
-            else k
-        )
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
 
         if isinstance(v, dict):
-
             items.extend(
                 flatten_config(
                     v,
