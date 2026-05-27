@@ -330,6 +330,7 @@ dependencies = [
 dev = [
     { name = "maturin" },
     { name = "pre-commit" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -342,6 +343,7 @@ requires-dist = [
 dev = [
     { name = "maturin", specifier = ">=1.0" },
     { name = "pre-commit", specifier = ">=4.6.0" },
+    { name = "ruff", specifier = ">=0.15.13" },
 ]
 
 [[package]]

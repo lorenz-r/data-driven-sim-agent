@@ -11,7 +11,7 @@ class SmartTrainer(BaseTrainer):
 
     def train(self):
         print("Training with SmartTrainer...")
-        return run_training(self.config, wandb_logger=self.wandb_logger)
+        return run_training(self.config, wandb_logger=self.wandb_logger, return_metrics_path=self.config["output"].get("metrics_path", None))
 
     def validate(self):
         print("Validating with SmartTrainer...")

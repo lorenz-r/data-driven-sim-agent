@@ -56,4 +56,5 @@ exclude = [
 dev = [
     "pre-commit>=4.6.0",
     "maturin>=1.0",
+    "ruff>=0.15.13",
 ]

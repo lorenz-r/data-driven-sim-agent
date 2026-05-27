@@ -49,3 +49,4 @@ wandb
 data
 wandb/
 outputs/
+.ruff_cache/
