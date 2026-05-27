@@ -87,6 +87,9 @@ def run_inference(
     last_pos = agent_data["position"][:, -1]
     last_pos_np = last_pos.numpy() if isinstance(last_pos, torch.Tensor) else last_pos
 
+    # For debugging and analysis
+    print("Raw model output: ", inference_output)
+
     dist_threshold = 1000.0
 
     num_agents = pred_traj.shape[0]
@@ -162,6 +165,8 @@ def run_inference(
             av2_output_path
         )
         print(f"Saved AV2 scenario to: {av2_output_path}")"""  # TODO: add back after fixing env problems
+    
+    return inference_output
 
 
 def main():
