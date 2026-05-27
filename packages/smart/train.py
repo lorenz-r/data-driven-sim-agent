@@ -16,8 +16,6 @@ from smart.utils.log import Logging
 from smart.metrics.utils import get_training_metrics
 from smart.utils.profiling import TrainingProfiler
 from smart.utils.profiling import add_profiler_args
-from smart.utils.profiling import TrainingProfiler
-from smart.utils.profiling import add_profiler_args
 import pickle
 import wandb
 from tqdm import tqdm
@@ -134,6 +132,7 @@ def validate_dataset(datamodule, remove_bad_files=False):
 
     return bad_files
 
+
 _SCRIPT_DIR = Path(__file__).resolve().parent
 
 
@@ -143,8 +142,10 @@ def run_training(
     validate_dataset_first: bool = False,
     remove_bad_files: bool = False,
     trial_number: int = 1000,  # When moving logging to top-level, do not forget to move this param as well
-    wandb_logger = None,  # Allow passing in an optional logger instance
-    training_profiler: Optional[TrainingProfiler] = None,  # Optional training profiler for performance analysis
+    wandb_logger=None,  # Allow passing in an optional logger instance
+    training_profiler: Optional[
+        TrainingProfiler
+    ] = None,  # Optional training profiler for performance analysis
 ):
     """
     Unified SMART training entrypoint.
@@ -165,7 +166,7 @@ def run_training(
 
     trial_number : int
         Optional Optuna trial number.
-        
+
     training_profiler : TrainingProfiler | None
         Optional profiler configured by the top-level trainer.
     """
@@ -326,21 +327,20 @@ def run_training(
     # =========================================================
 
     if config["logging"]["wandb_logging"]:
+        # SAFE CONFIG LOGGING
+        #
+        # Avoid logging raw objects/classes.
+        # Only log primitive serializable values.
 
-            # SAFE CONFIG LOGGING
-            #
-            # Avoid logging raw objects/classes.
-            # Only log primitive serializable values.
+        flat_config = {
+            "learning_rate": config["optimization"]["learning_rate"],
+            "batch_size": config["data"]["batch_size"],
+            "max_epochs": config["training"]["max_epochs"],
+            "devices": config["training"]["devices"],
+            "weight_decay": config["optimization"]["weight_decay"],
+        }
 
-            flat_config = {
-                "learning_rate": config["optimization"]["learning_rate"],
-                "batch_size": config["data"]["batch_size"],
-                "max_epochs": config["training"]["max_epochs"],
-                "devices": config["training"]["devices"],
-                "weight_decay": config["optimization"]["weight_decay"],
-            }
-
-            wandb_logger.experiment.config.update(flat_config)
+        wandb_logger.experiment.config.update(flat_config)
 
     # =========================================================
     # Callbacks
@@ -386,14 +386,6 @@ def run_training(
     # =========================================================
     # Trainer
     # =========================================================
-
-    if training_profiler is None:
-        training_profiler = TrainingProfiler.from_config(
-            config.get("profiling", {}),
-            default_profile_name=f"smart_profile_trial-{trial_number}",
-        )
-
-    profiler = training_profiler.build()
 
     if training_profiler is None:
         training_profiler = TrainingProfiler.from_config(
@@ -675,7 +667,7 @@ if __name__ == "__main__":
     #     gradient_clip_val=0.5,
     # )
 
-    wandb_api_key = _login_wandb_if_available()
+    wandb_api_key = load_dotenv() and os.getenv("WANDB_API_KEY")
 
     if wandb_api_key:
         wandb_logger = WandbLogger(

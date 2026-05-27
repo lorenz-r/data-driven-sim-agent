@@ -165,7 +165,7 @@ def run_inference(
             av2_output_path
         )
         print(f"Saved AV2 scenario to: {av2_output_path}")"""  # TODO: add back after fixing env problems
-    
+
     return inference_output
 
 
