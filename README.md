@@ -118,7 +118,7 @@ Training has been refactored into a top level script to make it easier to switch
 Example command for running the training:
 
 ```bash
-uv run python train.py --model smart --learning-rate 0.000019 --train-path train_split_ --val-path train_split_test_copy/ --max-epochs 10 --weight-decay 0.01 --save-ckpt-path smart-checkpoints/run_01 --profile simple --profile-dir profiles/run_01
+uv run python train.py --model smart --train-path pack ages/smart/train_split/ --val-path packages/smart/validation_split/ --project-name smart-training --run-name demo-ru n --max-epochs 5 --batch-size 10 --val-batch-size 10 --learning-rate 0.000019 --save-ckpt-path smart-checkpoints/run_01 --profile simple -- profile-dir profiles/run_01 --profile-name run_01_profile
 ```
 
 Note that it is possible to configure a variety of parameters for the wandb logging when running the top-level script. For example, runs can be classified into groups immediately, additional notes can be pasted at run creation & model artifacts (like checkpoints) can be uploaded automatically. See the configs/train_params.yaml file for details.
