@@ -19,6 +19,7 @@ from smart.utils.profiling import add_profiler_args
 from smart.utils.profiling import TrainingProfiler
 from smart.utils.profiling import add_profiler_args
 import pickle
+import wandb
 from tqdm import tqdm
 
 
