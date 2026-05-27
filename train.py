@@ -69,6 +69,8 @@ def parse_args():
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--data-workers", type=int)
 
+    parser.add_argument("--val-batch-size")
+
     # --------------------------------------------------------
     # Training
     # --------------------------------------------------------
@@ -151,6 +153,7 @@ def build_config():
         "train_manifest": "data.train_manifest",
         "val_manifest": "data.val_manifest",
         "batch_size": "data.batch_size",
+        "val_batch_size": "data.val_batch_size",
         "data_workers": "data.data_workers",
         "model": "model.model_name",
         "dropout": "model.dropout",
