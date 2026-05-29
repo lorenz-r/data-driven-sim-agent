@@ -172,7 +172,7 @@ def add_setup_arguments(
         action="store_const",
         const="dev",
         default="dev",
-        help="Stream first N scenarios only (default)",
+        help="Stream N train+val scenarios (default)",
     )
     mode.add_argument(
         "--full",
@@ -185,7 +185,13 @@ def add_setup_arguments(
         "--scenarios",
         type=int,
         default=5,
-        help="Scenarios to download in dev mode (default: 5)",
+        help="Total train+val scenarios to download in dev mode (default: 5)",
+    )
+    parser.add_argument(
+        "--val-ratio",
+        type=float,
+        default=0.2,
+        help="Validation fraction for dev mode partial downloads (default: 0.2)",
     )
 
     parser.add_argument("--skip-download", action="store_true")
@@ -251,6 +257,7 @@ def resolve_download_etag(args: argparse.Namespace) -> str:
         args.train_url,
         args.val_url,
         args.downloads_dir,
+        args.val_ratio,
     )
 
 
@@ -271,7 +278,7 @@ def run_setup(
                 "A preprocess callback and fingerprint are required unless "
                 "--skip-preprocess is set."
             )
-        splits = ("train",) if args.mode == "dev" else ("train", "val")
+        splits = ("train", "val")
         print("=" * 55)
         print("STEP 2 - Preprocess")
         print("=" * 55)

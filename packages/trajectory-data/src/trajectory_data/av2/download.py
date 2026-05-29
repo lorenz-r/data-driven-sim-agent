@@ -4,8 +4,9 @@ Download AV2 motion-forecasting scenarios.
 
 Modes
 -----
-dev   Stream the head of the remote TAR and extract the first --scenarios
-      scenario folders.  Fast and stateless — no caching, always re-runs.
+dev   Stream official train/val TARs and extract --scenarios total scenario
+      folders according to --val-ratio. Fast and stateless — no TAR caching,
+      always re-runs.
 
 full  Download both complete TARs (resumable via Range requests), then
       extract.  After each download the file is verified by recomputing its
@@ -34,7 +35,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import io
 import os
 import shutil
 import tarfile
@@ -62,7 +62,6 @@ KNOWN_ETAGS: dict[str, str] = {
 
 S3_PART_SIZE = 8 * 1024 * 1024  # 8 MB — AWS CLI default, confirmed for AV2
 CHUNK = 4 * 1024 * 1024  # 4 MiB I/O chunk
-PER_SCENARIO_BYTES = 512 * 1024  # conservative bytes-per-scenario in TAR head
 
 # ---------------------------------------------------------------------------
 # TAR cache directory resolution
@@ -208,20 +207,43 @@ def _prune_to(train_dir: Path, n: int) -> int:
     return min(kept, n)
 
 
-def _extract_stream(data: bytes, out_dir: Path) -> None:
-    try:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r|*") as tf:
-            for member in tf:
-                if not member.isfile():
-                    continue
-                rel = Path(*Path(member.name).parts[1:])
-                dest = out_dir / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                fobj = tf.extractfile(member)
-                if fobj:
-                    dest.write_bytes(fobj.read())
-    except tarfile.ReadError:
-        pass
+def _extract_stream(fileobj, out_dir: Path, n_scenarios: int) -> int:
+    complete: set[str] = set()
+    parquet_seen: set[str] = set()
+    map_seen: set[str] = set()
+
+    with tarfile.open(fileobj=fileobj, mode="r|*") as tf:
+        for member in tf:
+            if not member.isfile():
+                continue
+
+            parts = Path(member.name).parts
+            if len(parts) < 3:
+                continue
+
+            rel = Path(*parts[1:])
+            scenario_dir = rel.parts[0]
+            dest = out_dir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+
+            fobj = tf.extractfile(member)
+            if fobj:
+                dest.write_bytes(fobj.read())
+
+            filename = rel.name
+            if filename.startswith("scenario_") and filename.endswith(".parquet"):
+                parquet_seen.add(scenario_dir)
+            elif filename.startswith("log_map_archive_") and filename.endswith(".json"):
+                map_seen.add(scenario_dir)
+
+            if scenario_dir in parquet_seen and scenario_dir in map_seen:
+                complete.add(scenario_dir)
+                if len(complete) % 10_000 == 0:
+                    print(f"  extracted {len(complete)} complete scenarios ...")
+                if len(complete) >= n_scenarios:
+                    break
+
+    return len(complete)
 
 
 def _extract_tar(tar_path: Path, split_name: str, out_dir: Path) -> None:
@@ -242,34 +264,77 @@ def _extract_tar(tar_path: Path, split_name: str, out_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def download_dev(url: str, n_scenarios: int, out_dir: Path) -> str:
+def split_dev_scenarios(n_scenarios: int, val_ratio: float) -> tuple[int, int]:
+    """Return (train_scenarios, val_scenarios) for a dev-mode total budget."""
+    if n_scenarios < 1:
+        raise ValueError("--scenarios must be at least 1")
+    if not 0 <= val_ratio < 1:
+        raise ValueError("--val-ratio must be in the range [0, 1)")
+
+    val_scenarios = round(n_scenarios * val_ratio)
+    train_scenarios = n_scenarios - val_scenarios
+    if train_scenarios < 1:
+        raise ValueError("--val-ratio leaves no training scenarios")
+    return train_scenarios, val_scenarios
+
+
+def download_dev(url: str, n_scenarios: int, out_dir: Path, split_name: str) -> str:
     """
     Stream just enough bytes to extract n_scenarios complete scenario folders.
     Always re-runs; no cache check.  Returns the S3 ETag (from HEAD only).
     """
+    split_dir = out_dir / split_name
+    if split_dir.exists():
+        shutil.rmtree(split_dir)
+
+    if n_scenarios <= 0:
+        print(f"Skipping {split_name} dev download (0 scenarios).")
+        return ""
+
     print(f"HEAD {url}")
     etag, content_length = _head(url)
     print(f"  ETag={etag}  total size={content_length / 1e9:.1f} GB")
 
-    byte_budget = n_scenarios * PER_SCENARIO_BYTES
-    print(f"Streaming ~{byte_budget // 1024} KiB for {n_scenarios} scenarios …")
+    print(
+        f"Streaming {split_name} TAR members until "
+        f"{n_scenarios} complete scenarios are found ..."
+    )
 
-    buf = io.BytesIO()
+    split_dir.mkdir(parents=True, exist_ok=True)
+
     with urllib.request.urlopen(url, timeout=60) as req:
-        downloaded = 0
-        while downloaded < byte_budget:
-            chunk = req.read(min(CHUNK, byte_budget - downloaded))
-            if not chunk:
-                break
-            buf.write(chunk)
-            downloaded += len(chunk)
+        _extract_stream(req, split_dir, n_scenarios)
 
-    train_dir = out_dir / "train"
-    train_dir.mkdir(parents=True, exist_ok=True)
-    _extract_stream(buf.getvalue(), train_dir)
-    kept = _prune_to(train_dir, n_scenarios)
-    print(f"Extracted and kept {kept} complete scenario directories.")
+    kept = _prune_to(split_dir, n_scenarios)
+    print(f"Extracted and kept {kept} complete {split_name} scenario directories.")
+    if kept < n_scenarios:
+        raise ValueError(
+            f"Requested {n_scenarios} scenarios, but {url} contains only {kept} "
+            f"complete {split_name} scenarios. Lower --scenarios/--val-ratio, "
+            "or use --full for the complete official train/val archives."
+        )
     return etag
+
+
+def download_dev_splits(
+    train_url: str,
+    val_url: str,
+    n_scenarios: int,
+    val_ratio: float,
+    out_dir: Path,
+) -> str:
+    """Stream a dev subset from the official train and val TARs."""
+    train_scenarios, val_scenarios = split_dev_scenarios(n_scenarios, val_ratio)
+    print(
+        f"Dev scenario budget: {n_scenarios} total "
+        f"({train_scenarios} train, {val_scenarios} val)"
+    )
+    train_etag = download_dev(train_url, train_scenarios, out_dir, "train")
+    val_etag = download_dev(val_url, val_scenarios, out_dir, "val")
+    return (
+        f"dev:train={train_etag}:{train_scenarios}:"
+        f"val={val_etag or 'none'}:{val_scenarios}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -372,14 +437,15 @@ def ensure_downloaded(
     train_url: str = TRAIN_URL,
     val_url: str = VAL_URL,
     downloads_dir: Path | None = None,
+    val_ratio: float = 0.2,
 ) -> str:
     """
     Ensure raw scenario data is present in out_dir.
     downloads_dir overrides the TAR cache location (full mode only).
-    Returns the train ETag (hardcoded for full mode, HEAD-derived for dev).
+    Returns a dataset identity string for preprocessing cache keys.
     """
     if mode == "dev":
-        return download_dev(train_url, n_scenarios, out_dir)
+        return download_dev_splits(train_url, val_url, n_scenarios, val_ratio, out_dir)
 
     train_etag, _ = download_full(train_url, val_url, out_dir, downloads_dir)
     return train_etag
@@ -402,7 +468,7 @@ def _parser() -> argparse.ArgumentParser:
         action="store_const",
         const="dev",
         default="dev",
-        help="Stream first N scenarios only — fast, stateless (default)",
+        help="Stream N train+val scenarios — fast, stateless (default)",
     )
     mode.add_argument(
         "--full",
@@ -415,7 +481,13 @@ def _parser() -> argparse.ArgumentParser:
         "--scenarios",
         type=int,
         default=5,
-        help="Number of scenarios to extract in dev mode (default: 5)",
+        help="Total number of train+val scenarios to extract in dev mode (default: 5)",
+    )
+    p.add_argument(
+        "--val-ratio",
+        type=float,
+        default=0.2,
+        help="Validation fraction for dev mode partial downloads (default: 0.2)",
     )
     p.add_argument(
         "--out",
@@ -444,8 +516,9 @@ def main() -> None:
         args.train_url,
         args.val_url,
         args.downloads_dir,
+        args.val_ratio,
     )
-    print(f"\nDone. Train ETag: {etag}")
+    print(f"\nDone. Dataset identity: {etag}")
 
 
 if __name__ == "__main__":

@@ -48,7 +48,7 @@ AV2 download/cache/split orchestration lives in `packages/trajectory-data`.
 preprocessor and writes SMART `.pkl` files.
 
 ```bash
-# Dev: stream first 100 scenarios, preprocess, no splits
+# Dev: stream 100 total scenarios, preprocess official train/val subsets
 uv run python packages/smart/scripts/setup_av2.py --dev --scenarios 100
 
 # Full dataset
@@ -64,7 +64,8 @@ Key flags:
 | Flag | Default | Description |
 |---|---|---|
 | `--dev` / `--full` | `--dev` | Stream N scenarios or download complete dataset |
-| `--scenarios N` | `5` | Scenario count for `--dev` mode |
+| `--scenarios N` | `5` | Total train+val scenario count for `--dev` mode |
+| `--val-ratio R` | `0.2` | Validation fraction for `--dev` mode |
 | `--raw-dir` | `packages/smart/data/raw` | Where extracted scenario folders are written |
 | `--processed-dir` | `packages/smart/data/processed` | Root for content-addressed output dirs |
 | `--downloads-dir` | `~/argoverse_cache` | Where the raw TARs are stored (see below) |
@@ -87,7 +88,9 @@ After download the S3 multipart ETag is recomputed from the bytes on disk
 (`md5(md5_p1 ‖ … ‖ md5_p759)-759`, 8 MB parts) and compared against a hardcoded
 value. A mismatch means a corrupted or partial download and triggers a re-fetch.
 
-In `--dev` mode no TAR is kept — only the streamed scenario folders.
+In `--dev` mode no TAR is kept. By default, `--scenarios` is split into
+official train/val subsets using `--val-ratio 0.2`; pass `--val-ratio 0` for a
+train-only dev subset.
 
 ##### 3. Rust preprocessor (`packages/smart-preprocess`)
 
@@ -116,7 +119,7 @@ from the AV2 training split only:
 
 ```bash
 uv run python packages/smart/scripts/build_agent_tokens.py \
-  --raw-dir data/train_split \
+  --raw-dir data/processed/current/train \
   --output packages/smart/smart/tokens/cluster_frame_5_2048_av2.pkl \
   --token-size 2048
 ```

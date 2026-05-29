@@ -106,7 +106,7 @@ To build an AV2-specific agent motion vocabulary, run from the repository root:
 
 ```bash
 uv run python packages/smart/scripts/build_agent_tokens.py \
-  --raw-dir data/train_split \
+  --raw-dir data/processed/current/train \
   --output packages/smart/smart/tokens/cluster_frame_5_2048_av2.pkl \
   --token-size 2048
 ```
