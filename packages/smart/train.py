@@ -189,19 +189,6 @@ def maybe_build_agent_tokens_from_config(config) -> None:
     config.Model.map_token_path = str(map_token_path)
 
 
-def _login_wandb_if_available() -> Optional[str]:
-    load_dotenv()
-    load_dotenv(_SCRIPT_DIR / ".env")
-
-    wandb_api_key = os.getenv("WANDB_API_KEY")
-    if not wandb_api_key:
-        print("WANDB_API_KEY not set — running without wandb logging")
-        return None
-
-    wandb.login(key=wandb_api_key)
-    return wandb_api_key
-
-
 def run_training(
     config: dict,
     return_metrics_path: str = "",
@@ -422,18 +409,6 @@ def run_training(
     # Logging
     # =========================================================
 
-    if wandb_logger is None and config["logging"]["wandb_logging"]:
-        wandb_api_key = _login_wandb_if_available()
-
-        if wandb_api_key:
-            wandb_logger = WandbLogger(
-                project=config["logging"]["project_name"],
-                name=config["logging"].get(
-                    "run_name",
-                    f"trial-{trial_number}",
-                ),
-            )
-
     if config["logging"]["wandb_logging"]:
         # SAFE CONFIG LOGGING
         #
@@ -448,8 +423,7 @@ def run_training(
             "weight_decay": config["optimization"]["weight_decay"],
         }
 
-        if wandb_logger is not None:
-            wandb_logger.experiment.config.update(flat_config)
+        wandb_logger.experiment.config.update(flat_config)
 
     # =========================================================
     # Callbacks
