@@ -18,6 +18,7 @@ Dataset:
   num_workers: 1
   pin_memory: True
   persistent_workers: True
+  token_processor_backend: rust
   train_raw_dir: ["packages/smart/train_split"]
   val_raw_dir: ["packages/smart/validation_split"]
   test_raw_dir:

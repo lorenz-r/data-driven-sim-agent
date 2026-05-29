@@ -6,6 +6,7 @@
 
 mod agent;
 mod map;
+mod token_loader;
 
 use agent::build_agent_data;
 use map::build_map_data;
@@ -382,5 +383,6 @@ fn process_directory(
 fn smart_preprocess(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(preprocess_scenario, m)?)?;
     m.add_function(wrap_pyfunction!(process_directory, m)?)?;
+    m.add_class::<token_loader::TokenProcessor>()?;
     Ok(())
 }

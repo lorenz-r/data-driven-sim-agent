@@ -112,6 +112,7 @@ def validate_dataset(datamodule, remove_bad_files=False):
                     dataset.token_size,
                     agent_token_path=str(dataset.agent_token_path),
                     map_token_path=str(dataset.map_token_path),
+                    training=dataset.training,
                 )
 
                 processor.preprocess(data)
@@ -262,6 +263,11 @@ def run_training(
 
     if "persistent_workers" in config["data"]:
         smart_config.Dataset.persistent_workers = config["data"]["persistent_workers"]
+
+    if "token_processor_backend" in config["data"]:
+        smart_config.Dataset.token_processor_backend = config["data"][
+            "token_processor_backend"
+        ]
 
     tokens_config = None
     if "smart" in config and "tokens" in config["smart"]:
@@ -641,6 +647,12 @@ if __name__ == "__main__":
         default=None,
         help="Number of CPU workers for data loading; if not provided, will use value from config",
     )
+    parser.add_argument(
+        "--token_processor_backend",
+        choices=["rust", "python", "auto"],
+        default=None,
+        help="Token processor backend for scalable dataset loading.",
+    )
     add_profiler_args(parser)
 
     args = parser.parse_args()
@@ -695,6 +707,9 @@ if __name__ == "__main__":
 
     if args.num_cpu_workers is not None:
         config.Dataset.num_workers = args.num_cpu_workers
+
+    if args.token_processor_backend is not None:
+        config.Dataset.token_processor_backend = args.token_processor_backend
 
     maybe_build_agent_tokens_from_config(config)
 

@@ -1652,7 +1652,7 @@ requires-dist = [
 
 [[package]]
 name = "smart-preprocess"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/smart-preprocess" }
 dependencies = [
     { name = "numpy" },

@@ -44,3 +44,10 @@ def missing_token_error(path: Path, label: str) -> FileNotFoundError:
         "Set the token path in the SMART config, or build tokens explicitly with "
         "`uv run python packages/smart/scripts/build_agent_tokens.py ...`."
     )
+
+
+def get_token_paths(token_size: int) -> tuple[str, str]:
+    return (
+        str(default_agent_token_path(token_size)),
+        str(default_map_token_path()),
+    )

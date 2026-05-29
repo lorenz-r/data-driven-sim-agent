@@ -21,6 +21,7 @@ data:
   shuffle_train: true
   pin_memory: true
   persistent_workers: false
+  token_processor_backend: rust
 
 # ------------------------------------------------------------
 # Training Configuration

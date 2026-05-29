@@ -45,6 +45,7 @@ class MultiDataModule(pl.LightningDataModule):
         agent_token_build_max_samples=1_000_000,
         agent_token_build_seed=42,
         agent_token_build_kdisks_max_attempts=1_000_000,
+        token_processor_backend: str = "rust",
         **kwargs,
     ) -> None:
         super(MultiDataModule, self).__init__()
@@ -74,6 +75,7 @@ class MultiDataModule(pl.LightningDataModule):
         self.agent_token_build_kdisks_max_attempts = (
             agent_token_build_kdisks_max_attempts
         )
+        self.token_processor_backend = token_processor_backend
         assert transform is not None
 
         train_transform = MultiDataModule.transforms[transform](
@@ -108,6 +110,7 @@ class MultiDataModule(pl.LightningDataModule):
             agent_token_build_kdisks_max_attempts=(
                 self.agent_token_build_kdisks_max_attempts
             ),
+            token_processor_backend=self.token_processor_backend,
         )
         self.val_dataset = MultiDataModule.dataset[self.dataset_class](
             None,
@@ -119,6 +122,7 @@ class MultiDataModule(pl.LightningDataModule):
             token_size=self.token_size,
             agent_token_path=self.agent_token_path,
             map_token_path=self.map_token_path,
+            token_processor_backend=self.token_processor_backend,
         )
         self.test_dataset = MultiDataModule.dataset[self.dataset_class](
             None,
@@ -130,6 +134,7 @@ class MultiDataModule(pl.LightningDataModule):
             token_size=self.token_size,
             agent_token_path=self.agent_token_path,
             map_token_path=self.map_token_path,
+            token_processor_backend=self.token_processor_backend,
         )
 
     def train_dataloader(self):

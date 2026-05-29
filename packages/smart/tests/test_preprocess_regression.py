@@ -194,6 +194,73 @@ def _check_tensors(
             )
 
 
+def _compare_tokenized(py: dict, rs: dict) -> list[str]:
+    fails: list[str] = []
+
+    if set(py.keys()) != set(rs.keys()):
+        fails.append(f"top.keys differ: {set(py.keys()) ^ set(rs.keys())}")
+
+    _check_tensors(
+        fails,
+        "agent",
+        rs["agent"],
+        py["agent"],
+        exact_keys=[
+            "valid_mask",
+            "predict_mask",
+            "type",
+            "category",
+            "token_idx",
+            "agent_valid_mask",
+        ],
+        float_keys=[
+            "position",
+            "heading",
+            "velocity",
+            "shape",
+            "token_contour",
+            "token_pos",
+            "token_heading",
+            "token_velocity",
+        ],
+    )
+
+    _check_tensors(
+        fails,
+        "map_point",
+        rs["map_point"],
+        py["map_point"],
+        exact_keys=["type"],
+        float_keys=["orientation"],
+    )
+
+    _check_tensors(
+        fails,
+        "map_save",
+        rs["map_save"],
+        py["map_save"],
+        exact_keys=[],
+        float_keys=["traj_pos", "traj_theta", "pl_idx_list"],
+    )
+
+    _check_tensors(
+        fails,
+        "pt_token",
+        rs["pt_token"],
+        py["pt_token"],
+        exact_keys=["type", "side", "pl_type"],
+        float_keys=[],
+    )
+
+    if rs["pt_token"]["num_nodes"] != py["pt_token"]["num_nodes"]:
+        fails.append(
+            f"pt_token.num_nodes: rust={rs['pt_token']['num_nodes']} "
+            f"py={py['pt_token']['num_nodes']}"
+        )
+
+    return fails
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -311,3 +378,74 @@ def test_rust_deterministic(sid: str, tmp_path: Path) -> None:
 
     failures = _compare(pkl1, pkl2)
     assert not failures, "Non-deterministic output:\n" + "\n".join(failures)
+
+
+def test_token_processor_backend_auto_is_the_only_silent_fallback(monkeypatch) -> None:
+    import sys
+
+    sys.path.insert(0, str(SMART_ROOT))
+    loaded_smart = sys.modules.get("smart")
+    if loaded_smart is not None and not str(
+        getattr(loaded_smart, "__file__", "")
+    ).startswith(str(SMART_ROOT / "smart")):
+        del sys.modules["smart"]
+
+    import smart.datasets.token_processor as token_processor
+
+    class BrokenRustProcessor:
+        def __init__(self, *args, **kwargs) -> None:
+            raise RuntimeError("rust unavailable")
+
+    class DummyPythonProcessor:
+        def __init__(
+            self,
+            token_size: int,
+            agent_token_path=None,
+            map_token_path=None,
+            training: bool = False,
+        ) -> None:
+            self.token_size = token_size
+            self.agent_token_path = agent_token_path
+            self.map_token_path = map_token_path
+            self.training = training
+
+    monkeypatch.setattr(token_processor, "RustTokenProcessor", BrokenRustProcessor)
+    monkeypatch.setattr(token_processor, "PythonTokenProcessor", DummyPythonProcessor)
+
+    auto_processor = token_processor.build_token_processor(2048, backend="auto")
+    assert isinstance(auto_processor, DummyPythonProcessor)
+
+    with pytest.raises(RuntimeError, match="rust unavailable"):
+        token_processor.build_token_processor(2048, backend="rust")
+
+
+@pytest.mark.parametrize("sid", SCENARIO_IDS)
+def test_rust_token_processor_matches_python(sid: str, tmp_path: Path) -> None:
+    """Rust dataloader token preparation must match the legacy Python backend."""
+    import sys
+
+    sys.path.insert(0, str(SMART_ROOT))
+    loaded_smart = sys.modules.get("smart")
+    if loaded_smart is not None and not str(
+        getattr(loaded_smart, "__file__", "")
+    ).startswith(str(SMART_ROOT / "smart")):
+        del sys.modules["smart"]
+
+    from smart.datasets.preprocess import TokenProcessor as PythonTokenProcessor
+    from smart.datasets.token_processor import RustTokenProcessor
+
+    fixture = FIXTURES_DIR / sid
+    out_dir = tmp_path / "preprocessed"
+    out_dir.mkdir()
+    pkl_path = _run_rust(fixture, out_dir)
+
+    with open(pkl_path, "rb") as f:
+        py_input = pickle.load(f)
+    with open(pkl_path, "rb") as f:
+        rs_input = pickle.load(f)
+
+    py = PythonTokenProcessor(2048).preprocess(py_input)
+    rs = RustTokenProcessor(2048).preprocess(rs_input)
+
+    failures = _compare_tokenized(py, rs)
+    assert not failures, "\n".join(failures)

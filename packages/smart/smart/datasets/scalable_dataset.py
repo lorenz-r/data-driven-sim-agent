@@ -5,7 +5,7 @@ from typing import Callable, List, Optional, Tuple, Union
 from torch_geometric.data import Dataset
 from smart.utils.log import Logging
 import numpy as np
-from .preprocess import TokenProcessor
+from .token_processor import build_token_processor
 from smart.utils.agent_token_builder import ensure_agent_tokens
 from smart.utils.token_paths import (
     default_agent_token_path,
@@ -42,6 +42,7 @@ class MultiDataset(Dataset):
         agent_token_build_max_samples=1_000_000,
         agent_token_build_seed=42,
         agent_token_build_kdisks_max_attempts=1_000_000,
+        token_processor_backend: str = "rust",
     ) -> None:
         self.logger = Logging().log(level="DEBUG")
         self.root = root
@@ -111,8 +112,11 @@ class MultiDataset(Dataset):
         self.logger.debug(
             "The number of {} dataset is ".format(split) + str(self._num_samples)
         )
-        self.token_processor = TokenProcessor(
+        self.token_processor = build_token_processor(
             token_size,
+            backend=token_processor_backend,
+            training=self.training,
+            logger=self.logger,
             agent_token_path=str(self.agent_token_path),
             map_token_path=str(self.map_token_path),
         )

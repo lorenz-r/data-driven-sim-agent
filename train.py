@@ -1,5 +1,6 @@
 import argparse
 import yaml
+import wandb
 from trainers.profiling import add_profiler_args
 from trainers.trainer_registry import TRAINER_REGISTRY
 from core.logging.logger_factory import (
@@ -218,6 +219,7 @@ def parse_args():
 
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--data-workers", type=int)
+    parser.add_argument("--token-processor-backend", choices=["rust", "python", "auto"])
 
     parser.add_argument("--val-batch-size", type=int)
 
@@ -305,6 +307,7 @@ def build_config(args=None) -> dict:
         "batch_size": "data.batch_size",
         "val_batch_size": "data.val_batch_size",
         "data_workers": "data.data_workers",
+        "token_processor_backend": "data.token_processor_backend",
         "model": "model.model_name",
         "dropout": "model.dropout",
         "max_epochs": "training.max_epochs",
@@ -432,6 +435,16 @@ if __name__ == "__main__":
 
     wandb_logger = create_logger(config)
 
-    trainer = get_trainer(config, wandb_logger)
-    results = trainer.train()
-    print("Training results:", results)
+    wandb_status = "success"
+    try:
+        trainer = get_trainer(config, wandb_logger)
+        results = trainer.train()
+        print("Training results:", results)
+    except BaseException:
+        wandb_status = "failed"
+        raise
+    finally:
+        if wandb_logger is not None:
+            wandb_logger.finalize(wandb_status)
+        if wandb.run is not None:
+            wandb.finish()

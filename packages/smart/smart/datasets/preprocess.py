@@ -167,7 +167,13 @@ def assign_clusters(sub_X, centroids):
 
 
 class TokenProcessor:
-    def __init__(self, token_size, agent_token_path=None, map_token_path=None):
+    def __init__(
+        self,
+        token_size,
+        agent_token_path=None,
+        map_token_path=None,
+        training: bool = False,
+    ):
         self.token_size = token_size
         self.agent_token_path = str(
             resolve_token_path(agent_token_path, default_agent_token_path(token_size))
@@ -179,7 +185,7 @@ class TokenProcessor:
         self.disturb = False
         self.shift = 5
         self.get_trajectory_token()
-        self.training = False
+        self.training = training
         self.current_step = 10
 
     def preprocess(self, data):
