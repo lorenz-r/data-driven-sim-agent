@@ -265,15 +265,14 @@ def run_batch_inference(
 
         print(f"Processed {scenario_id}")
 
-    output_path = p_output / "predictions.npz"
+    output_path = p_output / "predictions.pkl"
 
     predictions = {}
 
-    for scenario_id, pred_traj, pred_head, valid_mask in ...:
+    for scenario_id, pred_traj, pred_head in scenario_ids, all_traj, all_head:
         predictions[scenario_id] = {
             "pred_traj": pred_traj.cpu().numpy(),
             "pred_head": pred_head.cpu().numpy(),
-            "valid_mask": valid_mask.cpu().numpy(),
         }
 
     with open(output_path, "wb") as f:
