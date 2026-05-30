@@ -237,28 +237,28 @@ def run_batch_inference(
         pred_traj = out["pred_traj"].detach().cpu()
         pred_head = out["pred_head"].detach().cpu()
 
-        pred_valid_mask = out.get("valid_mask", None)
-        if pred_valid_mask is None:
-            pred_valid_mask = torch.ones_like(pred_traj[..., 0], dtype=torch.bool)
-        else:
-            pred_valid_mask = pred_valid_mask.detach().cpu()
+        # pred_valid_mask = out.get("valid_mask", None)
+        # if pred_valid_mask is None:
+        #     pred_valid_mask = torch.ones_like(pred_traj[..., 0], dtype=torch.bool)
+        # else:
+        #     pred_valid_mask = pred_valid_mask.detach().cpu()
 
         num_agents, num_steps = pred_traj.shape[0], pred_traj.shape[1]
 
         # optional safety filter (keep your logic)
-        agent_data = smart_data["agent"]
-        last_pos = agent_data["position"][:, -1].numpy()
+        # agent_data = smart_data["agent"]
+        # last_pos = agent_data["position"][:, -1].numpy()
 
-        dist_threshold = 1000.0
+        # dist_threshold = 1000.0
 
-        dist = np.linalg.norm(pred_traj - last_pos[:, None, :], axis=-1)
-        out_of_bounds = dist > dist_threshold
+        # dist = np.linalg.norm(pred_traj - last_pos[:, None, :], axis=-1)
+        # out_of_bounds = dist > dist_threshold
 
-        pred_valid_mask = pred_valid_mask & (~out_of_bounds)
+        # pred_valid_mask = pred_valid_mask & (~out_of_bounds)
 
         all_traj.append(pred_traj)
         all_head.append(pred_head)
-        all_mask.append(pred_valid_mask)
+        # all_mask.append(pred_valid_mask)
 
         all_num_agents.append(num_agents)
         all_num_steps.append(num_steps)
