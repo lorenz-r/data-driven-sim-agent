@@ -310,7 +310,7 @@ def download_dev(url: str, n_scenarios: int, out_dir: Path, split_name: str) -> 
     if kept < n_scenarios:
         raise ValueError(
             f"Requested {n_scenarios} scenarios, but {url} contains only {kept} "
-            f"complete {split_name} scenarios. Lower --scenarios/--val-ratio, "
+            f"complete scenarios for {split_name}. Lower --scenarios/--val-ratio, "
             "or use --full for the complete official train/val archives."
         )
     return etag
