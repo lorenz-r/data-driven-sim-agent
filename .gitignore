@@ -55,3 +55,4 @@ example_command.sh
 .mypy_cache/
 .mypy_cache
 
+example_command.sh

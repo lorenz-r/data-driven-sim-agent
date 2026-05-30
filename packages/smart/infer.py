@@ -131,22 +131,26 @@ def run_inference(
         f"Filtered predictions: {pred_valid_mask.sum().item()} / {pred_valid_mask.numel()} valid, {out_of_bounds_count} out of bounds"
     )
 
-    # 5. Save SMART format predictions
+    # 5. Save SMART format predictions (CLEAN VERSION)
     sample_output_dir = p_output / scenario_id
     smart_output_dir = sample_output_dir / "smart"
     smart_output_dir.mkdir(parents=True, exist_ok=True)
 
-    smart_output_path = smart_output_dir / f"{scenario_id}.pkl"
+    smart_output_path = smart_output_dir / f"{scenario_id}.npz"
+
     prediction_data = {
         "scenario_id": scenario_id,
-        "input": smart_data,
-        "pred_traj": pred_traj,
-        "pred_head": pred_head,
-        "pred_valid_mask": pred_valid_mask,
+        "pred_traj": pred_traj.detach().cpu().numpy(),
+        "pred_head": pred_head.detach().cpu().numpy(),
+        "pred_valid_mask": pred_valid_mask.detach().cpu().numpy(),
+        "last_pos": last_pos_np,
+        "num_agents": num_agents,
+        "num_timesteps": num_timesteps,
     }
-    with open(smart_output_path, "wb") as f:
-        pickle.dump(prediction_data, f, protocol=4)
-    print(f"Saved SMART predictions to: {smart_output_path}")
+
+    np.savez_compressed(smart_output_path, **prediction_data)
+
+    print(f"Saved CLEAN SMART predictions to: {smart_output_path}")
 
     """
     # 6. Convert to AV2 if requested
@@ -172,6 +176,120 @@ def run_inference(
 
     return inference_output
 
+def run_batch_inference(
+    input_path: str,
+    output_dir: str,
+    checkpoint_path: Optional[str] = None,
+    config_path: str = "configs/validation/validation_scalable.yaml",
+    format_av2: bool = False,
+    device: str = "cuda",
+) -> None:
+
+    p_input = Path(input_path)
+    p_output = Path(output_dir)
+    p_output.mkdir(parents=True, exist_ok=True)
+
+    config = load_config_act(config_path)
+    config.Trainer.accelerator = device
+
+    model = SMART(config.Model)
+    if checkpoint_path and Path(checkpoint_path).exists():
+        logger = Logging().log(level="DEBUG")
+        model.load_params_from_file(
+            checkpoint_path, logger=logger, to_cpu=(device == "cpu")
+        )
+    model.eval()
+
+    token_processor = TokenProcessor(2048)
+
+    # -----------------------------
+    # collect inputs (batch mode)
+    # -----------------------------
+    if p_input.is_dir():
+        input_files = sorted(p_input.glob("*.pkl"))
+    else:
+        input_files = [p_input]
+
+    scenario_ids = []
+    all_traj = []
+    all_head = []
+    all_mask = []
+    all_num_agents = []
+    all_num_steps = []
+
+    print(f"Running batch inference on {len(input_files)} scenarios")
+
+    for file in input_files:
+        scenario_id = file.stem
+        scenario_ids.append(scenario_id)
+
+        with open(file, "rb") as f:
+            smart_data = pickle.load(f)
+
+        data_sample = HeteroData(smart_data) if isinstance(smart_data, dict) else smart_data
+        data_sample = token_processor.preprocess(data_sample)
+
+        with torch.no_grad():
+            data_sample = model.match_token_map(data_sample)
+            data_sample = model.sample_pt_pred(data_sample)
+            out = model.inference(data_sample)
+
+        pred_traj = out["pred_traj"].detach().cpu()
+        pred_head = out["pred_head"].detach().cpu()
+
+        pred_valid_mask = out.get("valid_mask", None)
+        if pred_valid_mask is None:
+            pred_valid_mask = torch.ones_like(pred_traj[..., 0], dtype=torch.bool)
+        else:
+            pred_valid_mask = pred_valid_mask.detach().cpu()
+
+        num_agents, num_steps = pred_traj.shape[0], pred_traj.shape[1]
+
+        # optional safety filter (keep your logic)
+        agent_data = smart_data["agent"]
+        last_pos = agent_data["position"][:, -1].numpy()
+
+        dist_threshold = 1000.0
+
+        for i in range(num_agents):
+            for t in range(num_steps):
+                if pred_valid_mask[i, t]:
+                    dist = np.linalg.norm(pred_traj[i, t].numpy() - last_pos[i])
+                    if dist > dist_threshold:
+                        pred_valid_mask[i, t] = False
+
+        all_traj.append(pred_traj)
+        all_head.append(pred_head)
+        all_mask.append(pred_valid_mask)
+
+        all_num_agents.append(num_agents)
+        all_num_steps.append(num_steps)
+
+        print(f"Processed {scenario_id}")
+
+    # NOTE: assumes equal shapes (true in most AV2 setups)
+    pred_traj = torch.stack(all_traj, dim=0)   # (S, A, T, 2)
+    pred_head = torch.stack(all_head, dim=0)   # (S, A, T)
+    valid_mask = torch.stack(all_mask, dim=0)  # (S, A, T)
+
+    num_agents = torch.tensor(all_num_agents)
+    num_steps = torch.tensor(all_num_steps)
+
+    output_path = p_output / "predictions.npz"
+
+    np.savez_compressed(
+        output_path,
+        scenario_ids=np.array(scenario_ids),
+
+        pred_traj=pred_traj.numpy(),
+        pred_head=pred_head.numpy(),
+        valid_mask=valid_mask.numpy(),
+
+        num_agents=num_agents.numpy(),
+        num_timesteps=num_steps.numpy(),
+    )
+
+    print(f"Saved batch predictions to {output_path}")
 
 def main():
     parser = ArgumentParser(description="Run SMART inference on a scenario")
@@ -221,6 +339,9 @@ def main():
     parser.add_argument(
         "--cpu", action="store_true", help="Force CPU (shorthand for --device cpu)"
     )
+    parser.add_argument(
+        "--batch-directory", type=str, help="Run batch inference on all files in directory"
+    )
 
     args = parser.parse_args()
 
@@ -229,14 +350,24 @@ def main():
 
     format_av2 = args.format in ("av2", "both")
 
-    run_inference(
-        input_path=args.input,
-        output_dir=args.output,
-        checkpoint_path=args.checkpoint,
-        config_path=args.config,
-        format_av2=format_av2,
-        device=args.device,
-    )
+    if args.batch_directory:
+        run_batch_inference(
+            input_path=args.batch_directory,
+            output_dir=args.output,
+            checkpoint_path=args.checkpoint,
+            config_path=args.config,
+            format_av2=format_av2,
+            device=args.device,
+        )
+    else:
+        run_inference(
+            input_path=args.input,
+            output_dir=args.output,
+            checkpoint_path=args.checkpoint,
+            config_path=args.config,
+            format_av2=format_av2,
+            device=args.device,
+        )
 
 
 if __name__ == "__main__":
