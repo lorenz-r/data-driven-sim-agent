@@ -265,27 +265,19 @@ def run_batch_inference(
 
         print(f"Processed {scenario_id}")
 
-    # NOTE: assumes equal shapes (true in most AV2 setups)
-    pred_traj = torch.stack(all_traj, dim=0)   # (S, A, T, 2)
-    pred_head = torch.stack(all_head, dim=0)   # (S, A, T)
-    valid_mask = torch.stack(all_mask, dim=0)  # (S, A, T)
-
-    num_agents = torch.tensor(all_num_agents)
-    num_steps = torch.tensor(all_num_steps)
-
     output_path = p_output / "predictions.npz"
 
-    np.savez_compressed(
-        output_path,
-        scenario_ids=np.array(scenario_ids),
+    predictions = {}
 
-        pred_traj=pred_traj.numpy(),
-        pred_head=pred_head.numpy(),
-        valid_mask=valid_mask.numpy(),
+    for scenario_id, pred_traj, pred_head, valid_mask in ...:
+        predictions[scenario_id] = {
+            "pred_traj": pred_traj.cpu().numpy(),
+            "pred_head": pred_head.cpu().numpy(),
+            "valid_mask": valid_mask.cpu().numpy(),
+        }
 
-        num_agents=num_agents.numpy(),
-        num_timesteps=num_steps.numpy(),
-    )
+    with open(output_path, "wb") as f:
+        pickle.dump(predictions, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     print(f"Saved batch predictions to {output_path}")
 
