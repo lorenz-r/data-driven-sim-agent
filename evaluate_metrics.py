@@ -24,7 +24,7 @@ def evaluate_metrics(predictions_file, metrics_file):
         v_data.append(v_traj)
 
     print("Processed scenarios:", len(v_data))
-    print("Example scenario:", predictions.keys()[0])
+    print("Example scenario:", predictions.keys())
     print("Sample velocity data (first scenario) shape:", v_data[0].shape)
     print("Average velocity across first scenario:", np.mean(v_data[0]))
     
