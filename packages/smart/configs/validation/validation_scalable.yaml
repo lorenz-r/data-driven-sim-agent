@@ -1,7 +1,7 @@
 # Config format schema number, the yaml support to valid case source from different dataset
 time_info: &time_info
-  num_historical_steps: 11
-  num_future_steps: 80
+  num_historical_steps: 50
+  num_future_steps: 60
   token_size: 2048
 
 token_info: &token_info

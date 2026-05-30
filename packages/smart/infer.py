@@ -251,12 +251,10 @@ def run_batch_inference(
 
         dist_threshold = 1000.0
 
-        for i in range(num_agents):
-            for t in range(num_steps):
-                if pred_valid_mask[i, t]:
-                    dist = np.linalg.norm(pred_traj[i, t].numpy() - last_pos[i])
-                    if dist > dist_threshold:
-                        pred_valid_mask[i, t] = False
+        dist = np.linalg.norm(pred_traj - last_pos[:, None, :], axis=-1)
+        out_of_bounds = dist > dist_threshold
+
+        pred_valid_mask = pred_valid_mask & (~out_of_bounds)
 
         all_traj.append(pred_traj)
         all_head.append(pred_head)
