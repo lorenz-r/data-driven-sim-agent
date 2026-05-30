@@ -216,6 +216,7 @@ def run_batch_inference(
     all_mask = []
     all_num_agents = []
     all_num_steps = []
+    all_gt = []
 
     print(f"Running batch inference on {len(input_files)} scenarios")
 
@@ -236,6 +237,7 @@ def run_batch_inference(
 
         pred_traj = out["pred_traj"].detach().cpu()
         pred_head = out["pred_head"].detach().cpu()
+        gt = out["gt"].detach().cpu() if "gt" in out else None
 
         # pred_valid_mask = out.get("valid_mask", None)
         # if pred_valid_mask is None:
@@ -258,6 +260,7 @@ def run_batch_inference(
 
         all_traj.append(pred_traj)
         all_head.append(pred_head)
+        all_gt.append(gt)
         # all_mask.append(pred_valid_mask)
 
         all_num_agents.append(num_agents)
@@ -269,10 +272,11 @@ def run_batch_inference(
 
     predictions = {}
 
-    for scenario_id, pred_traj, pred_head in zip(scenario_ids, all_traj, all_head):
+    for scenario_id, pred_traj, pred_head, gt in zip(scenario_ids, all_traj, all_head, all_gt):
         predictions[scenario_id] = {
             "pred_traj": pred_traj.cpu().numpy(),
             "pred_head": pred_head.cpu().numpy(),
+            "gt": gt.cpu().numpy() if gt is not None else None,
         }
 
     with open(output_path, "wb") as f:
