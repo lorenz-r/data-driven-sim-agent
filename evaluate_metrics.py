@@ -6,12 +6,12 @@ def evaluate_metrics(predictions_file, metrics_file):
     with open(predictions_file, 'rb') as f:
         predictions = pickle.load(f)
 
-    v_data = []
+    v_data = np.array([])
 
     # Assume a time step is 0.1 seconds for velocity calculation
     for scenario_id in predictions.keys():
         trajectory = predictions[scenario_id]['pred_traj']
-        v_traj = []
+        v_traj = np.array([])  # Initialize an empty array for velocity trajectory
         for i in range(1, len(trajectory)):
             pos_prev = trajectory[i-1]
             pos_curr = trajectory[i]
