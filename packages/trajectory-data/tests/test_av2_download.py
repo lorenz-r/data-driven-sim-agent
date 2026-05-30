@@ -38,9 +38,7 @@ def test_download_dev_streams_until_requested_scenarios(
         lambda url, timeout: io.BytesIO(tar_data),
     )
 
-    etag = download.download_dev(
-        "https://example.test/train.tar", 2, tmp_path, "train"
-    )
+    etag = download.download_dev("https://example.test/train.tar", 2, tmp_path, "train")
 
     assert etag == "etag-1"
     scenarios = sorted(p.name for p in (tmp_path / "train").iterdir() if p.is_dir())
