@@ -269,7 +269,7 @@ def run_batch_inference(
 
     predictions = {}
 
-    for scenario_id, pred_traj, pred_head in scenario_ids, all_traj, all_head:
+    for scenario_id, pred_traj, pred_head in zip(scenario_ids, all_traj, all_head):
         predictions[scenario_id] = {
             "pred_traj": pred_traj.cpu().numpy(),
             "pred_head": pred_head.cpu().numpy(),
