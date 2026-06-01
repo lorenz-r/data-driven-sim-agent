@@ -118,6 +118,18 @@ configured token file is missing, training fails by default; set
 `build_agent_tokens_if_missing: True` only when you intentionally want training
 startup to build the agent vocabulary.
 
+To visualize an agent vocabulary as endpoint scatter plots with all token
+trajectories overlaid:
+
+```bash
+uv run python packages/smart/scripts/visualize_tokens.py \
+  --agent-token-path packages/smart/smart/tokens/cluster_frame_5_2048.pkl \
+  --output packages/smart/visualisation/token_vocabulary.png
+```
+
+Use `--kind map` to visualize `map_traj_token5.pkl`, `--agent-type veh` to focus
+on one agent class, or `--combined` to overlay all agent classes in one panel.
+
 ## Evaluation
 
 To evaluate the model, run:

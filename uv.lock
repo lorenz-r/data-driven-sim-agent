@@ -1610,6 +1610,7 @@ source = { editable = "packages/smart" }
 dependencies = [
     { name = "av2" },
     { name = "easydict" },
+    { name = "matplotlib" },
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "pandas" },
@@ -1633,6 +1634,7 @@ dependencies = [
 requires-dist = [
     { name = "av2" },
     { name = "easydict", specifier = ">=1.13,<2" },
+    { name = "matplotlib", specifier = ">=3.7,<4" },
     { name = "numpy", specifier = ">=1.26,<2" },
     { name = "opencv-python" },
     { name = "pandas", specifier = ">=2.2,<3" },
