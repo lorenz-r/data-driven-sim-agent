@@ -1,14 +1,36 @@
 import pickle
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Iterable
+from typing import Optional, Tuple, Iterable
+from torch import Tensor
 
 import numpy as np
 import torch
 from scipy.interpolate import CubicHermiteSpline
 from tqdm import tqdm
 
-from smart.utils import transform_to_local, wrap_angle
+from smart.utils import wrap_angle
+
+def transform_to_local(
+    pos_global: Tensor,  # [n_agent, n_step, 2]
+    head_global: Optional[Tensor],  # [n_agent, n_step]
+    pos_now: Tensor,  # [n_agent, 2]
+    head_now: Tensor,  # [n_agent]
+) -> Tuple[Tensor, Optional[Tensor]]:
+    cos, sin = head_now.cos(), head_now.sin()
+    rot_mat = torch.zeros((head_now.shape[0], 2, 2), device=head_now.device)
+    rot_mat[:, 0, 0] = cos
+    rot_mat[:, 0, 1] = -sin
+    rot_mat[:, 1, 0] = sin
+    rot_mat[:, 1, 1] = cos
+
+    pos_local = pos_global - pos_now.unsqueeze(1)
+    pos_local = torch.bmm(pos_local, rot_mat)  # [n_agent, n_step, 2]*[n_agent, 2, 2]
+    if head_global is None:
+        head_local = None
+    else:
+        head_local = head_global - head_now.unsqueeze(1)
+    return pos_local, head_local
 
 
 def _iter_pickle_files(raw_dirs: Iterable[str | Path]) -> list[Path]:
