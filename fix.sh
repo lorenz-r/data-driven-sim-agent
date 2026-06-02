@@ -17,6 +17,7 @@ if command -v uv >/dev/null 2>&1; then
   else
       echo "cargo not found — skipping Rust format. Install via https://rustup.rs/" >&2
   fi
+
   exit 0
 fi
 
@@ -38,3 +39,4 @@ if command -v cargo &>/dev/null; then
 else
     echo "cargo not found — skipping Rust format. Install via https://rustup.rs/" >&2
 fi
+
