@@ -9,6 +9,7 @@ trajectory generation model to learn.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -77,7 +78,16 @@ def parquet_files(input_path: Path, recursive: bool) -> list[Path]:
     if input_path.is_file():
         return [input_path]
     pattern = "**/*.parquet" if recursive else "*.parquet"
-    return sorted(input_path.glob(pattern))
+    files = sorted(input_path.glob(pattern))
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for file_path in files:
+        resolved = file_path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(file_path)
+    return deduped
 
 
 def longest_true_run(values: Iterable[bool]) -> tuple[int, int | None, int | None]:
@@ -284,6 +294,17 @@ def analyze_file(
     return summary, zero_agents
 
 
+def analyze_file_worker(
+    args: tuple[Path, int, float, bool],
+) -> tuple[dict | None, list[dict], tuple[str, str] | None]:
+    path, min_zero_run, zero_eps, include_missing_padding = args
+    try:
+        summary, zero_agents = analyze_file(path, min_zero_run, zero_eps, include_missing_padding)
+    except Exception as exc:  # noqa: BLE001 - keep batch analysis moving.
+        return None, [], (str(path), str(exc))
+    return summary, zero_agents, None
+
+
 def describe_numeric(series: pd.Series) -> dict[str, float | int | None]:
     clean = pd.to_numeric(series, errors="coerce").dropna()
     if clean.empty:
@@ -386,6 +407,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not count missing track timesteps as zero-padding. By default they are counted because SMART-style arrays fill absent states with zeros.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel parquet analysis workers. Use 1 for serial execution. Default: 1.",
+    )
+    parser.add_argument(
+        "--worker-backend",
+        choices=("thread", "process"),
+        default="thread",
+        help="Parallel worker backend. Threads are the portable default; use process for CPU-heavy runs where multiprocessing is supported. Default: thread.",
+    )
     return parser.parse_args()
 
 
@@ -394,24 +427,41 @@ def main() -> None:
     files = parquet_files(args.input, recursive=not args.no_recursive)
     if not files:
         raise SystemExit(f"No parquet files found under {args.input}")
+    if args.workers < 1:
+        raise SystemExit("--workers must be >= 1")
+
+    worker_count = min(args.workers, len(files))
 
     scenario_rows: list[dict] = []
     zero_rows: list[dict] = []
-    failures: list[tuple[Path, str]] = []
+    failures: list[tuple[str, str]] = []
+    worker_args = [
+        (
+            file_path,
+            args.min_zero_run,
+            args.zero_eps,
+            not args.explicit_zeros_only,
+        )
+        for file_path in files
+    ]
 
-    for file_path in files:
-        try:
-            summary, zero_agents = analyze_file(
-                file_path,
-                args.min_zero_run,
-                args.zero_eps,
-                include_missing_padding=not args.explicit_zeros_only,
-            )
-        except Exception as exc:  # noqa: BLE001 - keep batch analysis moving.
-            failures.append((file_path, str(exc)))
-            continue
-        scenario_rows.append(summary)
+    def collect_result(result: tuple[dict | None, list[dict], tuple[str, str] | None]) -> None:
+        summary, zero_agents, failure = result
+        if failure is not None:
+            failures.append(failure)
+            return
+        if summary is not None:
+            scenario_rows.append(summary)
         zero_rows.extend(zero_agents)
+
+    if worker_count == 1:
+        for result in map(analyze_file_worker, worker_args):
+            collect_result(result)
+    else:
+        executor_cls = ThreadPoolExecutor if args.worker_backend == "thread" else ProcessPoolExecutor
+        with executor_cls(max_workers=worker_count) as executor:
+            for result in executor.map(analyze_file_worker, worker_args):
+                collect_result(result)
 
     scenarios = order_columns(pd.DataFrame(scenario_rows), SCENARIO_COLUMNS)
     zero_agents = order_columns(pd.DataFrame(zero_rows), ZERO_AGENT_COLUMNS)
