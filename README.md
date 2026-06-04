@@ -153,7 +153,18 @@ Example command for running the training:
 uv run python train.py --model smart --train-path pack ages/smart/train_split/ --val-path packages/smart/validation_split/ --project-name smart-training --run-name demo-ru n --max-epochs 5 --batch-size 10 --val-batch-size 10 --learning-rate 0.000019 --save-ckpt-path smart-checkpoints/run_01 --profile simple -- profile-dir profiles/run_01 --profile-name run_01_profile
 ```
 
-Note that it is possible to configure a variety of parameters for the wandb logging when running the top-level script. For example, runs can be classified into groups immediately, additional notes can be pasted at run creation & model artifacts (like checkpoints) can be uploaded automatically. See the configs/train_params.yaml file for details.
+Example command, when downloading data is also required (essentially a quick-start):
+
+```bash
+uv run python train.py --download-first --download-size small --process-smart --model smart --batch-size 8 --data-workers 1 --val-batch-size 8 --max-epochs 20 --devices 1 --dropout 0.1 --learning-rate 1e-4 --weight-decay 1e-4 --save-ckpt-path ./checkpoints --wandb-logging --project-name smart-train --run-name small-training
+```
+
+Note that after downloading data like this, the processed SMART files will be stored under ```bash 
+av2_data/smart_processed/<generated_hash_code>/
+```
+This means that the file paths for training and validation will have to be adjusted accordingly in future runs.
+
+Also note that it is possible to configure a variety of parameters for the wandb logging when running the top-level script. For example, runs can be classified into groups immediately, additional notes can be pasted at run creation & model artifacts (like checkpoints) can be uploaded automatically. See the configs/train_params.yaml file for details.
 
 ##### Training Command (on 2xA100 machine)
 

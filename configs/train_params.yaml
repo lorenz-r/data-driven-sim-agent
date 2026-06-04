@@ -6,8 +6,8 @@
 # Dataset / Input Configuration
 # ------------------------------------------------------------
 data:
-  train_path: "data/train_split"
-  val_path: "data/val_split"
+  train_path: "s_data/train_split"
+  val_path: "s_data/val_split"
 
   # Optional manifest files to restrict the dataset
   # Leave empty ("") to use the full split
@@ -179,3 +179,8 @@ output:
   output_dir: "outputs"
   tensorboard_dir: "outputs/tensorboard"
   predictions_dir: "outputs/predictions"
+
+av2:
+  download_first: false
+  size: "single"
+  pp_to_smart: true

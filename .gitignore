@@ -50,3 +50,7 @@ data
 wandb/
 outputs/
 .ruff_cache/
+.ruff_cache
+example_command.sh
+.mypy_cache/
+.mypy_cache

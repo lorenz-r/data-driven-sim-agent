@@ -14,11 +14,14 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import os
+import subprocess
 
 from trajectory_data.av2.download import TRAIN_URL, VAL_URL, _head, ensure_downloaded
 from trajectory_data.splits import create_splits
 
 PreprocessSplitFn = Callable[[Path, Path, str], Any]
+REPO_ROOT = Path(__file__).resolve().parents[5]
 
 
 def preprocess_cache_key(dataset_etag: str, preprocessor_fingerprint: str) -> str:
@@ -251,13 +254,145 @@ def resolve_download_etag(args: argparse.Namespace) -> str:
     print("STEP 1 - Download")
     print("=" * 55)
     return ensure_downloaded(
-        args.raw_dir,
-        args.mode,
-        args.scenarios,
-        args.train_url,
-        args.val_url,
-        args.downloads_dir,
-        args.val_ratio,
+        out_dir=args.raw_dir,
+        mode=args.mode,
+        train_scenarios=args.scenarios,
+        train_url=args.train_url,
+        val_url=args.val_url,
+        downloads_dir=args.downloads_dir,
+        val_ratio=args.val_ratio,
+    )
+
+
+def _require_env(name: str) -> str:
+    value = os.environ.get(name)
+
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+
+    return value
+
+
+def _join_sas_url(base_url: str, sas_token: str) -> str:
+    """
+    Build a usable SAS URL.
+
+    base_url:
+        https://account.blob.core.windows.net/container/path/to/blob_cache_name
+
+    sas_token:
+        sp=rl&st=...&se=...&sig=...
+        OR
+        ?sp=rl&st=...&se=...&sig=...
+    """
+    sas_token = sas_token.lstrip("?")
+
+    if "?" in base_url:
+        return f"{base_url}&{sas_token}"
+
+    return f"{base_url}?{sas_token}"
+
+
+def _blob_cache_url(blob_cache_name: str, sas_token: str) -> str:
+    """
+    Builds the full remote blob cache URL.
+
+    Required env:
+        AV2_CACHE_CONTAINER_URL
+
+    Example:
+        AV2_CACHE_CONTAINER_URL=https://account.blob.core.windows.net/av2-preprocessed-files
+
+    Then blob_cache_name='smart-av2-massive-v1' maps to:
+        https://account.blob.core.windows.net/av2-preprocessed-files/smart-av2-massive-v1?<sas>
+    """
+    if not blob_cache_name:
+        raise ValueError("--cache-name / blob_cache_name is required")
+
+    container_url = _require_env("AV2_CACHE_CONTAINER_URL").rstrip("/")
+    cache_url = f"{container_url}/{blob_cache_name.strip('/')}"
+
+    return _join_sas_url(cache_url, sas_token)
+
+
+def _validate_cache_dir(cache_dir: Path) -> None:
+    """
+    The trainer expects:
+
+        cache_dir/
+            train/
+            val/
+    """
+    if not cache_dir.exists():
+        raise FileNotFoundError(f"Cache directory does not exist: {cache_dir}")
+
+    if not (cache_dir / "train").exists():
+        raise FileNotFoundError(f"Missing train directory: {cache_dir / 'train'}")
+
+    if not (cache_dir / "val").exists():
+        raise FileNotFoundError(f"Missing val directory: {cache_dir / 'val'}")
+
+
+def read_cache_from_blob(blob_cache_name: str, local_cache_dir: str | Path) -> Path:
+    """
+    Download a processed SMART cache from Azure Blob into the normal local
+    processed-data location.
+
+    blob_cache_name is the name of the directory in the blob to be read
+
+    Returns:
+        Path to local cache folder containing train/ and val/.
+    """
+    read_sas = _require_env("AV2_CACHE_READ_SAS")
+    remote_url = _blob_cache_url(blob_cache_name, read_sas)
+
+    local_cache_dir = Path(local_cache_dir).resolve()
+    local_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "azcopy",
+            "copy",
+            remote_url,
+            str(local_cache_dir),
+            "--recursive=true",
+            "--overwrite=true",
+        ],
+        check=True,
+    )
+
+    _validate_cache_dir(local_cache_dir)
+
+    return local_cache_dir
+
+
+def write_cache_to_blob(
+    local_cache_dir: str | Path, blob_cache_name: str, args: argparse.Namespace
+) -> None:
+    """
+    Upload the local processed SMART cache folder to Azure Blob.
+
+    local_cache_dir should be the folder returned by process_2_smart(...).
+    It should contain train/ and val/.
+
+    blob_cache_name is only the remote blob folder name.
+    """
+    write_sas = _require_env("AV2_CACHE_WRITE_SAS")
+    remote_url = _blob_cache_url(blob_cache_name, write_sas)
+
+    local_cache_dir = Path(local_cache_dir).resolve()
+    _validate_cache_dir(local_cache_dir)
+
+    subprocess.run(
+        [
+            "azcopy",
+            "copy",
+            str(local_cache_dir),
+            remote_url,
+            "--recursive=true",
+            "--overwrite=false",
+        ],
+        check=True,
     )
 
 

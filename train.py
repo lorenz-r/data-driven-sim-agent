@@ -5,6 +5,18 @@ from trainers.trainer_registry import TRAINER_REGISTRY
 from core.logging.logger_factory import (
     create_logger,
 )
+from pathlib import Path
+from trajectory_data.av2.download import ensure_downloaded
+from trajectory_data.av2.setup import (
+    run_preprocess,
+    read_cache_from_blob,
+    write_cache_to_blob,
+)
+
+from packages.smart.scripts.setup_av2 import (
+    _preprocess_smart_split,
+    _hash_preprocessor,
+)
 
 # ============================================================
 # Config Utilities
@@ -33,12 +45,150 @@ def update_nested_dict(config: dict, key_path: str, value):
 
 
 # ============================================================
+# av2 Download Utilities
+# ============================================================
+
+
+REPO_ROOT = Path(__file__).resolve().parent
+
+
+SIZE_DICT = {
+    "single": {"scenarios": 2, "train_size": 1, "val_size": 1},
+    "small": {"scenarios": 100, "train_size": 80, "val_size": 20},
+    "medium": {"scenarios": 1000, "train_size": 800, "val_size": 200},
+    "large": {"scenarios": 10000, "train_size": 8000, "val_size": 2000},
+    "massive": {"scenarios": 20000, "train_size": 16000, "val_size": 4000},
+}
+
+
+def download_av2_data(
+    # Config commented out for now; will be useful later for specifying file paths for different models, etc.
+    # config,
+    size: str = "single",
+    raw_download_folder: str = "raw_av2",
+):
+    """
+    Download AV2 data into av2_data/<raw_download_folder>.
+    """
+
+    data_root = REPO_ROOT / "av2_data"
+    raw_dir = data_root / raw_download_folder
+
+    data_root.mkdir(parents=True, exist_ok=True)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    mode = "dev" if size != "full" else "full"
+
+    ensure_downloaded(
+        out_dir=raw_dir,
+        mode=mode,
+        train_scenarios=SIZE_DICT[size]["train_size"],
+        val_scenarios=SIZE_DICT[size]["val_size"],
+    )
+
+    return raw_dir
+
+
+def process_2_smart(
+    # config,
+    # size: str = "single",
+    raw_folder: str | Path | None = None,
+    manifest_folder: str | Path = "manifests",
+):
+    """
+    This function will be responsible for processing av2 data into the format expected by Smart.
+    It will automatically create train and validation splits, according to the paths specified in the config.
+    Later, this function should be modular and allow for processing from already existing folders (or maybe we choose on-the-fly processing?).
+
+    However, right now it simply serves the purpose of allowing a quick start on a clean machine. It essentially just calls the existing SMART setup methods.
+    """
+
+    # train_path = Path(config["data"]["train_path"]).resolve()
+    # val_path = Path(config["data"]["val_path"]).resolve()
+
+    if raw_folder is None:
+        raw_folder = REPO_ROOT / "av2_data" / "raw_av2"
+    else:
+        raw_folder = Path(raw_folder).resolve()
+
+    manifest_root = Path(manifest_folder)
+    if not manifest_root.is_absolute():
+        manifest_root = REPO_ROOT / manifest_root
+
+    # train_path.mkdir(parents=True, exist_ok=True)
+    # val_path.mkdir(parents=True, exist_ok=True)
+    manifest_root.mkdir(parents=True, exist_ok=True)
+
+    processed_root = REPO_ROOT / "av2_data" / "smart_processed"
+    processed_root.mkdir(parents=True, exist_ok=True)
+
+    cache_dir = run_preprocess(
+        raw_dir=raw_folder,
+        processed_dir=processed_root,
+        dataset_etag="local",
+        preprocessor_fingerprint=_hash_preprocessor(),
+        preprocess_split=_preprocess_smart_split,
+        splits=("train", "val"),
+        use_cache=False,
+    )
+
+    return cache_dir
+
+
+def make_splits():
+    return
+
+
+# ============================================================
 # CLI Argument Parsing
 # ============================================================
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
+
+    # --------------------------------------------------------
+    # Download First
+    # --------------------------------------------------------
+    parser.add_argument(
+        "--download-first",
+        action="store_true",
+        help="Whether to download AV2 data before training",
+    )
+    parser.add_argument(
+        "--download-size",
+        type=str,
+        default="single",
+        choices=SIZE_DICT.keys(),
+        help="Size of AV2 data to download (if --download-first is set)",
+    )
+    parser.add_argument(
+        "--process-smart",
+        action="store_true",
+        help="Whether to process AV2 data into Smart format before training (if --download-first is set or if data is already downloaded but not processed)",
+    )
+
+    # --------------------------------------------------------
+    # Cache
+    # --------------------------------------------------------
+    parser.add_argument(
+        "--read-cache",
+        action="store_true",
+        help="Use an existing processed dataset cache instead of downloading/preprocessing.",
+    )
+
+    parser.add_argument(
+        "--write-cache",
+        action="store_true",
+        help="Write the processed dataset cache after preprocessing.",
+    )
+
+    parser.add_argument(
+        "--blob-cache-name",
+        type=str,
+        default=None,
+        help="Name of the processed dataset cache, e.g. smart-av2-massive-v1.",
+    )
 
     # --------------------------------------------------------
     # General Config
@@ -137,8 +287,8 @@ def parse_args():
 # ============================================================
 
 
-def build_config():
-    args = parse_args()
+def build_config(args=None) -> dict:
+    # args = parse_args()
 
     # Load YAML defaults
     config = load_yaml_config(args.config)
@@ -225,7 +375,52 @@ def get_trainer(config, wandb_logger):
 # ============================================================
 
 if __name__ == "__main__":
-    config = build_config()
+    args = parse_args()
+
+    if args.read_cache and (
+        args.download_first or args.process_smart or args.write_cache
+    ):
+        raise ValueError(
+            "--read-cache should not be combined with --download-first, "
+            "--process-smart, or --write-cache."
+        )
+
+    if args.write_cache and not args.process_smart:
+        raise ValueError("--write-cache requires --process-smart.")
+
+    cache = None
+
+    if args.read_cache:
+        cache = read_cache_from_blob(
+            args.blob_cache_name,
+            local_cache_dir=REPO_ROOT / "av2_data" / "smart_processed",
+        )
+    else:
+        if args.download_first:
+            download_av2_data(
+                size=args.download_size,
+                raw_download_folder="raw_av2",
+            )
+
+        if args.process_smart:
+            cache = process_2_smart(
+                raw_folder=REPO_ROOT / "av2_data" / "raw_av2",
+                # The manifest might not yet work correctly
+                manifest_folder=REPO_ROOT / "av2_data" / "manifests",
+            )
+
+            if args.write_cache:
+                write_cache_to_blob(
+                    local_cache_dir=cache,
+                    blob_cache_name=args.blob_cache_name,
+                    args=args,
+                )
+    if cache is not None:
+        # Dynamically adjust file paths based on the SMART preprocessing/cache.
+        args.train_path = str(cache / "train")
+        args.val_path = str(cache / "val")
+
+    config = build_config(args=args)
 
     print("\n========== FINAL CONFIG ==========")
     print(yaml.dump(config, sort_keys=False))

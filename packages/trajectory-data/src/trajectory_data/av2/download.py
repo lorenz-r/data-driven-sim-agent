@@ -265,55 +265,102 @@ def _extract_tar(tar_path: Path, split_name: str, out_dir: Path) -> None:
 
 
 def split_dev_scenarios(n_scenarios: int, val_ratio: float) -> tuple[int, int]:
-    """Return (train_scenarios, val_scenarios) for a dev-mode total budget."""
-    if n_scenarios < 1:
-        raise ValueError("--scenarios must be at least 1")
-    if not 0 <= val_ratio < 1:
-        raise ValueError("--val-ratio must be in the range [0, 1)")
+    """Split a total dev scenario budget into train and validation counts."""
+    if n_scenarios < 0:
+        raise ValueError("n_scenarios must be non-negative.")
+    if not 0 <= val_ratio <= 1:
+        raise ValueError("val_ratio must be between 0 and 1.")
+    if n_scenarios == 0:
+        return 0, 0
 
     val_scenarios = round(n_scenarios * val_ratio)
+    if 0 < val_ratio < 1 and n_scenarios > 1:
+        val_scenarios = min(max(val_scenarios, 1), n_scenarios - 1)
+
     train_scenarios = n_scenarios - val_scenarios
-    if train_scenarios < 1:
-        raise ValueError("--val-ratio leaves no training scenarios")
     return train_scenarios, val_scenarios
 
 
-def download_dev(url: str, n_scenarios: int, out_dir: Path, split_name: str) -> str:
-    """
-    Stream just enough bytes to extract n_scenarios complete scenario folders.
-    Always re-runs; no cache check.  Returns the S3 ETag (from HEAD only).
-    """
-    split_dir = out_dir / split_name
-    if split_dir.exists():
-        shutil.rmtree(split_dir)
-
+def _download_dev_split(
+    url: str,
+    split_name: str,
+    n_scenarios: int,
+    out_dir: Path,
+) -> str:
     if n_scenarios <= 0:
-        print(f"Skipping {split_name} dev download (0 scenarios).")
         return ""
 
     print(f"HEAD {url}")
     etag, content_length = _head(url)
+
     print(f"  ETag={etag}  total size={content_length / 1e9:.1f} GB")
 
     print(
-        f"Streaming {split_name} TAR members until "
-        f"{n_scenarios} complete scenarios are found ..."
+        f"Streaming {split_name} TAR members until {n_scenarios} complete scenarios are found ..."
     )
+
+    split_dir = out_dir / split_name
+    if split_dir.exists():
+        shutil.rmtree(split_dir)
 
     split_dir.mkdir(parents=True, exist_ok=True)
 
     with urllib.request.urlopen(url, timeout=60) as req:
-        _extract_stream(req, split_dir, n_scenarios)
+        extracted = _extract_stream(req, split_dir, n_scenarios)
 
     kept = _prune_to(split_dir, n_scenarios)
     print(f"Extracted and kept {kept} complete {split_name} scenario directories.")
-    if kept < n_scenarios:
+    if extracted < n_scenarios:
         raise ValueError(
-            f"Requested {n_scenarios} scenarios, but {url} contains only {kept} "
-            f"complete scenarios for {split_name}. Lower --scenarios/--val-ratio, "
-            "or use --full for the complete official train/val archives."
+            f"Requested {n_scenarios} scenarios, but {split_name} contains only {extracted} complete scenarios."
         )
+
     return etag
+
+
+def _dev_dataset_identity(
+    train_etag: str,
+    val_etag: str,
+    train_scenarios: int,
+    val_scenarios: int,
+) -> str:
+    return (
+        f"dev:train={train_etag or 'none'}:{train_scenarios}:"
+        f"val={val_etag or 'none'}:{val_scenarios}"
+    )
+
+
+def download_dev(
+    url: str,
+    n_scenarios: int,
+    out_dir: Path,
+    split_name: str,
+) -> str:
+    return _download_dev_split(url, split_name, n_scenarios, out_dir)
+
+
+def _download_dev_pair(
+    train_url: str,
+    val_url: str,
+    train_scenarios: int,
+    val_scenarios: int,
+    out_dir: Path,
+) -> tuple[str, str]:
+    train_etag = _download_dev_split(
+        train_url,
+        "train",
+        train_scenarios,
+        out_dir,
+    )
+
+    val_etag = _download_dev_split(
+        val_url,
+        "val",
+        val_scenarios,
+        out_dir,
+    )
+
+    return train_etag, val_etag
 
 
 def download_dev_splits(
@@ -329,12 +376,10 @@ def download_dev_splits(
         f"Dev scenario budget: {n_scenarios} total "
         f"({train_scenarios} train, {val_scenarios} val)"
     )
-    train_etag = download_dev(train_url, train_scenarios, out_dir, "train")
-    val_etag = download_dev(val_url, val_scenarios, out_dir, "val")
-    return (
-        f"dev:train={train_etag}:{train_scenarios}:"
-        f"val={val_etag or 'none'}:{val_scenarios}"
+    train_etag, val_etag = _download_dev_pair(
+        train_url, val_url, train_scenarios, val_scenarios, out_dir
     )
+    return _dev_dataset_identity(train_etag, val_etag, train_scenarios, val_scenarios)
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +478,8 @@ def download_full(
 def ensure_downloaded(
     out_dir: Path,
     mode: str,
-    n_scenarios: int,
+    train_scenarios: int,
+    val_scenarios: int = 0,
     train_url: str = TRAIN_URL,
     val_url: str = VAL_URL,
     downloads_dir: Path | None = None,
@@ -445,7 +491,16 @@ def ensure_downloaded(
     Returns a dataset identity string for preprocessing cache keys.
     """
     if mode == "dev":
-        return download_dev_splits(train_url, val_url, n_scenarios, val_ratio, out_dir)
+        if val_scenarios > 0:
+            train_etag, val_etag = _download_dev_pair(
+                train_url, val_url, train_scenarios, val_scenarios, out_dir
+            )
+            return _dev_dataset_identity(
+                train_etag, val_etag, train_scenarios, val_scenarios
+            )
+        return download_dev_splits(
+            train_url, val_url, train_scenarios, val_ratio, out_dir
+        )
 
     train_etag, _ = download_full(train_url, val_url, out_dir, downloads_dir)
     return train_etag
@@ -510,13 +565,13 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = _parser().parse_args()
     etag = ensure_downloaded(
-        args.out,
-        args.mode,
-        args.scenarios,
-        args.train_url,
-        args.val_url,
-        args.downloads_dir,
-        args.val_ratio,
+        out_dir=args.out,
+        mode=args.mode,
+        train_scenarios=args.scenarios,
+        train_url=args.train_url,
+        val_url=args.val_url,
+        downloads_dir=args.downloads_dir,
+        val_ratio=args.val_ratio,
     )
     print(f"\nDone. Dataset identity: {etag}")
 
