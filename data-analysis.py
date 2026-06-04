@@ -16,18 +16,6 @@ from typing import Iterable
 
 import pandas as pd
 
-
-#!/usr/bin/env python3
-"""Utilities for AV2 scenario data analysis."""
-
-from __future__ import annotations
-
-import argparse
-from pathlib import Path
-
-import pandas as pd
-
-
 def print_zero_chain_summary(scenario_summary_csv: str | Path) -> None:
     """Print zero-chain statistics from a scenario_summary.csv file.
 
