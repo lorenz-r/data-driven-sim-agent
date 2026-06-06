@@ -145,6 +145,10 @@ def _style_axis(ax, title: str, points: np.ndarray, equal_aspect: bool) -> None:
     ax.set_ylabel("relative y [m]")
 
 
+def _line_segments(points: np.ndarray) -> list[np.ndarray]:
+    return [points[index] for index in range(points.shape[0])]
+
+
 def _add_trajectory_plot(
     ax,
     trajectories: np.ndarray,
@@ -158,7 +162,7 @@ def _add_trajectory_plot(
     xy = trajectories[:, :, :2]
     ax.add_collection(
         LineCollection(
-            xy,
+            _line_segments(xy),
             colors=color,
             linewidths=line_width,
             alpha=line_alpha,
@@ -191,7 +195,7 @@ def _add_contours(ax, contours: np.ndarray, color: str) -> None:
     closed = np.concatenate([contours, contours[:, :1]], axis=1)
     ax.add_collection(
         LineCollection(
-            closed,
+            _line_segments(closed),
             colors=color,
             linewidths=0.35,
             alpha=0.09,
