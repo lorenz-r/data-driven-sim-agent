@@ -178,6 +178,7 @@ class TrajTokTokenBuilder:
                 pos_now=pos[:, i],
                 head_now=headings[:, i],
             )
+            assert head_local is not None
 
             trajs = torch.cat([pos_local, head_local.unsqueeze(-1)], dim=-1)
             valid_mask = masks[:, i : i + self.shift + 1].all(dim=-1)
@@ -322,7 +323,9 @@ class TrajTokTokenBuilder:
                 )
 
             grid_mask_count = np.zeros((x_binnum, y_binnum))
-            traj_in_bin = [[[] for _ in range(y_binnum)] for _ in range(x_binnum)]
+            traj_in_bin: list[list[list[np.ndarray]]] = [
+                [[] for _ in range(y_binnum)] for _ in range(x_binnum)
+            ]
 
             origin = np.zeros(
                 (agent_trajs.shape[0], 1, 3),
