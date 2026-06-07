@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from smart.utils import wrap_angle
 
+
 def transform_to_local(
     pos_global: Tensor,  # [n_agent, n_step, 2]
     head_global: Optional[Tensor],  # [n_agent, n_step]
@@ -106,7 +107,9 @@ class TrajTokTokenBuilder:
             file_paths = file_paths[: self.max_file_nums]
 
         if self.max_workers == 0:
-            for file_path in tqdm(file_paths, desc="Extracting TrajTok trajectory data"):
+            for file_path in tqdm(
+                file_paths, desc="Extracting TrajTok trajectory data"
+            ):
                 result = self._get_traj_data(file_path)
                 for agent_class in self.agent_classes:
                     traj_data[agent_class].extend(result[agent_class])
@@ -130,7 +133,8 @@ class TrajTokTokenBuilder:
 
         for agent_class in self.agent_classes:
             non_empty = [
-                x for x in traj_data[agent_class]
+                x
+                for x in traj_data[agent_class]
                 if isinstance(x, torch.Tensor) and x.numel() > 0
             ]
 
@@ -228,7 +232,9 @@ class TrajTokTokenBuilder:
         valid_pos = np.argwhere(grid_mask)
 
         if len(valid_pos) == 0:
-            raise ValueError("No valid grid positions available for nearest trajectory lookup.")
+            raise ValueError(
+                "No valid grid positions available for nearest trajectory lookup."
+            )
 
         distances = np.abs(valid_pos[:, 0] - x) + np.abs(valid_pos[:, 1] - y)
         nearest_idx = np.argmin(distances)
@@ -316,10 +322,7 @@ class TrajTokTokenBuilder:
                 )
 
             grid_mask_count = np.zeros((x_binnum, y_binnum))
-            traj_in_bin = [
-                [[] for _ in range(y_binnum)]
-                for _ in range(x_binnum)
-            ]
+            traj_in_bin = [[[] for _ in range(y_binnum)] for _ in range(x_binnum)]
 
             origin = np.zeros(
                 (agent_trajs.shape[0], 1, 3),
@@ -338,15 +341,11 @@ class TrajTokTokenBuilder:
                 trajs = np.concatenate([trajs, flip], axis=0)
 
             grid_end_x = np.round(
-                (trajs[:, self.shift, 0] - x_min)
-                / (x_max - x_min)
-                * x_binnum
+                (trajs[:, self.shift, 0] - x_min) / (x_max - x_min) * x_binnum
             ).astype(np.int32)
 
             grid_end_y = np.round(
-                (trajs[:, self.shift, 1] - y_min)
-                / (y_max - y_min)
-                * y_binnum
+                (trajs[:, self.shift, 1] - y_min) / (y_max - y_min) * y_binnum
             ).astype(np.int32)
 
             mask = (

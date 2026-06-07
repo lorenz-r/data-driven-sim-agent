@@ -51,7 +51,6 @@ def main() -> None:
             "Pass --overwrite if you intentionally want to replace it."
         )
     if args.tokenizer == "smart":
-
         build_agent_tokens(
             raw_dirs=[Path(raw_dir) for raw_dir in args.raw_dir],
             output_path=output,
@@ -76,6 +75,7 @@ def main() -> None:
 
     else:
         raise ValueError(f"Unknown tokenizer: {args.tokenizer}")
+
 
 if __name__ == "__main__":
     main()
