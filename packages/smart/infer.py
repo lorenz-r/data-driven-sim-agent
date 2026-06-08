@@ -15,6 +15,81 @@ from smart.utils.log import Logging
 # from av2.datasets.motion_forecasting import scenario_serialization
 
 
+def _fit_pred_valid_mask(
+    pred_valid_mask: torch.Tensor,
+    num_agents: int,
+    num_timesteps: int,
+    device: torch.device,
+) -> torch.Tensor:
+    pred_valid_mask = pred_valid_mask.to(device=device, dtype=torch.bool)
+
+    if pred_valid_mask.dim() == 1:
+        if pred_valid_mask.shape[0] == num_timesteps:
+            pred_valid_mask = pred_valid_mask.unsqueeze(0).expand(num_agents, -1)
+        elif pred_valid_mask.shape[0] == num_agents:
+            pred_valid_mask = pred_valid_mask.unsqueeze(1).expand(-1, num_timesteps)
+        else:
+            raise ValueError(
+                f"pred_valid_mask length {pred_valid_mask.shape[0]} matches neither "
+                f"num_agents={num_agents} nor num_timesteps={num_timesteps}"
+            )
+
+    if pred_valid_mask.dim() != 2:
+        raise ValueError(f"pred_valid_mask must be 2D, got {pred_valid_mask.shape}")
+
+    if (
+        pred_valid_mask.shape[0] != num_agents
+        and pred_valid_mask.shape[1] == num_agents
+    ):
+        pred_valid_mask = pred_valid_mask.T
+
+    if pred_valid_mask.shape[0] != num_agents:
+        raise ValueError(
+            f"pred_valid_mask agent dimension {pred_valid_mask.shape[0]} does not "
+            f"match pred_traj agent dimension {num_agents}"
+        )
+
+    if pred_valid_mask.shape[1] > num_timesteps:
+        pred_valid_mask = pred_valid_mask[:, :num_timesteps]
+    elif pred_valid_mask.shape[1] < num_timesteps:
+        pred_valid_mask = torch.nn.functional.pad(
+            pred_valid_mask, (0, num_timesteps - pred_valid_mask.shape[1])
+        )
+
+    return pred_valid_mask
+
+
+def _build_pred_valid_mask(
+    data_sample: HeteroData, pred_traj: torch.Tensor, model: SMART
+) -> torch.Tensor:
+    """Use the same future validity source as SMART validation metrics.
+
+    The model's inference output currently exposes a token-level mask under
+    ``valid_mask``. Slicing that by raw historical timesteps can produce an
+    empty ``(N, 0)`` mask, so prediction evaluation should use the raw agent
+    timestep mask instead.
+    """
+    num_agents, num_timesteps = pred_traj.shape[:2]
+    device = pred_traj.device
+
+    if "valid_mask" not in data_sample["agent"]:
+        return torch.ones(num_agents, num_timesteps, dtype=torch.bool, device=device)
+
+    historical_steps = model.num_historical_steps
+    raw_valid_mask = data_sample["agent"]["valid_mask"].to(
+        device=device, dtype=torch.bool
+    )
+    pred_valid_mask = raw_valid_mask[
+        :, historical_steps : historical_steps + num_timesteps
+    ]
+
+    if raw_valid_mask.shape[1] >= historical_steps:
+        current_valid = raw_valid_mask[:, historical_steps - 1]
+        pred_valid_mask = pred_valid_mask & current_valid[:, None]
+
+    return _fit_pred_valid_mask(pred_valid_mask, num_agents, num_timesteps, device)
+
+
 def run_inference(
     input_path: str,
     output_dir: str,
@@ -83,12 +158,13 @@ def run_inference(
 
     pred_traj = inference_output["pred_traj"]
     pred_head = inference_output["pred_head"]
-    pred_valid_mask = inference_output.get("valid_mask", None)
+    pred_valid_mask = _build_pred_valid_mask(data_sample, pred_traj, model)
 
     print(f"Predicted trajectories shape: {pred_traj.shape}")
 
     agent_data = smart_data["agent"]
-    last_pos = agent_data["position"][:, -1]
+    last_observed_idx = model.num_historical_steps - 1
+    last_pos = agent_data["position"][:, last_observed_idx]
     last_pos_np = last_pos.numpy() if isinstance(last_pos, torch.Tensor) else last_pos
 
     # For debugging and analysis
@@ -98,17 +174,6 @@ def run_inference(
 
     num_agents = pred_traj.shape[0]
     num_timesteps = pred_traj.shape[1]
-
-    if pred_valid_mask is None:
-        pred_valid_mask = torch.ones(num_agents, num_timesteps, dtype=torch.bool)
-    else:
-        pred_valid_mask = (
-            pred_valid_mask[:, :num_timesteps]
-            if pred_valid_mask.shape[1] > num_timesteps
-            else torch.nn.functional.pad(
-                pred_valid_mask, (0, num_timesteps - pred_valid_mask.shape[1])
-            )
-        )
 
     out_of_bounds_count = 0
     for i in range(num_agents):
@@ -238,12 +303,7 @@ def run_batch_inference(
         pred_traj = out["pred_traj"].detach().cpu()
         pred_head = out["pred_head"].detach().cpu()
         gt = out["gt"].detach().cpu() if "gt" in out else None
-
-        pred_valid_mask = out.get("valid_mask", None)
-        if pred_valid_mask is None:
-            pred_valid_mask = torch.ones_like(pred_traj[..., 0], dtype=torch.bool)
-        else:
-            pred_valid_mask = pred_valid_mask.detach().cpu()
+        pred_valid_mask = _build_pred_valid_mask(data_sample, pred_traj, model).cpu()
 
         num_agents, num_steps = pred_traj.shape[0], pred_traj.shape[1]
 
