@@ -1,54 +1,248 @@
+import argparse
 import pickle
+from pathlib import Path
+
 import numpy as np
 
+
+DT_SECONDS = 0.1
+
+
+def _as_agent_time_xy(name, values):
+    array = np.asarray(values)
+    if array.ndim == 2 and array.shape[-1] >= 2:
+        array = array[None, :, :]
+    if array.ndim != 3 or array.shape[-1] < 2:
+        raise ValueError(
+            f"{name} must have shape (num_agents, num_timesteps, xy) or "
+            f"(num_timesteps, xy), got {array.shape}"
+        )
+    return array[..., :2]
+
+
+def _get_pred_valid_mask(entry):
+    if entry.get("pred_valid_mask") is None:
+        return None
+    return np.asarray(entry["pred_valid_mask"])
+
+
+def _fit_length(mask, num_timesteps):
+    if mask.shape[1] == num_timesteps:
+        return mask, None
+    if mask.shape[1] > num_timesteps:
+        return mask[:, -num_timesteps:], "trimmed leading timesteps"
+
+    fitted = np.zeros((mask.shape[0], num_timesteps), dtype=bool)
+    fitted[:, : mask.shape[1]] = mask
+    return fitted, "padded missing trailing timesteps as invalid"
+
+
+def _normalize_pred_valid_mask(mask, trajectory_shape):
+    num_agents, num_timesteps = trajectory_shape[:2]
+
+    if mask is None:
+        return (
+            np.ones((num_agents, num_timesteps), dtype=bool),
+            "missing; assumed all valid",
+        )
+
+    mask = np.asarray(mask).astype(bool)
+    while mask.ndim > 2 and mask.shape[-1] == 1:
+        mask = mask[..., 0]
+    while mask.ndim > 2 and mask.shape[0] == 1:
+        mask = mask[0]
+
+    if mask.ndim == 0:
+        return np.full((num_agents, num_timesteps), bool(mask)), "scalar mask broadcast"
+
+    if mask.ndim == 1:
+        if mask.shape[0] == num_timesteps:
+            mask = np.broadcast_to(mask[None, :], (num_agents, num_timesteps))
+            return mask.copy(), "single timestep mask broadcast to all agents"
+        if mask.shape[0] == num_agents:
+            mask = np.broadcast_to(mask[:, None], (num_agents, num_timesteps))
+            return mask.copy(), "single agent mask broadcast to all timesteps"
+        raise ValueError(
+            f"1D pred_valid_mask length {mask.shape[0]} matches neither "
+            f"num_agents={num_agents} nor num_timesteps={num_timesteps}"
+        )
+
+    if mask.ndim != 2:
+        raise ValueError(
+            f"pred_valid_mask must be 1D or 2D after squeeze, got {mask.shape}"
+        )
+
+    note = None
+    if mask.shape[0] == num_agents:
+        fitted, length_note = _fit_length(mask, num_timesteps)
+    elif mask.shape[1] == num_agents:
+        fitted, length_note = _fit_length(mask.T, num_timesteps)
+        note = "transposed from (timesteps, agents)"
+    else:
+        raise ValueError(
+            f"pred_valid_mask shape {mask.shape} is incompatible with trajectory shape "
+            f"({num_agents}, {num_timesteps}, xy)"
+        )
+
+    notes = [item for item in (note, length_note) if item]
+    return fitted, "; ".join(notes) if notes else "matched"
+
+
+def _masked_speed_samples(trajectory, pred_valid_mask):
+    diffs = np.diff(trajectory, axis=1)
+    speeds = np.linalg.norm(diffs, axis=-1) / DT_SECONDS
+    diff_pred_valid_mask = pred_valid_mask[:, :-1] & pred_valid_mask[:, 1:]
+    finite_mask = np.isfinite(speeds)
+    sample_mask = diff_pred_valid_mask & finite_mask
+    return speeds[sample_mask], speeds, sample_mask
+
+
+def _concatenate_nonempty(arrays):
+    arrays = [array for array in arrays if array.size]
+    if not arrays:
+        return np.asarray([])
+    return np.concatenate(arrays)
+
+
 def evaluate_metrics(predictions_file, metrics_file):
-    with open(predictions_file, 'rb') as f:
+    with open(predictions_file, "rb") as f:
         predictions = pickle.load(f)
 
-    v_data = []  # Keep as a Python list to handle scenarios of varying lengths cleanly
-    v_gt = [] # Grount Truth
+    pred_speed_samples = []
+    gt_speed_samples = []
+    scenario_metrics = {}
+    total_valid_positions = 0
+    total_positions = 0
+    total_valid_speed_samples = 0
+    total_speed_slots = 0
 
-    # Assume a time step is 0.1 seconds for velocity calculation
-    for scenario_id in predictions.keys():
-        trajectory = np.asarray(predictions[scenario_id]['pred_traj'])
-        gt_trajectory = np.asarray(predictions[scenario_id]['gt'])
-        
-        # Calculate differences between consecutive timesteps along the time axis
-        # (Works whether shape is (num_steps, dim) or (num_agents, num_steps, dim))
-        time_axis = 1 if trajectory.ndim == 3 else 0
-        diffs = np.diff(trajectory, axis=time_axis)
-        
-        gt_diffs = np.diff(gt_trajectory, axis=time_axis)
+    for scenario_id, entry in predictions.items():
+        trajectory = _as_agent_time_xy("pred_traj", entry["pred_traj"])
+        gt_trajectory = (
+            None if entry.get("gt") is None else _as_agent_time_xy("gt", entry["gt"])
+        )
 
-        # Calculate Euclidean distance across the coordinate dimension (last axis)
-        distances = np.linalg.norm(diffs, axis=-1)
+        raw_pred_valid_mask = _get_pred_valid_mask(entry)
+        pred_valid_mask, pred_valid_mask_note = _normalize_pred_valid_mask(
+            raw_pred_valid_mask, trajectory.shape
+        )
 
-        gt_distances = np.linalg.norm(gt_diffs, axis=-1)
-        
-        # Velocity = distance / time
-        v_traj = distances / 0.1
-        v_data.append(v_traj)
+        if gt_trajectory is not None and gt_trajectory.shape[:2] != trajectory.shape[:2]:
+            common_agents = min(trajectory.shape[0], gt_trajectory.shape[0])
+            common_steps = min(trajectory.shape[1], gt_trajectory.shape[1])
+            trajectory = trajectory[:common_agents, :common_steps]
+            gt_trajectory = gt_trajectory[:common_agents, :common_steps]
+            pred_valid_mask = pred_valid_mask[:common_agents, :common_steps]
+            pred_valid_mask_note = (
+                f"{pred_valid_mask_note}; aligned pred/gt to common shape"
+            )
 
-        v_gt_traj = gt_distances / 0.1
-        v_gt.append(v_gt_traj)
+        scenario_pred_samples, _, speed_mask = _masked_speed_samples(
+            trajectory, pred_valid_mask
+        )
+        pred_speed_samples.append(scenario_pred_samples)
 
-    print("Processed scenarios:", len(v_data))
-    scenario_id = list(predictions.keys())[0]
-    print("Example scenario:", predictions[scenario_id])
-    print("Sample velocity data (first scenario) shape:", v_data[0].shape)
-    print("Average velocity across first scenario:", np.mean(v_data[0]))
+        scenario = {
+            "pred_traj_shape": trajectory.shape,
+            "gt_shape": None if gt_trajectory is None else gt_trajectory.shape,
+            "pred_valid_mask_shape": (
+                None
+                if raw_pred_valid_mask is None
+                else np.asarray(raw_pred_valid_mask).shape
+            ),
+            "normalized_pred_valid_mask_shape": pred_valid_mask.shape,
+            "pred_valid_mask_note": pred_valid_mask_note,
+            "valid_positions": int(pred_valid_mask.sum()),
+            "total_positions": int(pred_valid_mask.size),
+            "valid_speed_samples": int(speed_mask.sum()),
+            "total_speed_slots": int(speed_mask.size),
+            "mean_pred_velocity": (
+                float(np.mean(scenario_pred_samples))
+                if scenario_pred_samples.size
+                else float("nan")
+            ),
+        }
 
-    print("Sample GT velocity data (first scenario) shape:", v_gt[0].shape)
-    print("Average GT velocity across first scenario:", np.mean(v_gt[0]))
-    
-    # Safely compute global mean even if scenarios have different numbers of steps/agents
-    all_velocities = np.concatenate([v.ravel() for v in v_data])
-    print("Average velocity across all scenarios:", np.mean(all_velocities))
+        if gt_trajectory is not None:
+            gt_diffs = np.diff(gt_trajectory, axis=1)
+            gt_speeds = np.linalg.norm(gt_diffs, axis=-1) / DT_SECONDS
+            gt_sample_mask = speed_mask & np.isfinite(gt_speeds)
+            scenario_gt_samples = gt_speeds[gt_sample_mask]
+            gt_speed_samples.append(scenario_gt_samples)
+            scenario["mean_gt_velocity"] = (
+                float(np.mean(scenario_gt_samples))
+                if scenario_gt_samples.size
+                else float("nan")
+            )
 
-    gt_all_velocities = np.concatenate([v.ravel() for v in v_gt])
-    print("Average GT velocity across all scenarios:", np.mean(gt_all_velocities))
+        scenario_metrics[scenario_id] = scenario
+        total_valid_positions += scenario["valid_positions"]
+        total_positions += scenario["total_positions"]
+        total_valid_speed_samples += scenario["valid_speed_samples"]
+        total_speed_slots += scenario["total_speed_slots"]
 
-    # with open(metrics_file, 'wb') as f:
-    #     pickle.dump(metrics, f)
+    all_pred_speeds = _concatenate_nonempty(pred_speed_samples)
+    all_gt_speeds = _concatenate_nonempty(gt_speed_samples)
 
-evaluate_metrics('data/preds/predictions.pkl', 'metrics.pkl')
+    metrics = {
+        "num_scenarios": len(predictions),
+        "valid_positions": total_valid_positions,
+        "total_positions": total_positions,
+        "valid_speed_samples": total_valid_speed_samples,
+        "total_speed_slots": total_speed_slots,
+        "mean_pred_velocity": (
+            float(np.mean(all_pred_speeds)) if all_pred_speeds.size else float("nan")
+        ),
+        "mean_gt_velocity": (
+            float(np.mean(all_gt_speeds)) if all_gt_speeds.size else float("nan")
+        ),
+        "scenarios": scenario_metrics,
+    }
+
+    print("Processed scenarios:", metrics["num_scenarios"])
+    print(
+        "Valid positions:",
+        f"{metrics['valid_positions']} / {metrics['total_positions']}",
+    )
+    print(
+        "Valid velocity samples:",
+        f"{metrics['valid_speed_samples']} / {metrics['total_speed_slots']}",
+    )
+    print("Average velocity across valid predictions:", metrics["mean_pred_velocity"])
+    print("Average GT velocity across valid predictions:", metrics["mean_gt_velocity"])
+
+    if scenario_metrics:
+        first_id = next(iter(scenario_metrics))
+        print("Example scenario:", first_id)
+        print("Example scenario metrics:", scenario_metrics[first_id])
+
+    if metrics_file:
+        with open(metrics_file, "wb") as f:
+            pickle.dump(metrics, f, protocol=pickle.HIGHEST_PROTOCOL)
+        print(f"Saved metrics to {metrics_file}")
+
+    return metrics
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Evaluate SMART prediction metrics using pred_valid_mask."
+    )
+    parser.add_argument(
+        "predictions_file",
+        nargs="?",
+        default="data/preds/predictions.pkl",
+        help="Path to predictions.pkl from packages/smart/infer.py",
+    )
+    parser.add_argument(
+        "--metrics-file",
+        default="metrics.pkl",
+        help="Path where the metrics pickle should be written.",
+    )
+    args = parser.parse_args()
+
+    evaluate_metrics(Path(args.predictions_file), Path(args.metrics_file))
+
+
+if __name__ == "__main__":
+    main()

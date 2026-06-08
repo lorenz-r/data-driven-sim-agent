@@ -239,11 +239,11 @@ def run_batch_inference(
         pred_head = out["pred_head"].detach().cpu()
         gt = out["gt"].detach().cpu() if "gt" in out else None
 
-        # pred_valid_mask = out.get("valid_mask", None)
-        # if pred_valid_mask is None:
-        #     pred_valid_mask = torch.ones_like(pred_traj[..., 0], dtype=torch.bool)
-        # else:
-        #     pred_valid_mask = pred_valid_mask.detach().cpu()
+        pred_valid_mask = out.get("valid_mask", None)
+        if pred_valid_mask is None:
+            pred_valid_mask = torch.ones_like(pred_traj[..., 0], dtype=torch.bool)
+        else:
+            pred_valid_mask = pred_valid_mask.detach().cpu()
 
         num_agents, num_steps = pred_traj.shape[0], pred_traj.shape[1]
 
@@ -261,7 +261,7 @@ def run_batch_inference(
         all_traj.append(pred_traj)
         all_head.append(pred_head)
         all_gt.append(gt)
-        # all_mask.append(pred_valid_mask)
+        all_mask.append(pred_valid_mask)
 
         all_num_agents.append(num_agents)
         all_num_steps.append(num_steps)
@@ -272,11 +272,14 @@ def run_batch_inference(
 
     predictions = {}
 
-    for scenario_id, pred_traj, pred_head, gt in zip(scenario_ids, all_traj, all_head, all_gt):
+    for scenario_id, pred_traj, pred_head, gt, pred_valid_mask in zip(
+        scenario_ids, all_traj, all_head, all_gt, all_mask
+    ):
         predictions[scenario_id] = {
             "pred_traj": pred_traj.cpu().numpy(),
             "pred_head": pred_head.cpu().numpy(),
             "gt": gt.cpu().numpy() if gt is not None else None,
+            "pred_valid_mask": pred_valid_mask.cpu().numpy(),
         }
 
     with open(output_path, "wb") as f:
