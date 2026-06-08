@@ -21,6 +21,9 @@ def _fit_pred_valid_mask(
     num_timesteps: int,
     device: torch.device,
 ) -> torch.Tensor:
+    # Canonical saved mask shape: (num_agents, future_timesteps), aligned with
+    # pred_traj/gt. This helper only fixes orientation/length; it does not decide
+    # which timesteps are semantically valid.
     pred_valid_mask = pred_valid_mask.to(device=device, dtype=torch.bool)
 
     if pred_valid_mask.dim() == 1:
@@ -79,11 +82,16 @@ def _build_pred_valid_mask(
     raw_valid_mask = data_sample["agent"]["valid_mask"].to(
         device=device, dtype=torch.bool
     )
+    # Raw agent valid_mask is dense over the full scenario:
+    # (num_agents, historical_timesteps + future_timesteps). Since pred_traj is
+    # future-only, slice away the historical context here.
     pred_valid_mask = raw_valid_mask[
         :, historical_steps : historical_steps + num_timesteps
     ]
 
     if raw_valid_mask.shape[1] >= historical_steps:
+        # Match SMART validation behavior: only evaluate agents present at the
+        # current observed timestep, i.e. the final historical state.
         current_valid = raw_valid_mask[:, historical_steps - 1]
         pred_valid_mask = pred_valid_mask & current_valid[:, None]
 
@@ -97,6 +105,7 @@ def run_inference(
     config_path: str = "configs/validation/validation_scalable.yaml",
     format_av2: bool = False,
     device: str = "cuda",
+    sample_tokens: bool = False,
 ) -> None:
     """Run inference on a SMART format scenario and save predictions.
 
@@ -107,6 +116,7 @@ def run_inference(
         config_path: Path to config file
         format_av2: If True, also save AV2 format
         device: Device to run inference on
+        sample_tokens: Sample among top-k tokens instead of taking top-1 tokens.
     """
     p_input = Path(input_path)
     p_output = Path(output_dir)
@@ -154,10 +164,14 @@ def run_inference(
     with torch.no_grad():
         data_sample = model.match_token_map(data_sample)
         data_sample = model.sample_pt_pred(data_sample)
-        inference_output = model.inference(data_sample)
+        inference_output = model.inference(data_sample, sample_tokens=sample_tokens)
 
     pred_traj = inference_output["pred_traj"]
     pred_head = inference_output["pred_head"]
+    # Model output semantics:
+    # pred_traj: (num_agents, future_timesteps, 2), future only.
+    # pred_head: (num_agents, future_timesteps), future only.
+    # gt in batch mode below uses the same future-only timestep window.
     pred_valid_mask = _build_pred_valid_mask(data_sample, pred_traj, model)
 
     print(f"Predicted trajectories shape: {pred_traj.shape}")
@@ -205,8 +219,11 @@ def run_inference(
 
     prediction_data = {
         "scenario_id": scenario_id,
+        # Saved SMART output is future-only. Historical states remain in the
+        # original input pickle under agent["position"][:, :num_historical_steps].
         "pred_traj": pred_traj.detach().cpu().numpy(),
         "pred_head": pred_head.detach().cpu().numpy(),
+        # Same future-only shape as pred_traj without the coordinate dimension.
         "pred_valid_mask": pred_valid_mask.detach().cpu().numpy(),
         "last_pos": last_pos_np,
         "num_agents": num_agents,
@@ -248,6 +265,7 @@ def run_batch_inference(
     config_path: str = "configs/validation/validation_scalable.yaml",
     format_av2: bool = False,
     device: str = "cuda",
+    sample_tokens: bool = False,
 ) -> None:
 
     p_input = Path(input_path)
@@ -298,10 +316,13 @@ def run_batch_inference(
         with torch.no_grad():
             data_sample = model.match_token_map(data_sample)
             data_sample = model.sample_pt_pred(data_sample)
-            out = model.inference(data_sample)
+            out = model.inference(data_sample, sample_tokens=sample_tokens)
 
         pred_traj = out["pred_traj"].detach().cpu()
         pred_head = out["pred_head"].detach().cpu()
+        # out["gt"] is sliced in SMARTAgentDecoder as
+        # agent["position"][:, num_historical_steps:, :input_dim], so it is
+        # future-only and aligned with pred_traj.
         gt = out["gt"].detach().cpu() if "gt" in out else None
         pred_valid_mask = _build_pred_valid_mask(data_sample, pred_traj, model).cpu()
 
@@ -336,6 +357,9 @@ def run_batch_inference(
         scenario_ids, all_traj, all_head, all_gt, all_mask
     ):
         predictions[scenario_id] = {
+            # All trajectory-like arrays below are future-only:
+            # pred_traj/gt: (num_agents, future_timesteps, 2)
+            # pred_head/pred_valid_mask: (num_agents, future_timesteps)
             "pred_traj": pred_traj.cpu().numpy(),
             "pred_head": pred_head.cpu().numpy(),
             "gt": gt.cpu().numpy() if gt is not None else None,
@@ -398,6 +422,14 @@ def main():
     parser.add_argument(
         "--batch-directory", type=str, help="Run batch inference on all files in directory"
     )
+    parser.add_argument(
+        "--sample-tokens",
+        action="store_true",
+        help=(
+            "Sample among top-k rollout tokens. By default inference uses top-1 "
+            "tokens for deterministic evaluation."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -414,6 +446,7 @@ def main():
             config_path=args.config,
             format_av2=format_av2,
             device=args.device,
+            sample_tokens=args.sample_tokens,
         )
     else:
         run_inference(
@@ -423,6 +456,7 @@ def main():
             config_path=args.config,
             format_av2=format_av2,
             device=args.device,
+            sample_tokens=args.sample_tokens,
         )
 
 

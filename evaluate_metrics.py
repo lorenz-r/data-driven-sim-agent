@@ -104,7 +104,58 @@ def _concatenate_nonempty(arrays):
     return np.concatenate(arrays)
 
 
-def evaluate_metrics(predictions_file, metrics_file):
+def _plot_scenario_trajectories(
+    scenario_id,
+    trajectory,
+    gt_trajectory,
+    pred_valid_mask,
+    plot_dir,
+    max_agents=8,
+):
+    if gt_trajectory is None:
+        return
+
+    import matplotlib.pyplot as plt
+
+    plot_dir = Path(plot_dir)
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    agent_indices = np.flatnonzero(pred_valid_mask.any(axis=1))[:max_agents]
+    if agent_indices.size == 0:
+        return
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    for agent_idx in agent_indices:
+        mask = pred_valid_mask[agent_idx]
+        pred_xy = trajectory[agent_idx]
+        gt_xy = gt_trajectory[agent_idx]
+
+        ax.plot(
+            gt_xy[mask, 0],
+            gt_xy[mask, 1],
+            linewidth=1.5,
+            alpha=0.8,
+            label=f"agent {agent_idx} gt",
+        )
+        ax.plot(
+            pred_xy[mask, 0],
+            pred_xy[mask, 1],
+            linestyle="--",
+            linewidth=1.5,
+            alpha=0.8,
+            label=f"agent {agent_idx} pred",
+        )
+
+    ax.set_title(f"{scenario_id} future trajectories")
+    ax.set_aspect("equal", adjustable="box")
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize="x-small", ncol=2)
+    fig.tight_layout()
+    fig.savefig(plot_dir / f"{scenario_id}.png", dpi=160)
+    plt.close(fig)
+
+
+def evaluate_metrics(predictions_file, metrics_file, plot_dir=None, max_plot_agents=8):
     with open(predictions_file, "rb") as f:
         predictions = pickle.load(f)
 
@@ -175,6 +226,16 @@ def evaluate_metrics(predictions_file, metrics_file):
                 else float("nan")
             )
 
+        if plot_dir:
+            _plot_scenario_trajectories(
+                scenario_id,
+                trajectory,
+                gt_trajectory,
+                pred_valid_mask,
+                plot_dir,
+                max_agents=max_plot_agents,
+            )
+
         scenario_metrics[scenario_id] = scenario
         total_valid_positions += scenario["valid_positions"]
         total_positions += scenario["total_positions"]
@@ -239,9 +300,25 @@ def main():
         default="metrics.pkl",
         help="Path where the metrics pickle should be written.",
     )
+    parser.add_argument(
+        "--plot-dir",
+        default=None,
+        help="Optional directory for predicted-vs-GT trajectory plots.",
+    )
+    parser.add_argument(
+        "--max-plot-agents",
+        type=int,
+        default=8,
+        help="Maximum number of valid agents to draw per scenario when plotting.",
+    )
     args = parser.parse_args()
 
-    evaluate_metrics(Path(args.predictions_file), Path(args.metrics_file))
+    evaluate_metrics(
+        Path(args.predictions_file),
+        Path(args.metrics_file),
+        plot_dir=args.plot_dir,
+        max_plot_agents=args.max_plot_agents,
+    )
 
 
 if __name__ == "__main__":

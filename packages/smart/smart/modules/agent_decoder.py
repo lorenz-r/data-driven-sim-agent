@@ -603,7 +603,10 @@ class SMARTAgentDecoder(nn.Module):
         }
 
     def inference(
-        self, data: HeteroData, map_enc: Mapping[str, torch.Tensor]
+        self,
+        data: HeteroData,
+        map_enc: Mapping[str, torch.Tensor],
+        sample_tokens: bool = False,
     ) -> Dict[str, torch.Tensor]:
         eval_mask = data["agent"]["valid_mask"][:, self.num_historical_steps - 1]
         pos_a = data["agent"]["token_pos"].clone()
@@ -641,6 +644,9 @@ class SMARTAgentDecoder(nn.Module):
         self.num_recurrent_steps_val = (
             data["agent"]["position"].shape[1] - self.num_historical_steps
         )
+        # Future-only rollout length. Historical states are consumed as context,
+        # but pred_traj/pred_head below contain only timesteps
+        # [num_historical_steps, total_steps).
         pred_traj = torch.zeros(
             data["agent"].num_nodes,
             self.num_recurrent_steps_val,
@@ -778,7 +784,17 @@ class SMARTAgentDecoder(nn.Module):
                 ]
             )
 
-            sample_index = torch.multinomial(topk_prob, 1).to(agent_pred_rel.device)
+            # Evaluation should be deterministic and comparable to top-1 token
+            # accuracy. Sampling remains available for generative rollouts.
+            if sample_tokens:
+                sample_index = torch.multinomial(topk_prob, 1).to(agent_pred_rel.device)
+            else:
+                sample_index = torch.zeros(
+                    topk_prob.shape[0],
+                    1,
+                    dtype=torch.long,
+                    device=agent_pred_rel.device,
+                )
             agent_pred_rel = agent_pred_rel.gather(
                 dim=1, index=sample_index[..., None, None, None].expand(-1, -1, 6, 4, 2)
             )[:, 0, ...]
@@ -846,6 +862,8 @@ class SMARTAgentDecoder(nn.Module):
         agent_valid_mask[agent_category != 3] = False
 
         return {
+            # pos_a/head_a are token-step states used internally by the recurrent
+            # decoder. They are not the dense output trajectory saved by infer.py.
             "pos_a": pos_a[
                 :, (self.num_historical_steps - 1) // self.shift :
             ],  # During inference, we will update the input agent position and heading with the predicted position and heading at each recurrent step, so the input agent position and heading for the next recurrent step will be the predicted position and heading from the previous step. Therefore, we need to return the updated agent position and heading after all recurrent steps for evaluation. The shape of pos_a and head_a is (num_agent, num_recurrent_steps, traj_dim) and (num_agent, num_recurrent_steps) respectively.
@@ -856,8 +874,15 @@ class SMARTAgentDecoder(nn.Module):
             "gt": data["agent"]["position"][
                 :, self.num_historical_steps :, : self.input_dim
             ].contiguous(),
+            # NOTE: agent_valid_mask is token-level, not dense timestep-level.
+            # Do not use this key as pred_valid_mask in infer.py; use
+            # data["agent"]["valid_mask"][:, num_historical_steps:] instead.
             "valid_mask": agent_valid_mask[:, self.num_historical_steps :],
+            # Dense future-only predictions with shape
+            # (num_agents, total_steps - num_historical_steps, 2).
             "pred_traj": pred_traj,
+            # Dense future-only headings with shape
+            # (num_agents, total_steps - num_historical_steps).
             "pred_head": pred_head,
             "next_token_idx": torch.cat(next_token_idx_list, dim=-1),
             "next_token_idx_gt": agent_token_index.roll(shifts=-1, dims=1),
