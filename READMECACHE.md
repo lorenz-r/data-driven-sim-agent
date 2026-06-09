@@ -65,7 +65,7 @@ This script should print the first, second, and third-level blob paths so that u
 Make the script executable:
 
 ```bash
-chmod +x ./scripts/list_azure_blob_dirs.sh
+chmod +x ./list_azure_blob_dirs.sh
 ```
 
 Example output:
