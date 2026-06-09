@@ -23,8 +23,13 @@ import io
 import subprocess
 import sys
 from pathlib import Path
-
-from trajectory_data.av2.setup import add_setup_arguments, run_setup
+from trajectory_data.av2.setup import (
+    add_setup_arguments,
+    read_cache_from_blob,
+    run_setup,
+    update_current_symlink,
+    write_cache_to_blob,
+)
 
 if isinstance(sys.stdout, io.TextIOWrapper):
     sys.stdout.reconfigure(line_buffering=True)  # keep output ordered when piped
@@ -128,11 +133,39 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _parser().parse_args()
-    run_setup(
+
+    if (args.read_cache or args.write_cache) and not args.blob_cache_name:
+        raise ValueError("--blob-cache-name is required with --read-cache or --write-cache")
+
+    if args.read_cache:
+        local_cache_dir = args.processed_dir / args.blob_cache_name
+
+        read_cache_from_blob(
+            blob_cache_name=args.blob_cache_name,
+            local_cache_dir=local_cache_dir,
+        )
+        update_current_symlink(args.processed_dir, args.blob_cache_name)
+
+        print(f"Restored processed cache into: {local_cache_dir}")
+        print(f"Updated current symlink: {args.processed_dir / 'current'}")
+        print("Skipping AV2 setup because --read-cache succeeded.")
+        return
+
+    cache_dir = run_setup(
         args=args,
         preprocess_split=None if args.skip_preprocess else _preprocess_smart_split,
         preprocessor_fingerprint=None if args.skip_preprocess else _hash_preprocessor(),
     )
+
+    if args.write_cache:
+        if cache_dir is None:
+            raise RuntimeError("Cannot write cache because setup did not produce a processed cache directory.")
+
+        write_cache_to_blob(
+            local_cache_dir=cache_dir,
+            blob_cache_name=args.blob_cache_name,
+            args=args,
+        )
 
 
 if __name__ == "__main__":

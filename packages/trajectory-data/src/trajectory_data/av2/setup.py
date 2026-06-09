@@ -201,6 +201,23 @@ def add_setup_arguments(
     parser.add_argument("--skip-preprocess", action="store_true")
 
     parser.add_argument(
+        "--read-cache",
+        action="store_true",
+        help="Read processed SMART cache from Azure Blob before setup.",
+    )
+    parser.add_argument(
+        "--write-cache",
+        action="store_true",
+        help="Write processed SMART cache to Azure Blob after successful setup.",
+    )
+    parser.add_argument(
+        "--blob-cache-name",
+        dest="blob_cache_name",
+        default=None,
+        help="Remote Azure Blob cache folder name.",
+    )
+
+    parser.add_argument(
         "--raw-dir",
         type=Path,
         default=raw_dir_default,
@@ -307,7 +324,7 @@ def _blob_cache_url(blob_cache_name: str, sas_token: str) -> str:
         https://account.blob.core.windows.net/av2-preprocessed-files/smart-av2-massive-v1?<sas>
     """
     if not blob_cache_name:
-        raise ValueError("--cache-name / blob_cache_name is required")
+        raise ValueError("blob_cache_name is required")
 
     container_url = _require_env("AV2_CACHE_CONTAINER_URL").rstrip("/")
     cache_url = f"{container_url}/{blob_cache_name.strip('/')}"
