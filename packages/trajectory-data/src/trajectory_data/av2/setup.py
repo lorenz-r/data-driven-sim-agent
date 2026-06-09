@@ -331,6 +331,25 @@ def _blob_cache_url(blob_cache_name: str, sas_token: str) -> str:
 
     return _join_sas_url(cache_url, sas_token)
 
+def _blob_cache_contents_url(blob_cache_name: str, sas_token: str) -> str:
+    """
+    Builds a SAS URL for the contents of a remote blob cache folder.
+
+    Example:
+        cache-name/current
+        cache-name/dc25f7d8f0549f40/
+
+    should be copied into the local processed_dir directly, without creating
+    a local cache-name/ directory.
+    """
+    if not blob_cache_name:
+        raise ValueError("--cache-name / --blob-cache-name is required")
+
+    container_url = _require_env("AV2_CACHE_CONTAINER_URL").rstrip("/")
+    cache_url = f"{container_url}/{blob_cache_name.strip('/')}/*"
+
+    return _join_sas_url(cache_url, sas_token)
+
 
 def _validate_cache_dir(cache_dir: Path) -> None:
     """
@@ -361,7 +380,7 @@ def read_cache_from_blob(blob_cache_name: str, local_cache_dir: str | Path) -> P
         Path to local cache folder containing train/ and val/.
     """
     read_sas = _require_env("AV2_CACHE_READ_SAS")
-    remote_url = _blob_cache_url(blob_cache_name, read_sas)
+    remote_url = _blob_cache_contents_url(blob_cache_name, read_sas)
 
     local_cache_dir = Path(local_cache_dir).resolve()
     local_cache_dir.mkdir(parents=True, exist_ok=True)

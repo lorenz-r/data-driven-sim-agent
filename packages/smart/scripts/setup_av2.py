@@ -138,15 +138,14 @@ def main() -> None:
         raise ValueError("--blob-cache-name is required with --read-cache or --write-cache")
 
     if args.read_cache:
-        local_cache_dir = args.processed_dir / args.blob_cache_name
 
         read_cache_from_blob(
             blob_cache_name=args.blob_cache_name,
-            local_cache_dir=local_cache_dir,
+            local_cache_dir=args.processed_dir,
         )
         update_current_symlink(args.processed_dir, args.blob_cache_name)
 
-        print(f"Restored processed cache into: {local_cache_dir}")
+        print(f"Restored processed cache into: {args.processed_dir}")
         print(f"Updated current symlink: {args.processed_dir / 'current'}")
         print("Skipping AV2 setup because --read-cache succeeded.")
         return
