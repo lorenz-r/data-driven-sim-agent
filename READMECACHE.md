@@ -96,6 +96,13 @@ Use this mode when the VM does not already have the dataset cached locally.
 This run should download the required data and write reusable files to the Azure Blob.
 
 ```bash
+uv run python packages/smart/scripts/setup_av2.py --full --raw-dir data/raw --processed-dir data/processed --write-cache --blob-cache-name full
+```
+
+Important: This writes from (local)/data/processed to (blob)/full
+
+
+```bash
 uv run python train.py --download-first --download-size massive --process-smart --write-cache --blob-cache-name massive-16000-4000-v1 --model smart --batch-size 32 --data-workers 8 --val-batch-size 32 --max-epochs 100 --devices 2 --dropout 0.1 --learning-rate 1e-4 --weight-decay 1e-4 --save-ckpt-path ./checkpoints --wandb-logging --project-name smart-train --run-name massive-training
 ```
 Important: --blob-cache-name is the directory that the files will be written to in the blob
@@ -119,6 +126,12 @@ df -h
 Use this mode when the Azure Blob already has the needed files.
 
 This should avoid unnecessary downloads and preprocessing.
+
+```bash
+uv run python packages/smart/scripts/setup_av2.py --read-cache --processed-dir data/processed --blob-cache-name full
+```
+
+Important: This writes from (blob)/full to (local)/data/processed
 
 ```bash
 # TODO: Fill in actual training command
