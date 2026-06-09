@@ -331,6 +331,7 @@ def _blob_cache_url(blob_cache_name: str, sas_token: str) -> str:
 
     return _join_sas_url(cache_url, sas_token)
 
+
 def _blob_cache_contents_url(blob_cache_name: str, sas_token: str) -> str:
     """
     Builds a SAS URL for the contents of a remote blob cache folder.

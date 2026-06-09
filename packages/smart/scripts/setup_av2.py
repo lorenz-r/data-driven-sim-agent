@@ -135,10 +135,11 @@ def main() -> None:
     args = _parser().parse_args()
 
     if (args.read_cache or args.write_cache) and not args.blob_cache_name:
-        raise ValueError("--blob-cache-name is required with --read-cache or --write-cache")
+        raise ValueError(
+            "--blob-cache-name is required with --read-cache or --write-cache"
+        )
 
     if args.read_cache:
-
         read_cache_from_blob(
             blob_cache_name=args.blob_cache_name,
             local_cache_dir=args.processed_dir,
@@ -158,7 +159,9 @@ def main() -> None:
 
     if args.write_cache:
         if cache_dir is None:
-            raise RuntimeError("Cannot write cache because setup did not produce a processed cache directory.")
+            raise RuntimeError(
+                "Cannot write cache because setup did not produce a processed cache directory."
+            )
 
         write_cache_to_blob(
             local_cache_dir=cache_dir,
