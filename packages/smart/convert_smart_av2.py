@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from typing import Dict, Optional
 import argparse
 import pickle
@@ -34,6 +35,74 @@ INV_SMART_CATEGORY = {3: TrackCategory.FOCAL_TRACK, 1: TrackCategory.SCORED_TRAC
 INV_SMART_POLY_TYPE = {0: "VEHICLE", 1: "BIKE", 2: "BUS", 3: "PEDESTRIAN"}
 
 
+def _to_numpy(value):
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
+
+
+def _to_python_scalar(value):
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().item()
+    if isinstance(value, np.ndarray):
+        return value.item()
+    return value
+
+
+def _to_bool(value) -> bool:
+    return bool(_to_python_scalar(value))
+
+
+def _fit_pred_valid_mask(
+    pred_valid_mask,
+    num_agents: int,
+    num_timesteps: int,
+) -> np.ndarray:
+    """Return a future-only bool mask aligned with pred_traj."""
+    pred_valid_mask = _to_numpy(pred_valid_mask).astype(bool, copy=False)
+
+    if pred_valid_mask.ndim == 1:
+        if pred_valid_mask.shape[0] == num_timesteps:
+            pred_valid_mask = np.broadcast_to(
+                pred_valid_mask[None, :], (num_agents, num_timesteps)
+            )
+        elif pred_valid_mask.shape[0] == num_agents:
+            pred_valid_mask = np.broadcast_to(
+                pred_valid_mask[:, None], (num_agents, num_timesteps)
+            )
+        else:
+            raise ValueError(
+                f"pred_valid_mask length {pred_valid_mask.shape[0]} matches neither "
+                f"num_agents={num_agents} nor num_timesteps={num_timesteps}"
+            )
+
+    if pred_valid_mask.ndim != 2:
+        raise ValueError(f"pred_valid_mask must be 2D, got {pred_valid_mask.shape}")
+
+    if (
+        pred_valid_mask.shape[0] != num_agents
+        and pred_valid_mask.shape[1] == num_agents
+    ):
+        pred_valid_mask = pred_valid_mask.T
+
+    if pred_valid_mask.shape[0] != num_agents:
+        raise ValueError(
+            f"pred_valid_mask agent dimension {pred_valid_mask.shape[0]} does not "
+            f"match pred_traj agent dimension {num_agents}"
+        )
+
+    if pred_valid_mask.shape[1] > num_timesteps:
+        pred_valid_mask = pred_valid_mask[:, :num_timesteps]
+    elif pred_valid_mask.shape[1] < num_timesteps:
+        pred_valid_mask = np.pad(
+            pred_valid_mask,
+            ((0, 0), (0, num_timesteps - pred_valid_mask.shape[1])),
+            constant_values=False,
+        )
+
+    return pred_valid_mask
+
+
 def smart_to_argoverse(
     smart_data: Dict,
 ) -> tuple[ArgoverseScenario, ArgoverseStaticMap]:
@@ -59,15 +128,15 @@ def smart_to_argoverse(
 
         object_states = []
         for t in range(agent_data["valid_mask"].shape[1]):
-            if agent_data["valid_mask"][i, t]:
-                pos = agent_data["position"][i, t].numpy()
-                vel = agent_data["velocity"][i, t].numpy()
+            if _to_bool(agent_data["valid_mask"][i, t]):
+                pos = _to_numpy(agent_data["position"][i, t])
+                vel = _to_numpy(agent_data["velocity"][i, t])
 
                 state = ObjectState(
                     observed=True,
                     timestep=t,
                     position=(float(pos[0]), float(pos[1])),
-                    heading=float(agent_data["heading"][i, t]),
+                    heading=float(_to_python_scalar(agent_data["heading"][i, t])),
                     velocity=(float(vel[0]), float(vel[1])),
                 )
                 object_states.append(state)
@@ -197,8 +266,25 @@ def smart_prediction_to_argoverse(
     num_agents = agent_data["num_nodes"]
     av_index = agent_data["av_index"]
 
+    pred_traj = _to_numpy(pred_traj)
+    pred_head = _to_numpy(pred_head)
+
+    if pred_traj.ndim < 3:
+        raise ValueError(f"pred_traj must have shape [N, T, 2], got {pred_traj.shape}")
+
+    num_pred_agents = pred_traj.shape[0]
+    num_pred_steps = min(PREDICTION_STEPS, pred_traj.shape[1])
+    if pred_head.ndim > 1:
+        num_pred_steps = min(num_pred_steps, pred_head.shape[1])
+
     if pred_valid_mask is None:
-        pred_valid_mask = agent_data["predict_mask"][:, OBSERVED_STEPS:]
+        pred_valid_mask = _to_numpy(agent_data["predict_mask"])[:, OBSERVED_STEPS:]
+
+    pred_valid_mask = _fit_pred_valid_mask(
+        pred_valid_mask,
+        num_agents=num_pred_agents,
+        num_timesteps=num_pred_steps,
+    )
 
     tracks = []
 
@@ -215,62 +301,44 @@ def smart_prediction_to_argoverse(
 
         # 1. Copy historical states (timesteps 0..49)
         for t in range(OBSERVED_STEPS):
-            if agent_data["valid_mask"][i, t]:
-                pos = agent_data["position"][i, t].numpy()
-                vel = agent_data["velocity"][i, t].numpy()
+            if _to_bool(agent_data["valid_mask"][i, t]):
+                pos = _to_numpy(agent_data["position"][i, t])
+                vel = _to_numpy(agent_data["velocity"][i, t])
 
                 state = ObjectState(
                     observed=True,
                     timestep=t,
                     position=(float(pos[0]), float(pos[1])),
-                    heading=float(agent_data["heading"][i, t]),
+                    heading=float(_to_python_scalar(agent_data["heading"][i, t])),
                     velocity=(float(vel[0]), float(vel[1])),
                 )
                 object_states.append(state)
 
         # 2. Add predicted future states (timesteps 50..109)
         # Only add predictions for scored/focal tracks (category == 3)
-        if category in (TrackCategory.FOCAL_TRACK, TrackCategory.SCORED_TRACK):
-            num_pred_steps = (
-                min(PREDICTION_STEPS, pred_traj.shape[1])
-                if pred_traj.dim() > 1
-                else PREDICTION_STEPS
-            )
-            num_pred_steps = (
-                min(num_pred_steps, pred_head.shape[1])
-                if pred_head.dim() > 1
-                else num_pred_steps
-            )
+        if (
+            category in (TrackCategory.FOCAL_TRACK, TrackCategory.SCORED_TRACK)
+            and i < num_pred_agents
+        ):
 
             for t in range(num_pred_steps):
-                if (
-                    pred_valid_mask is not None
-                    and t < pred_valid_mask.shape[1]
-                    and not pred_valid_mask[i, t]
-                ):
+                if not pred_valid_mask[i, t]:
                     continue
 
-                pred_pos = pred_traj[i, t].numpy()
+                pred_pos = pred_traj[i, t]
                 pred_heading = (
-                    pred_head[i, t].item()
-                    if pred_head.dim() > 1
-                    else pred_head[i].item()
+                    pred_head[i, t].item() if pred_head.ndim > 1 else pred_head[i].item()
                 )
 
                 # Compute velocity from predicted positions (m/s, assuming 0.1s timestep)
-                if (
-                    t < num_pred_steps - 1
-                    and pred_valid_mask is not None
-                    and t + 1 < pred_valid_mask.shape[1]
-                    and pred_valid_mask[i, t + 1]
-                ):
-                    next_pos = pred_traj[i, t + 1].numpy()
+                if t < num_pred_steps - 1 and pred_valid_mask[i, t + 1]:
+                    next_pos = pred_traj[i, t + 1]
                     vx = float((next_pos[0] - pred_pos[0]) * 10.0)
                     vy = float((next_pos[1] - pred_pos[1]) * 10.0)
                 else:
                     # Estimate velocity from last historical step
-                    if agent_data["valid_mask"][i, OBSERVED_STEPS - 1]:
-                        last_vel = agent_data["velocity"][i, OBSERVED_STEPS - 1].numpy()
+                    if _to_bool(agent_data["valid_mask"][i, OBSERVED_STEPS - 1]):
+                        last_vel = _to_numpy(agent_data["velocity"][i, OBSERVED_STEPS - 1])
                         vx, vy = float(last_vel[0]), float(last_vel[1])
                     else:
                         vx, vy = 0.0, 0.0

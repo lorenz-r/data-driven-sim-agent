@@ -11,8 +11,6 @@ from smart.datasets.preprocess import TokenProcessor
 from torch_geometric.data import HeteroData
 from smart.utils.config import load_config_act
 from smart.utils.log import Logging
-# from convert_smart_av2 import smart_prediction_to_argoverse
-# from av2.datasets.motion_forecasting import scenario_serialization
 
 
 def _fit_pred_valid_mask(
@@ -188,23 +186,27 @@ def run_inference(
 
     num_agents = pred_traj.shape[0]
     num_timesteps = pred_traj.shape[1]
+    pred_traj_np = pred_traj.detach().cpu().numpy()
+    pred_valid_mask_np = pred_valid_mask.detach().cpu().numpy()
 
     out_of_bounds_count = 0
     for i in range(num_agents):
         for t in range(num_timesteps):
-            if pred_valid_mask[i, t]:
-                pred_pos = (
-                    pred_traj[i, t].numpy()
-                    if isinstance(pred_traj[i, t], torch.Tensor)
-                    else pred_traj[i, t]
-                )
+            if pred_valid_mask_np[i, t]:
+                pred_pos = pred_traj_np[i, t]
                 dist = np.sqrt(
                     (pred_pos[0] - last_pos_np[i, 0]) ** 2
                     + (pred_pos[1] - last_pos_np[i, 1]) ** 2
                 )
                 if dist > dist_threshold:
-                    pred_valid_mask[i, t] = False
+                    pred_valid_mask_np[i, t] = False
                     out_of_bounds_count += 1
+
+    pred_valid_mask = torch.as_tensor(
+        pred_valid_mask_np,
+        dtype=torch.bool,
+        device=pred_traj.device,
+    )
 
     print(
         f"Filtered predictions: {pred_valid_mask.sum().item()} / {pred_valid_mask.numel()} valid, {out_of_bounds_count} out of bounds"
@@ -234,9 +236,17 @@ def run_inference(
 
     print(f"Saved CLEAN SMART predictions to: {smart_output_path}")
 
-    """
+
     # 6. Convert to AV2 if requested
     if format_av2:
+        try:
+            from convert_smart_av2 import smart_prediction_to_argoverse
+        except ImportError as exc:
+            if exc.name != "convert_smart_av2":
+                raise
+            from .convert_smart_av2 import smart_prediction_to_argoverse
+        from av2.datasets.motion_forecasting import scenario_serialization
+
         av2_output_dir = sample_output_dir / "av2"
         av2_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -250,11 +260,11 @@ def run_inference(
 
         # Save as parquet
         av2_output_path = av2_output_dir / f"{scenario_id}.parquet"
-        scenario_serialization.write_argoverse_scenario_parquet(
+        scenario_serialization.serialize_argoverse_scenario_parquet(
+            av2_output_path,
             scenario_with_pred,
-            av2_output_path
         )
-        print(f"Saved AV2 scenario to: {av2_output_path}")"""  # TODO: add back after fixing env problems
+        print(f"Saved AV2 scenario to: {av2_output_path}")  # TODO: add back after fixing env problems
 
     return inference_output
 
