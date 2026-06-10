@@ -518,6 +518,11 @@ def _add_legend(ax: plt.Axes) -> None:
     ax.legend(handles=patches, loc="lower left", fontsize=9)
 
 
+def _find_map_files_for_input(input_path: Path) -> List[Path]:
+    """Return map archives located next to the input file."""
+    return sorted(input_path.parent.glob("log_map_archive_*.json"))
+
+
 def test_visualize_scenario(
     data_dir: Optional[str] = None,
     scenario_id: Optional[str] = None,
@@ -643,7 +648,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    input_path = Path(args.input)
+    input_path = Path(args.input).expanduser()
     input_dir = input_path.parent
 
     if input_path.suffix == ".parquet":
@@ -666,10 +671,10 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"Unsupported file format: {input_path.suffix}")
 """
-    map_files = sorted(input_dir.glob("log_map_archive_*.json"))
+    map_files = _find_map_files_for_input(input_path)
     static_map = ArgoverseStaticMap.from_json(map_files[0]) if map_files else None
     if static_map:
-        print(f"Loaded static map from: {map_files[0].name}")
+        print(f"Loaded static map from: {map_files[0]}")
 
     is_pred = "pred" in input_dir.parts
 
