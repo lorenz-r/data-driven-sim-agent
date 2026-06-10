@@ -1,7 +1,8 @@
 import pickle
+import sys
 from argparse import ArgumentParser
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 import numpy as np
@@ -11,6 +12,13 @@ from smart.datasets.preprocess import TokenProcessor
 from torch_geometric.data import HeteroData
 from smart.utils.config import load_config_act
 from smart.utils.log import Logging
+
+SMART_ROOT = Path(__file__).resolve().parent
+DEFAULT_PROCESSED_FOLDER = SMART_ROOT / "data" / "av2_processed" / "training"
+DEFAULT_RAW_DATA_FOLDER = SMART_ROOT / "data" / "av2_partial_py" / "train"
+DEFAULT_OUTPUT_FOLDER = SMART_ROOT / "data" / "preds"
+DEFAULT_CONFIG_PATH = SMART_ROOT / "configs" / "validation" / "validation_scalable.yaml"
+DEFAULT_CHECKPOINT_PATH = SMART_ROOT / "smart_checkpoints" / "epoch=199.ckpt"
 
 
 def _fit_pred_valid_mask(
@@ -104,7 +112,7 @@ def run_inference(
     format_av2: bool = False,
     device: str = "cuda",
     sample_tokens: bool = False,
-) -> None:
+) -> dict[str, Any]:
     """Run inference on a SMART format scenario and save predictions.
 
     Args:
@@ -128,7 +136,9 @@ def run_inference(
     config.Trainer.accelerator = device
 
     model = SMART(config.Model)
-    if checkpoint_path and Path(checkpoint_path).exists():
+    if checkpoint_path and not Path(checkpoint_path).exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    if checkpoint_path:
         logger = Logging().log(level="DEBUG")
         print(f"Loading checkpoint: {checkpoint_path}")
         model.load_params_from_file(
@@ -266,7 +276,203 @@ def run_inference(
         )
         print(f"Saved AV2 scenario to: {av2_output_path}")  # TODO: add back after fixing env problems
 
-    return inference_output
+    return {
+        "scenario_id": scenario_id,
+        "smart_data": smart_data,
+        "pred_traj": pred_traj.detach().cpu(),
+        "pred_head": pred_head.detach().cpu(),
+        "pred_valid_mask": pred_valid_mask.detach().cpu(),
+        "smart_output_path": smart_output_path,
+    }
+
+
+def _prompt_path(label: str, default: Path) -> str:
+    value = input(f"{label} [{default}]: ").strip()
+    return value or str(default)
+
+
+def _prompt_text(label: str, default: str) -> str:
+    value = input(f"{label} [{default}]: ").strip()
+    return value or default
+
+
+def _prompt_bool(label: str, default: bool) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    value = input(f"{label} [{suffix}]: ").strip().lower()
+    if not value:
+        return default
+    return value in ("y", "yes", "true", "1", "on")
+
+
+def _run_setup_dialog(args) -> None:
+    print("\nSMART AV2 inference setup")
+    print("Press Enter at any prompt to keep the shown default.\n")
+    args.processed_folder = _prompt_path(
+        "Processed scenario folder (.pkl files)", Path(args.processed_folder)
+    )
+    args.raw_data_folder = _prompt_path(
+        "Raw AV2 data folder (ground truth parquet + map json)",
+        Path(args.raw_data_folder),
+    )
+    args.output = _prompt_path("Output folder", Path(args.output))
+    args.visualize = _prompt_bool("Save ground-truth and prediction GIFs", args.visualize)
+    args.checkpoint = _prompt_path("Checkpoint path", Path(args.checkpoint))
+    args.config = _prompt_path("Config path", Path(args.config))
+    args.device = _prompt_text("Device (cpu/cuda)", args.device)
+    args.sample_tokens = _prompt_bool("Sample rollout tokens", args.sample_tokens)
+
+
+def _find_raw_scenario_dir(raw_data_folder: Path, scenario_id: str) -> Path:
+    candidates = [
+        raw_data_folder / scenario_id,
+        raw_data_folder / "train" / scenario_id,
+        raw_data_folder / "val" / scenario_id,
+        raw_data_folder / "validation" / scenario_id,
+        raw_data_folder / "test" / scenario_id,
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return raw_data_folder / scenario_id
+
+
+def _find_single_file(folder: Path, pattern: str, description: str) -> Path:
+    matches = sorted(folder.glob(pattern))
+    if not matches:
+        raise FileNotFoundError(f"No {description} found in {folder} matching {pattern}")
+    return matches[0]
+
+
+def _load_raw_visualization_inputs(raw_data_folder: Path, scenario_id: str):
+    from av2.datasets.motion_forecasting import scenario_serialization
+    from av2.map.map_api import ArgoverseStaticMap
+
+    raw_scenario_dir = _find_raw_scenario_dir(raw_data_folder, scenario_id)
+    gt_parquet_path = _find_single_file(
+        raw_scenario_dir, "scenario_*.parquet", "ground-truth parquet"
+    )
+    map_json_path = _find_single_file(raw_scenario_dir, "log_map_archive_*.json", "map json")
+
+    gt_scenario = scenario_serialization.load_argoverse_scenario_parquet(gt_parquet_path)
+    static_map = ArgoverseStaticMap.from_json(map_json_path)
+    return gt_scenario, static_map, gt_parquet_path, map_json_path
+
+
+def _save_pipeline_visualizations(
+    *,
+    scenario_id: str,
+    raw_data_folder: Path,
+    scenario_output_dir: Path,
+    smart_data: dict[str, Any],
+    pred_traj: torch.Tensor,
+    pred_head: torch.Tensor,
+    pred_valid_mask: torch.Tensor,
+    save_av2: bool,
+) -> None:
+    from av2.datasets.motion_forecasting import scenario_serialization
+    from matplotlib import pyplot as plt
+
+    try:
+        from convert_smart_av2 import smart_prediction_to_argoverse
+        from visualisation.av2_format_vis import visualize_scenario_animation
+    except ImportError:
+        from .convert_smart_av2 import smart_prediction_to_argoverse
+        from .visualisation.av2_format_vis import visualize_scenario_animation
+
+    gt_scenario, static_map, gt_parquet_path, map_json_path = _load_raw_visualization_inputs(
+        raw_data_folder, scenario_id
+    )
+
+    pred_scenario = smart_prediction_to_argoverse(
+        smart_data,
+        pred_traj,
+        pred_head,
+        pred_valid_mask,
+    )
+
+    scenario_output_dir.mkdir(parents=True, exist_ok=True)
+    gt_gif_path = scenario_output_dir / f"gt_{scenario_id}.GIF"
+    pred_gif_path = scenario_output_dir / f"pred_{scenario_id}.GIF"
+
+    print(f"Loaded ground truth from: {gt_parquet_path}")
+    print(f"Loaded static map from: {map_json_path}")
+    print(f"Saving ground-truth GIF to: {gt_gif_path}")
+    visualize_scenario_animation(
+        gt_scenario,
+        static_map=static_map,
+        save_path=str(gt_gif_path),
+    )
+    plt.close("all")
+
+    print(f"Saving prediction GIF to: {pred_gif_path}")
+    visualize_scenario_animation(
+        pred_scenario,
+        static_map=static_map,
+        save_path=str(pred_gif_path),
+    )
+    plt.close("all")
+
+    if save_av2:
+        av2_output_dir = scenario_output_dir / "av2"
+        av2_output_dir.mkdir(parents=True, exist_ok=True)
+        av2_output_path = av2_output_dir / f"scenario_{scenario_id}.parquet"
+        scenario_serialization.serialize_argoverse_scenario_parquet(
+            av2_output_path,
+            pred_scenario,
+        )
+        print(f"Saved AV2 prediction parquet to: {av2_output_path}")
+
+
+def run_av2_inference_pipeline(
+    processed_folder: str,
+    raw_data_folder: str,
+    output_dir: str,
+    checkpoint_path: Optional[str] = None,
+    config_path: str = str(DEFAULT_CONFIG_PATH),
+    visualize: bool = True,
+    device: str = "cpu",
+    sample_tokens: bool = False,
+    format_av2: bool = True,
+) -> None:
+    p_processed = Path(processed_folder).expanduser()
+    p_raw = Path(raw_data_folder).expanduser()
+    p_output = Path(output_dir).expanduser()
+
+    if not p_processed.exists():
+        raise FileNotFoundError(f"Processed folder not found: {p_processed}")
+    if not p_raw.exists():
+        raise FileNotFoundError(f"Raw data folder not found: {p_raw}")
+
+    input_files = sorted(p_processed.glob("*.pkl")) if p_processed.is_dir() else [p_processed]
+    if not input_files:
+        raise FileNotFoundError(f"No .pkl scenario files found in {p_processed}")
+
+    print(f"Running AV2 inference pipeline on {len(input_files)} scenario(s)")
+    for index, input_file in enumerate(input_files, start=1):
+        scenario_id = input_file.stem
+        print(f"\n[{index}/{len(input_files)}] {scenario_id}")
+        result = run_inference(
+            input_path=str(input_file),
+            output_dir=str(p_output),
+            checkpoint_path=checkpoint_path,
+            config_path=config_path,
+            format_av2=False,
+            device=device,
+            sample_tokens=sample_tokens,
+        )
+
+        if visualize:
+            _save_pipeline_visualizations(
+                scenario_id=scenario_id,
+                raw_data_folder=p_raw,
+                scenario_output_dir=p_output / scenario_id,
+                smart_data=result["smart_data"],
+                pred_traj=result["pred_traj"],
+                pred_head=result["pred_head"],
+                pred_valid_mask=result["pred_valid_mask"],
+                save_av2=format_av2,
+            )
+
 
 def run_batch_inference(
     input_path: str,
@@ -382,49 +588,100 @@ def run_batch_inference(
     print(f"Saved batch predictions to {output_path}")
 
 def main():
-    parser = ArgumentParser(description="Run SMART inference on a scenario")
+    parser = ArgumentParser(
+        description=(
+            "Run SMART inference on processed AV2 scenarios and optionally save "
+            "ground-truth/prediction visualizations."
+        )
+    )
+    parser.add_argument(
+        "--processed-folder",
+        type=str,
+        default=str(DEFAULT_PROCESSED_FOLDER),
+        help=(
+            "Folder containing processed SMART scenario .pkl files "
+            f"(default: {DEFAULT_PROCESSED_FOLDER})"
+        ),
+    )
+    parser.add_argument(
+        "--raw-data-folder",
+        type=str,
+        default=str(DEFAULT_RAW_DATA_FOLDER),
+        help=(
+            "Folder containing raw AV2 scenario folders with scenario parquet and "
+            f"map json files (default: {DEFAULT_RAW_DATA_FOLDER})"
+        ),
+    )
     parser.add_argument(
         "--input",
         "-i",
         type=str,
-        default="data/av2_processed/training/1b0c5826-1614-4996-8a12-f6df12beaa0e.pkl",  # TODO: delete
-        # required=True,#TODO: add back required after testing
-        help="Path to input SMART pickle file",
+        default=None,
+        help=(
+            "Legacy single-scenario mode: path to one processed SMART pickle file. "
+            "When omitted, --processed-folder is used."
+        ),
     )
     parser.add_argument(
         "--output",
         "-o",
         type=str,
-        default="data/preds",
-        help="Output directory for predictions (default: data/preds)",
+        default=str(DEFAULT_OUTPUT_FOLDER),
+        help=f"Output directory for predictions and visualizations (default: {DEFAULT_OUTPUT_FOLDER})",
     )
     parser.add_argument(
         "--checkpoint",
         "-c",
         type=str,
-        default=None,
-        help="Path to model checkpoint (optional)",
+        default=str(DEFAULT_CHECKPOINT_PATH),
+        help=f"Path to model checkpoint (default: {DEFAULT_CHECKPOINT_PATH})",
     )
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/validation/validation_scalable.yaml",
-        help="Path to config file (default: configs/validation/validation_scalable.yaml)",
+        default=str(DEFAULT_CONFIG_PATH),
+        help=f"Path to config file (default: {DEFAULT_CONFIG_PATH})",
     )
     parser.add_argument(
         "--format",
         "-f",
         choices=["smart", "av2", "both"],
-        default="smart",
-        help="Output format: smart (pickle), av2 (parquet), or both",
+        default="both",
+        help="Output format: smart, av2, or both (default: both)",
+    )
+    parser.add_argument(
+        "--visualize",
+        dest="visualize",
+        action="store_true",
+        default=True,
+        help="Save gt_<scenario>.GIF and pred_<scenario>.GIF files (default)",
+    )
+    parser.add_argument(
+        "--no-visualize",
+        dest="visualize",
+        action="store_false",
+        help="Run inference without saving visualization GIFs",
+    )
+    parser.add_argument(
+        "--setup-dialog",
+        dest="setup_dialog",
+        action="store_true",
+        default=None,
+        help="Run the interactive setup dialogue",
+    )
+    parser.add_argument(
+        "--no-setup-dialog",
+        dest="setup_dialog",
+        action="store_false",
+        help="Skip the interactive setup dialogue and use configured defaults/flags",
     )
     parser.add_argument(
         "--device",
         "-d",
         type=str,
-        default="cuda",
+        default="cpu",
         choices=["cuda", "cpu"],
-        help="Device to run inference on (default: cuda)",
+        help="Device to run inference on (default: cpu)",
     )
     parser.add_argument(
         "--cpu", action="store_true", help="Force CPU (shorthand for --device cpu)"
@@ -446,19 +703,23 @@ def main():
     if args.cpu:
         args.device = "cpu"
 
+    if args.batch_directory:
+        args.processed_folder = args.batch_directory
+
+    if args.setup_dialog is None and sys.stdin.isatty():
+        args.setup_dialog = _prompt_bool("Run setup dialogue", False)
+    elif args.setup_dialog is None:
+        args.setup_dialog = False
+
+    if args.setup_dialog:
+        _run_setup_dialog(args)
+
+    if args.device not in ("cpu", "cuda"):
+        raise ValueError("--device must be either 'cpu' or 'cuda'")
+
     format_av2 = args.format in ("av2", "both")
 
-    if args.batch_directory:
-        run_batch_inference(
-            input_path=args.batch_directory,
-            output_dir=args.output,
-            checkpoint_path=args.checkpoint,
-            config_path=args.config,
-            format_av2=format_av2,
-            device=args.device,
-            sample_tokens=args.sample_tokens,
-        )
-    else:
+    if args.input:
         run_inference(
             input_path=args.input,
             output_dir=args.output,
@@ -467,6 +728,18 @@ def main():
             format_av2=format_av2,
             device=args.device,
             sample_tokens=args.sample_tokens,
+        )
+    else:
+        run_av2_inference_pipeline(
+            processed_folder=args.processed_folder,
+            raw_data_folder=args.raw_data_folder,
+            output_dir=args.output,
+            checkpoint_path=args.checkpoint,
+            config_path=args.config,
+            visualize=args.visualize,
+            device=args.device,
+            sample_tokens=args.sample_tokens,
+            format_av2=format_av2,
         )
 
 
