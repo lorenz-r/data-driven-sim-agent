@@ -169,7 +169,7 @@ def run_inference(
     # Model output semantics:
     # pred_traj: (num_agents, future_timesteps, 2), future only.
     # pred_head: (num_agents, future_timesteps), future only.
-    # gt in batch mode below uses the same future-only timestep window.
+    # gt in batch mode below uses the same future-only timestep window. This makes sense, since we do not want to calculate metrics based on historical timesteps where the model is not evaluated and may not even produce outputs.
     pred_valid_mask = _build_pred_valid_mask(data_sample, pred_traj, model)
 
     print(f"Predicted trajectories shape: {pred_traj.shape}")
