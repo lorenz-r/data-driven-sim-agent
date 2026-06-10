@@ -19,6 +19,7 @@ DEFAULT_RAW_DATA_FOLDER = SMART_ROOT / "data" / "av2_partial_py" / "train"
 DEFAULT_OUTPUT_FOLDER = SMART_ROOT / "data" / "preds"
 DEFAULT_CONFIG_PATH = SMART_ROOT / "configs" / "validation" / "validation_scalable.yaml"
 DEFAULT_CHECKPOINT_PATH = SMART_ROOT / "smart_checkpoints" / "epoch=199.ckpt"
+DEFAULT_BATCH_VISUALIZATION_LIMIT = 10
 
 
 def _fit_pred_valid_mask(
@@ -296,6 +297,37 @@ def _prompt_text(label: str, default: str) -> str:
     return value or default
 
 
+def _prompt_choice(label: str, default: str, choices: tuple[str, ...]) -> str:
+    choices_label = "/".join(choices)
+    value = input(f"{label} ({choices_label}) [{default}]: ").strip().lower()
+    if not value:
+        return default
+    if value not in choices:
+        print(f"Unknown choice '{value}', using {default}.")
+        return default
+    return value
+
+
+def _prompt_optional_int(label: str, default: Optional[int]) -> Optional[int]:
+    default_label = "all" if default is None else str(default)
+    value = input(f"{label} [{default_label}]: ").strip().lower()
+    if not value:
+        return default
+    if value in ("all", "no-limit", "unlimited"):
+        return None
+    if value in ("none", "no"):
+        return 0
+    try:
+        parsed = int(value)
+    except ValueError:
+        print(f"Invalid integer '{value}', using {default_label}.")
+        return default
+    if parsed < 0:
+        print(f"Negative values are not supported, using {default_label}.")
+        return default
+    return parsed
+
+
 def _prompt_bool(label: str, default: bool) -> bool:
     suffix = "Y/n" if default else "y/N"
     value = input(f"{label} [{suffix}]: ").strip().lower()
@@ -307,15 +339,30 @@ def _prompt_bool(label: str, default: bool) -> bool:
 def _run_setup_dialog(args) -> None:
     print("\nSMART AV2 inference setup")
     print("Press Enter at any prompt to keep the shown default.\n")
+    args.inference_mode = _prompt_choice(
+        "Run single or batch inference",
+        args.inference_mode,
+        ("batch", "single"),
+    )
     args.processed_folder = _prompt_path(
         "Processed scenario folder (.pkl files)", Path(args.processed_folder)
     )
+    if args.inference_mode == "single":
+        default_input = args.input or ""
+        value = input(f"Single processed scenario pickle [{default_input or 'first in processed folder'}]: ").strip()
+        if value:
+            args.input = value
     args.raw_data_folder = _prompt_path(
         "Raw AV2 data folder (ground truth parquet + map json)",
         Path(args.raw_data_folder),
     )
     args.output = _prompt_path("Output folder", Path(args.output))
     args.visualize = _prompt_bool("Save ground-truth and prediction GIFs", args.visualize)
+    if args.inference_mode == "batch" and args.visualize:
+        args.batch_visualization_limit = _prompt_optional_int(
+            "How many batch scenarios should be visualized",
+            args.batch_visualization_limit,
+        )
     args.checkpoint = _prompt_path("Checkpoint path", Path(args.checkpoint))
     args.config = _prompt_path("Config path", Path(args.config))
     args.device = _prompt_text("Device (cpu/cuda)", args.device)
@@ -358,36 +405,53 @@ def _load_raw_visualization_inputs(raw_data_folder: Path, scenario_id: str):
     return gt_scenario, static_map, gt_parquet_path, map_json_path
 
 
+def _prediction_to_argoverse(smart_data, pred_traj, pred_head, pred_valid_mask):
+    try:
+        from convert_smart_av2 import smart_prediction_to_argoverse
+    except ImportError:
+        from .convert_smart_av2 import smart_prediction_to_argoverse
+
+    return smart_prediction_to_argoverse(
+        smart_data,
+        pred_traj,
+        pred_head,
+        pred_valid_mask,
+    )
+
+
+def _save_av2_prediction(
+    scenario_output_dir: Path,
+    scenario_id: str,
+    pred_scenario,
+) -> None:
+    from av2.datasets.motion_forecasting import scenario_serialization
+
+    av2_output_dir = scenario_output_dir / "av2"
+    av2_output_dir.mkdir(parents=True, exist_ok=True)
+    av2_output_path = av2_output_dir / f"scenario_{scenario_id}.parquet"
+    scenario_serialization.serialize_argoverse_scenario_parquet(
+        av2_output_path,
+        pred_scenario,
+    )
+    print(f"Saved AV2 prediction parquet to: {av2_output_path}")
+
+
 def _save_pipeline_visualizations(
     *,
     scenario_id: str,
     raw_data_folder: Path,
     scenario_output_dir: Path,
-    smart_data: dict[str, Any],
-    pred_traj: torch.Tensor,
-    pred_head: torch.Tensor,
-    pred_valid_mask: torch.Tensor,
-    save_av2: bool,
+    pred_scenario,
 ) -> None:
-    from av2.datasets.motion_forecasting import scenario_serialization
     from matplotlib import pyplot as plt
 
     try:
-        from convert_smart_av2 import smart_prediction_to_argoverse
         from visualisation.av2_format_vis import visualize_scenario_animation
     except ImportError:
-        from .convert_smart_av2 import smart_prediction_to_argoverse
         from .visualisation.av2_format_vis import visualize_scenario_animation
 
     gt_scenario, static_map, gt_parquet_path, map_json_path = _load_raw_visualization_inputs(
         raw_data_folder, scenario_id
-    )
-
-    pred_scenario = smart_prediction_to_argoverse(
-        smart_data,
-        pred_traj,
-        pred_head,
-        pred_valid_mask,
     )
 
     scenario_output_dir.mkdir(parents=True, exist_ok=True)
@@ -412,16 +476,6 @@ def _save_pipeline_visualizations(
     )
     plt.close("all")
 
-    if save_av2:
-        av2_output_dir = scenario_output_dir / "av2"
-        av2_output_dir.mkdir(parents=True, exist_ok=True)
-        av2_output_path = av2_output_dir / f"scenario_{scenario_id}.parquet"
-        scenario_serialization.serialize_argoverse_scenario_parquet(
-            av2_output_path,
-            pred_scenario,
-        )
-        print(f"Saved AV2 prediction parquet to: {av2_output_path}")
-
 
 def run_av2_inference_pipeline(
     processed_folder: str,
@@ -433,6 +487,7 @@ def run_av2_inference_pipeline(
     device: str = "cpu",
     sample_tokens: bool = False,
     format_av2: bool = True,
+    batch_visualization_limit: Optional[int] = DEFAULT_BATCH_VISUALIZATION_LIMIT,
 ) -> None:
     p_processed = Path(processed_folder).expanduser()
     p_raw = Path(raw_data_folder).expanduser()
@@ -440,7 +495,10 @@ def run_av2_inference_pipeline(
 
     if not p_processed.exists():
         raise FileNotFoundError(f"Processed folder not found: {p_processed}")
-    if not p_raw.exists():
+    will_visualize_any = visualize and (
+        batch_visualization_limit is None or batch_visualization_limit > 0
+    )
+    if will_visualize_any and not p_raw.exists():
         raise FileNotFoundError(f"Raw data folder not found: {p_raw}")
 
     input_files = sorted(p_processed.glob("*.pkl")) if p_processed.is_dir() else [p_processed]
@@ -448,6 +506,7 @@ def run_av2_inference_pipeline(
         raise FileNotFoundError(f"No .pkl scenario files found in {p_processed}")
 
     print(f"Running AV2 inference pipeline on {len(input_files)} scenario(s)")
+    visualized_count = 0
     for index, input_file in enumerate(input_files, start=1):
         scenario_id = input_file.stem
         print(f"\n[{index}/{len(input_files)}] {scenario_id}")
@@ -461,17 +520,94 @@ def run_av2_inference_pipeline(
             sample_tokens=sample_tokens,
         )
 
-        if visualize:
+        scenario_output_dir = p_output / scenario_id
+        should_visualize = visualize and (
+            batch_visualization_limit is None
+            or visualized_count < batch_visualization_limit
+        )
+
+        pred_scenario = None
+        if format_av2 or should_visualize:
+            pred_scenario = _prediction_to_argoverse(
+                result["smart_data"],
+                result["pred_traj"],
+                result["pred_head"],
+                result["pred_valid_mask"],
+            )
+
+        if format_av2:
+            _save_av2_prediction(scenario_output_dir, scenario_id, pred_scenario)
+
+        if should_visualize:
             _save_pipeline_visualizations(
                 scenario_id=scenario_id,
                 raw_data_folder=p_raw,
-                scenario_output_dir=p_output / scenario_id,
-                smart_data=result["smart_data"],
-                pred_traj=result["pred_traj"],
-                pred_head=result["pred_head"],
-                pred_valid_mask=result["pred_valid_mask"],
-                save_av2=format_av2,
+                scenario_output_dir=scenario_output_dir,
+                pred_scenario=pred_scenario,
             )
+            visualized_count += 1
+        elif visualize:
+            print(
+                "Skipping GIF visualization for this scenario "
+                f"(batch limit: {batch_visualization_limit})."
+            )
+
+
+def _first_processed_input(processed_folder: str) -> Path:
+    p_processed = Path(processed_folder).expanduser()
+    if p_processed.is_file():
+        return p_processed
+    input_files = sorted(p_processed.glob("*.pkl"))
+    if not input_files:
+        raise FileNotFoundError(f"No .pkl scenario files found in {p_processed}")
+    return input_files[0]
+
+
+def run_av2_single_inference_pipeline(
+    input_path: str,
+    raw_data_folder: str,
+    output_dir: str,
+    checkpoint_path: Optional[str] = None,
+    config_path: str = str(DEFAULT_CONFIG_PATH),
+    visualize: bool = True,
+    device: str = "cpu",
+    sample_tokens: bool = False,
+    format_av2: bool = True,
+) -> None:
+    p_output = Path(output_dir).expanduser()
+    input_file = Path(input_path).expanduser()
+    scenario_id = input_file.stem
+
+    result = run_inference(
+        input_path=str(input_file),
+        output_dir=str(p_output),
+        checkpoint_path=checkpoint_path,
+        config_path=config_path,
+        format_av2=False,
+        device=device,
+        sample_tokens=sample_tokens,
+    )
+
+    pred_scenario = None
+    if format_av2 or visualize:
+        pred_scenario = _prediction_to_argoverse(
+            result["smart_data"],
+            result["pred_traj"],
+            result["pred_head"],
+            result["pred_valid_mask"],
+        )
+
+    scenario_output_dir = p_output / scenario_id
+    if format_av2:
+        _save_av2_prediction(scenario_output_dir, scenario_id, pred_scenario)
+
+    if visualize:
+        _save_pipeline_visualizations(
+            scenario_id=scenario_id,
+            raw_data_folder=Path(raw_data_folder).expanduser(),
+            scenario_output_dir=scenario_output_dir,
+            pred_scenario=pred_scenario,
+        )
 
 
 def run_batch_inference(
@@ -613,6 +749,16 @@ def main():
         ),
     )
     parser.add_argument(
+        "--mode",
+        dest="inference_mode",
+        choices=["single", "batch"],
+        default=None,
+        help=(
+            "Run one scenario or all scenarios in --processed-folder. "
+            "Defaults to single when --input is provided, otherwise batch."
+        ),
+    )
+    parser.add_argument(
         "--input",
         "-i",
         type=str,
@@ -648,6 +794,16 @@ def main():
         choices=["smart", "av2", "both"],
         default="both",
         help="Output format: smart, av2, or both (default: both)",
+    )
+    parser.add_argument(
+        "--batch-visualization-limit",
+        type=int,
+        default=DEFAULT_BATCH_VISUALIZATION_LIMIT,
+        help=(
+            "Maximum number of batch scenarios to save GIFs for. "
+            "Use 0 for none or a negative value for all "
+            f"(default: {DEFAULT_BATCH_VISUALIZATION_LIMIT})."
+        ),
     )
     parser.add_argument(
         "--visualize",
@@ -705,6 +861,10 @@ def main():
 
     if args.batch_directory:
         args.processed_folder = args.batch_directory
+        args.inference_mode = "batch"
+
+    if args.inference_mode is None:
+        args.inference_mode = "single" if args.input else "batch"
 
     if args.setup_dialog is None and sys.stdin.isatty():
         args.setup_dialog = _prompt_bool("Run setup dialogue", False)
@@ -717,14 +877,23 @@ def main():
     if args.device not in ("cpu", "cuda"):
         raise ValueError("--device must be either 'cpu' or 'cuda'")
 
+    if (
+        args.batch_visualization_limit is not None
+        and args.batch_visualization_limit < 0
+    ):
+        args.batch_visualization_limit = None
+
     format_av2 = args.format in ("av2", "both")
 
-    if args.input:
-        run_inference(
-            input_path=args.input,
+    if args.inference_mode == "single":
+        input_path = args.input or str(_first_processed_input(args.processed_folder))
+        run_av2_single_inference_pipeline(
+            input_path=input_path,
+            raw_data_folder=args.raw_data_folder,
             output_dir=args.output,
             checkpoint_path=args.checkpoint,
             config_path=args.config,
+            visualize=args.visualize,
             format_av2=format_av2,
             device=args.device,
             sample_tokens=args.sample_tokens,
@@ -740,6 +909,7 @@ def main():
             device=args.device,
             sample_tokens=args.sample_tokens,
             format_av2=format_av2,
+            batch_visualization_limit=args.batch_visualization_limit,
         )
 
 
