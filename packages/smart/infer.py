@@ -20,7 +20,7 @@ DEFAULT_PROCESSED_FOLDER = SMART_ROOT / "data" / "processed" / "current"/ "val"
 DEFAULT_RAW_DATA_FOLDER = SMART_ROOT / "data" / "raw" / "val"
 DEFAULT_OUTPUT_FOLDER = SMART_ROOT / "data" / "preds"
 DEFAULT_CONFIG_PATH = SMART_ROOT / "configs" / "validation" / "validation_scalable.yaml"
-DEFAULT_CHECKPOINT_PATH = REPO_ROOT / "smart-checkpoints" / "run_01/" / "epoch\=75.ckpt"
+DEFAULT_CHECKPOINT_PATH = REPO_ROOT / "smart-checkpoints" / "run_01/" / "last.ckpt"
 DEFAULT_BATCH_VISUALIZATION_LIMIT = 10
 
 

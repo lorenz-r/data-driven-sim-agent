@@ -139,6 +139,101 @@ smart:
     build_agent_tokens_if_missing: false
 ```
 
+#### SMART inference
+
+SMART inference currently runs through `packages/smart/infer.py`. The script does not read raw AV2 parquet directly as model input; it expects processed SMART scenario `.pkl` files, typically created by the preprocessing step above.
+Raw AV2 scenario folders are only needed when writing AV2-format output or saving GIF visualizations, because those steps need the original scenario parquet and map JSON.
+
+The inference flow is:
+
+1. Load the validation config from
+   `packages/smart/configs/validation/validation_scalable.yaml`, unless
+   `--config` is provided.
+2. Build the `SMART` model, resolve the agent/map token vocabularies from the
+   config, and load the checkpoint from `--checkpoint`.
+3. Load each processed SMART `.pkl` scenario and run the token preprocessor.
+4. Run SMART's map matching, sampled point prediction, and autoregressive
+   token rollout.
+5. Save future-only predictions. Historical context is consumed by the model
+   but is not repeated in the saved prediction arrays.
+
+Default paths are set for the current package layout:
+
+| Argument | Default | Purpose |
+|---|---|---|
+| `--processed-folder` | `packages/smart/data/processed/current/val` | Folder containing processed SMART `.pkl` scenarios |
+| `--raw-data-folder` | `packages/smart/data/raw/val` | Raw AV2 scenario folders, needed for AV2 conversion and GIFs |
+| `--output` | `packages/smart/data/preds` | Prediction, parquet, and visualization output root |
+| `--checkpoint` | `smart-checkpoints/run_01/last.ckpt` | Lightning checkpoint to load |
+| `--config` | `packages/smart/configs/validation/validation_scalable.yaml` | SMART validation/inference config |
+| `--device` | `cpu` | Use `cpu` or `cuda` |
+| `--format` | `both` | Save `smart`, `av2`, or `both` output formats |
+
+Run batch inference over every `.pkl` in a processed validation folder:
+
+```bash
+uv run python packages/smart/infer.py \
+  --mode batch \
+  --processed-folder packages/smart/data/processed/current/val \
+  --raw-data-folder packages/smart/data/raw/val \
+  --checkpoint smart-checkpoints/run_01/last.ckpt \
+  --output packages/smart/data/preds \
+  --device cuda
+```
+
+Run a single processed scenario:
+
+```bash
+uv run python packages/smart/infer.py \
+  --mode single \
+  --input packages/smart/data/processed/current/val/<scenario_id>.pkl \
+  --raw-data-folder packages/smart/data/raw/val \
+  --checkpoint smart-checkpoints/run_01/last.ckpt \
+  --output packages/smart/data/preds \
+  --device cuda
+```
+
+For headless or faster runs, disable GIF generation:
+
+```bash
+uv run python packages/smart/infer.py \
+  --mode batch \
+  --processed-folder packages/smart/data/processed/current/val \
+  --checkpoint smart-checkpoints/run_01/last.ckpt \
+  --format smart \
+  --no-visualize
+```
+
+The SMART output for each scenario is written to:
+
+```text
+<output>/<scenario_id>/smart/<scenario_id>.npz
+```
+
+The `.npz` contains:
+
+| Key | Shape / meaning |
+|---|---|
+| `scenario_id` | Scenario identifier derived from the input filename |
+| `pred_traj` | `(num_agents, future_timesteps, 2)` future xy positions |
+| `pred_head` | `(num_agents, future_timesteps)` future headings |
+| `pred_valid_mask` | `(num_agents, future_timesteps)` future validity mask |
+| `last_pos` | Last observed xy position per agent |
+| `num_agents` | Number of agents in the scenario |
+| `num_timesteps` | Number of predicted future timesteps |
+
+When `--format av2` or `--format both` is used, the script also writes:
+
+```text
+<output>/<scenario_id>/av2/scenario_<scenario_id>.parquet
+```
+
+By default inference uses the top-1 predicted token at each rollout step, which
+keeps evaluation deterministic. Pass `--sample-tokens` to sample among the
+top-k token candidates for generative rollouts. In batch mode, GIFs are saved
+for the first 10 scenarios by default; use `--batch-visualization-limit 0` or
+`--no-visualize` to skip them.
+
 ### Training
 
 Training has been refactored into a top level script to make it easier to switch between models and orchestrate hyperparameter searches. A quick explanation of the new components:
