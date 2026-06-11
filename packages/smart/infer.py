@@ -16,7 +16,7 @@ from smart.utils.log import Logging
 SMART_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = SMART_ROOT.parent.parent
 # TODO: update defaults to test folders, once unified test set decided
-DEFAULT_PROCESSED_FOLDER = SMART_ROOT / "data" / "processed" / "current"/ "val"
+DEFAULT_PROCESSED_FOLDER = SMART_ROOT / "data" / "processed" / "current" / "val"
 DEFAULT_RAW_DATA_FOLDER = SMART_ROOT / "data" / "raw" / "val"
 DEFAULT_OUTPUT_FOLDER = SMART_ROOT / "data" / "preds"
 DEFAULT_CONFIG_PATH = SMART_ROOT / "configs" / "validation" / "validation_scalable.yaml"
@@ -249,7 +249,6 @@ def run_inference(
 
     print(f"Saved CLEAN SMART predictions to: {smart_output_path}")
 
-
     # 6. Convert to AV2 if requested
     if format_av2:
         try:
@@ -277,7 +276,9 @@ def run_inference(
             av2_output_path,
             scenario_with_pred,
         )
-        print(f"Saved AV2 scenario to: {av2_output_path}")  # TODO: add back after fixing env problems
+        print(
+            f"Saved AV2 scenario to: {av2_output_path}"
+        )  # TODO: add back after fixing env problems
 
     return {
         "scenario_id": scenario_id,
@@ -351,7 +352,9 @@ def _run_setup_dialog(args) -> None:
     )
     if args.inference_mode == "single":
         default_input = args.input or ""
-        value = input(f"Single processed scenario pickle [{default_input or 'first in processed folder'}]: ").strip()
+        value = input(
+            f"Single processed scenario pickle [{default_input or 'first in processed folder'}]: "
+        ).strip()
         if value:
             args.input = value
     args.raw_data_folder = _prompt_path(
@@ -359,7 +362,9 @@ def _run_setup_dialog(args) -> None:
         Path(args.raw_data_folder),
     )
     args.output = _prompt_path("Output folder", Path(args.output))
-    args.visualize = _prompt_bool("Save ground-truth and prediction GIFs", args.visualize)
+    args.visualize = _prompt_bool(
+        "Save ground-truth and prediction GIFs", args.visualize
+    )
     if args.inference_mode == "batch" and args.visualize:
         args.batch_visualization_limit = _prompt_optional_int(
             "How many batch scenarios should be visualized",
@@ -388,7 +393,9 @@ def _find_raw_scenario_dir(raw_data_folder: Path, scenario_id: str) -> Path:
 def _find_single_file(folder: Path, pattern: str, description: str) -> Path:
     matches = sorted(folder.glob(pattern))
     if not matches:
-        raise FileNotFoundError(f"No {description} found in {folder} matching {pattern}")
+        raise FileNotFoundError(
+            f"No {description} found in {folder} matching {pattern}"
+        )
     return matches[0]
 
 
@@ -400,9 +407,13 @@ def _load_raw_visualization_inputs(raw_data_folder: Path, scenario_id: str):
     gt_parquet_path = _find_single_file(
         raw_scenario_dir, "scenario_*.parquet", "ground-truth parquet"
     )
-    map_json_path = _find_single_file(raw_scenario_dir, "log_map_archive_*.json", "map json")
+    map_json_path = _find_single_file(
+        raw_scenario_dir, "log_map_archive_*.json", "map json"
+    )
 
-    gt_scenario = scenario_serialization.load_argoverse_scenario_parquet(gt_parquet_path)
+    gt_scenario = scenario_serialization.load_argoverse_scenario_parquet(
+        gt_parquet_path
+    )
     static_map = ArgoverseStaticMap.from_json(map_json_path)
     return gt_scenario, static_map, gt_parquet_path, map_json_path
 
@@ -452,8 +463,8 @@ def _save_pipeline_visualizations(
     except ImportError:
         from .visualisation.av2_format_vis import visualize_scenario_animation
 
-    gt_scenario, static_map, gt_parquet_path, map_json_path = _load_raw_visualization_inputs(
-        raw_data_folder, scenario_id
+    gt_scenario, static_map, gt_parquet_path, map_json_path = (
+        _load_raw_visualization_inputs(raw_data_folder, scenario_id)
     )
 
     scenario_output_dir.mkdir(parents=True, exist_ok=True)
@@ -503,7 +514,9 @@ def run_av2_inference_pipeline(
     if will_visualize_any and not p_raw.exists():
         raise FileNotFoundError(f"Raw data folder not found: {p_raw}")
 
-    input_files = sorted(p_processed.glob("*.pkl")) if p_processed.is_dir() else [p_processed]
+    input_files = (
+        sorted(p_processed.glob("*.pkl")) if p_processed.is_dir() else [p_processed]
+    )
     if not input_files:
         raise FileNotFoundError(f"No .pkl scenario files found in {p_processed}")
 
@@ -664,7 +677,9 @@ def run_batch_inference(
         with open(file, "rb") as f:
             smart_data = pickle.load(f)
 
-        data_sample = HeteroData(smart_data) if isinstance(smart_data, dict) else smart_data
+        data_sample = (
+            HeteroData(smart_data) if isinstance(smart_data, dict) else smart_data
+        )
         data_sample = token_processor.preprocess(data_sample)
 
         with torch.no_grad():
@@ -724,6 +739,7 @@ def run_batch_inference(
         pickle.dump(predictions, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     print(f"Saved batch predictions to {output_path}")
+
 
 def main():
     parser = ArgumentParser(
@@ -845,7 +861,9 @@ def main():
         "--cpu", action="store_true", help="Force CPU (shorthand for --device cpu)"
     )
     parser.add_argument(
-        "--batch-directory", type=str, help="Run batch inference on all files in directory"
+        "--batch-directory",
+        type=str,
+        help="Run batch inference on all files in directory",
     )
     parser.add_argument(
         "--sample-tokens",

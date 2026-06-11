@@ -16,6 +16,7 @@ from typing import Iterable
 
 import pandas as pd
 
+
 def print_zero_chain_summary(scenario_summary_csv: str | Path) -> None:
     """Print zero-chain statistics from a scenario_summary.csv file.
 
@@ -37,8 +38,8 @@ def print_zero_chain_summary(scenario_summary_csv: str | Path) -> None:
         raise ValueError(f"{path} is missing required column(s): {missing}")
 
     total_scenarios = len(df)
-    contains_long_zero_run = df["contains_long_zero_run"].astype(str).str.lower().isin(
-        {"true", "1", "yes"}
+    contains_long_zero_run = (
+        df["contains_long_zero_run"].astype(str).str.lower().isin({"true", "1", "yes"})
     )
     chain_lengths = pd.to_numeric(df["max_zero_run"], errors="coerce").fillna(0)
     affected_chain_lengths = chain_lengths[contains_long_zero_run]
@@ -46,7 +47,9 @@ def print_zero_chain_summary(scenario_summary_csv: str | Path) -> None:
 
     affected_fraction = affected_scenarios / total_scenarios if total_scenarios else 0.0
     average_affected_chain = (
-        float(affected_chain_lengths.mean()) if not affected_chain_lengths.empty else 0.0
+        float(affected_chain_lengths.mean())
+        if not affected_chain_lengths.empty
+        else 0.0
     )
     average_dataset_chain = float(chain_lengths.mean()) if total_scenarios else 0.0
     max_chain = int(chain_lengths.max()) if total_scenarios else 0
@@ -59,7 +62,9 @@ def print_zero_chain_summary(scenario_summary_csv: str | Path) -> None:
         "Scenarios with long zero chains: "
         f"{affected_scenarios} ({affected_fraction:.1%})"
     )
-    print(f"Average longest chain among affected scenarios: {average_affected_chain:.2f}")
+    print(
+        f"Average longest chain among affected scenarios: {average_affected_chain:.2f}"
+    )
     print(f"Average longest chain across all scenarios: {average_dataset_chain:.2f}")
     print(f"Longest chain found: {max_chain}")
 
@@ -94,7 +99,9 @@ def find_column(columns: Iterable[str], candidates: Iterable[str]) -> str | None
     return None
 
 
-def require_column(columns: Iterable[str], candidates: Iterable[str], label: str) -> str:
+def require_column(
+    columns: Iterable[str], candidates: Iterable[str], label: str
+) -> str:
     found = find_column(columns, candidates)
     if found is None:
         joined = ", ".join(candidates)
@@ -236,7 +243,9 @@ def analyze_file(
         timestep_index_step = None
 
     if columns.timestamp_ns is not None:
-        timestamps = sorted(pd.to_numeric(df[columns.timestamp_ns], errors="coerce").dropna().unique())
+        timestamps = sorted(
+            pd.to_numeric(df[columns.timestamp_ns], errors="coerce").dropna().unique()
+        )
         timestep_seconds = (
             min(b - a for a, b in zip(timestamps, timestamps[1:])) / 1_000_000_000
             if len(timestamps) > 1
@@ -264,8 +273,14 @@ def analyze_file(
         explicit_zero_mask = (x.abs() <= zero_eps) & (y.abs() <= zero_eps)
 
         implicit_missing_rows = 0
-        if include_missing_padding and columns.timestep is not None and unique_timesteps:
-            track_by_timestep = track_df.assign(_explicit_zero=explicit_zero_mask.to_numpy()).set_index(columns.timestep)
+        if (
+            include_missing_padding
+            and columns.timestep is not None
+            and unique_timesteps
+        ):
+            track_by_timestep = track_df.assign(
+                _explicit_zero=explicit_zero_mask.to_numpy()
+            ).set_index(columns.timestep)
             zero_mask_values = []
             for timestep in unique_timesteps:
                 if timestep not in track_by_timestep.index:
@@ -279,7 +294,11 @@ def analyze_file(
             run_axis = unique_timesteps
         else:
             zero_mask_values = explicit_zero_mask.tolist()
-            run_axis = list(track_df[columns.timestep]) if columns.timestep is not None else list(range(len(track_df)))
+            run_axis = (
+                list(track_df[columns.timestep])
+                if columns.timestep is not None
+                else list(range(len(track_df)))
+            )
 
         run_len, run_start_idx, run_end_idx = longest_true_run(zero_mask_values)
 
@@ -296,7 +315,9 @@ def analyze_file(
                     "scenario_id": scenario_id,
                     "parquet_path": str(path),
                     "track_id": track_id,
-                    "object_type": series_value(track_df[columns.object_type]) if columns.object_type else None,
+                    "object_type": series_value(track_df[columns.object_type])
+                    if columns.object_type
+                    else None,
                     "object_category": series_value(track_df[columns.object_category])
                     if columns.object_category
                     else None,
@@ -308,7 +329,9 @@ def analyze_file(
                     "zero_run_start": run_start_timestep,
                     "zero_run_end": run_end_timestep,
                     "zero_run_at_track_start": bool(run_start_idx == 0),
-                    "zero_run_at_track_end": bool(run_end_idx == len(zero_mask_values) - 1),
+                    "zero_run_at_track_end": bool(
+                        run_end_idx == len(zero_mask_values) - 1
+                    ),
                 }
             )
 
@@ -325,16 +348,24 @@ def analyze_file(
         "timestep_seconds": timestep_seconds,
         "observed_rows": observed_rows,
         "min_track_rows": min(track_lengths) if track_lengths else 0,
-        "median_track_rows": float(pd.Series(track_lengths).median()) if track_lengths else 0.0,
+        "median_track_rows": float(pd.Series(track_lengths).median())
+        if track_lengths
+        else 0.0,
         "max_track_rows": max(track_lengths) if track_lengths else 0,
         "complete_tracks": complete_tracks,
         "agents_with_long_zero_runs": len(zero_agents),
         "contains_long_zero_run": bool(zero_agents),
-        "max_zero_run": max((row["longest_zero_run"] for row in zero_agents), default=0),
+        "max_zero_run": max(
+            (row["longest_zero_run"] for row in zero_agents), default=0
+        ),
     }
 
     if columns.object_type is not None:
-        object_counts = df[[columns.track_id, columns.object_type]].drop_duplicates()[columns.object_type].value_counts()
+        object_counts = (
+            df[[columns.track_id, columns.object_type]]
+            .drop_duplicates()[columns.object_type]
+            .value_counts()
+        )
         for object_type, count in object_counts.items():
             summary[f"agents_type_{object_type}"] = int(count)
 
@@ -346,7 +377,9 @@ def analyze_file_worker(
 ) -> tuple[dict | None, list[dict], tuple[str, str] | None]:
     path, min_zero_run, zero_eps, include_missing_padding = args
     try:
-        summary, zero_agents = analyze_file(path, min_zero_run, zero_eps, include_missing_padding)
+        summary, zero_agents = analyze_file(
+            path, min_zero_run, zero_eps, include_missing_padding
+        )
     except Exception as exc:  # noqa: BLE001 - keep batch analysis moving.
         return None, [], (str(path), str(exc))
     return summary, zero_agents, None
@@ -369,7 +402,9 @@ def order_columns(df: pd.DataFrame, preferred: list[str]) -> pd.DataFrame:
     return df.reindex(columns=preferred + extra)
 
 
-def print_report(scenarios: pd.DataFrame, zero_agents: pd.DataFrame, min_zero_run: int) -> None:
+def print_report(
+    scenarios: pd.DataFrame, zero_agents: pd.DataFrame, min_zero_run: int
+) -> None:
     scenarios = order_columns(scenarios, SCENARIO_COLUMNS)
     zero_agents = order_columns(zero_agents, ZERO_AGENT_COLUMNS)
     total = len(scenarios)
@@ -403,11 +438,15 @@ def print_report(scenarios: pd.DataFrame, zero_agents: pd.DataFrame, min_zero_ru
             else f"{label}: n/a"
         )
 
-    timestep_seconds = pd.to_numeric(scenarios["timestep_seconds"], errors="coerce").dropna()
+    timestep_seconds = pd.to_numeric(
+        scenarios["timestep_seconds"], errors="coerce"
+    ).dropna()
     if not timestep_seconds.empty:
         print(f"Timestep length: median={timestep_seconds.median():.3f}s")
     else:
-        print("Timestep length: no timestamp_ns column found; AV2 MF commonly uses 0.1s between timestep indices.")
+        print(
+            "Timestep length: no timestamp_ns column found; AV2 MF commonly uses 0.1s between timestep indices."
+        )
 
     if not zero_agents.empty:
         print("\nWorst zero-position runs:")
@@ -421,12 +460,18 @@ def print_report(scenarios: pd.DataFrame, zero_agents: pd.DataFrame, min_zero_ru
             "zero_run_at_track_start",
             "zero_run_at_track_end",
         ]
-        print(zero_agents.sort_values("longest_zero_run", ascending=False).head(10)[columns].to_string(index=False))
+        print(
+            zero_agents.sort_values("longest_zero_run", ascending=False)
+            .head(10)[columns]
+            .to_string(index=False)
+        )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", type=Path, help="Folder or single parquet file to analyze.")
+    parser.add_argument(
+        "input", type=Path, help="Folder or single parquet file to analyze."
+    )
     parser.add_argument(
         "--min-zero-run",
         type=int,
@@ -472,7 +517,6 @@ def parse_args() -> argparse.Namespace:
         help="Path to scenario_summary.csv generated by the AV2 analysis.",
     )
     return parser.parse_args()
-
 
 
 def main() -> None:
@@ -540,6 +584,7 @@ def main() -> None:
             )
         print(f"\nWrote CSV outputs to: {args.output_dir}")
 """
+
 
 if __name__ == "__main__":
     main()

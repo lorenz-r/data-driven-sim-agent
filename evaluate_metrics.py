@@ -178,7 +178,10 @@ def evaluate_metrics(predictions_file, metrics_file, plot_dir=None, max_plot_age
             raw_pred_valid_mask, trajectory.shape
         )
 
-        if gt_trajectory is not None and gt_trajectory.shape[:2] != trajectory.shape[:2]:
+        if (
+            gt_trajectory is not None
+            and gt_trajectory.shape[:2] != trajectory.shape[:2]
+        ):
             common_agents = min(trajectory.shape[0], gt_trajectory.shape[0])
             common_steps = min(trajectory.shape[1], gt_trajectory.shape[1])
             trajectory = trajectory[:common_agents, :common_steps]

@@ -320,14 +320,15 @@ def smart_prediction_to_argoverse(
             category in (TrackCategory.FOCAL_TRACK, TrackCategory.SCORED_TRACK)
             and i < num_pred_agents
         ):
-
             for t in range(num_pred_steps):
                 if not pred_valid_mask[i, t]:
                     continue
 
                 pred_pos = pred_traj[i, t]
                 pred_heading = (
-                    pred_head[i, t].item() if pred_head.ndim > 1 else pred_head[i].item()
+                    pred_head[i, t].item()
+                    if pred_head.ndim > 1
+                    else pred_head[i].item()
                 )
 
                 # Compute velocity from predicted positions (m/s, assuming 0.1s timestep)
@@ -338,7 +339,9 @@ def smart_prediction_to_argoverse(
                 else:
                     # Estimate velocity from last historical step
                     if _to_bool(agent_data["valid_mask"][i, OBSERVED_STEPS - 1]):
-                        last_vel = _to_numpy(agent_data["velocity"][i, OBSERVED_STEPS - 1])
+                        last_vel = _to_numpy(
+                            agent_data["velocity"][i, OBSERVED_STEPS - 1]
+                        )
                         vx, vy = float(last_vel[0]), float(last_vel[1])
                     else:
                         vx, vy = 0.0, 0.0
