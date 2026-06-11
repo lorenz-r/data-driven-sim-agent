@@ -6,8 +6,8 @@
 # Dataset / Input Configuration
 # ------------------------------------------------------------
 data:
-  train_path: "s_data/train_split"
-  val_path: "s_data/val_split"
+  train_path: "packages/smart/data/processed/current/train"
+  val_path: "packages/smart/data/processed/current/val"
 
   # Optional manifest files to restrict the dataset
   # Leave empty ("") to use the full split

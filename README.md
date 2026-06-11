@@ -150,7 +150,7 @@ Training has been refactored into a top level script to make it easier to switch
 Example command for running the training:
 
 ```bash
-uv run python train.py --model smart --train-path pack ages/smart/train_split/ --val-path packages/smart/validation_split/ --project-name smart-training --run-name demo-ru n --max-epochs 5 --batch-size 10 --val-batch-size 10 --learning-rate 0.000019 --save-ckpt-path smart-checkpoints/run_01 --profile simple -- profile-dir profiles/run_01 --profile-name run_01_profile
+uv run python train.py --model smart --train-path packages/smart/data/processed/current/train --val-path packages/smart/data/processed/current/val --project-name smart-training --run-name demo-ru n --max-epochs 5 --batch-size 10 --val-batch-size 10 --learning-rate 0.000019 --save-ckpt-path smart-checkpoints/run_01 --profile simple -- profile-dir profiles/run_01 --profile-name run_01_profile
 ```
 
 Example command, when downloading data is also required (essentially a quick-start):
