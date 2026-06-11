@@ -14,12 +14,13 @@ from smart.utils.config import load_config_act
 from smart.utils.log import Logging
 
 SMART_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = SMART_ROOT.parent.parent
 # TODO: update defaults to test folders, once unified test set decided
 DEFAULT_PROCESSED_FOLDER = SMART_ROOT / "data" / "processed" / "current"/ "val"
 DEFAULT_RAW_DATA_FOLDER = SMART_ROOT / "data" / "raw" / "val"
 DEFAULT_OUTPUT_FOLDER = SMART_ROOT / "data" / "preds"
 DEFAULT_CONFIG_PATH = SMART_ROOT / "configs" / "validation" / "validation_scalable.yaml"
-DEFAULT_CHECKPOINT_PATH = SMART_ROOT / "smart_checkpoints" / "epoch=199.ckpt"
+DEFAULT_CHECKPOINT_PATH = REPO_ROOT / "smart-checkpoints" / "run_01/" / "epoch\=75.ckpt"
 DEFAULT_BATCH_VISUALIZATION_LIMIT = 10
 
 
