@@ -9,7 +9,6 @@ trajectory generation model to learn.
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
