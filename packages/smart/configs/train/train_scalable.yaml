@@ -61,6 +61,12 @@ Model:
   lr: 0.0011
   warmup_steps: 0
   total_steps: 32
+  loss:
+    type: "spatial_aware_label_smoothing"
+    label_smoothing: 0.1
+    distance_epsilon: 0.001
+    trajectory_dims: [0, 1]
+    chunk_size: 4096
   decoder:
     <<: *time_info
     num_map_layers: 3

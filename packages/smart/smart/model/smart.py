@@ -8,6 +8,7 @@ from torch_geometric.data import HeteroData
 from smart.metrics import minADE
 from smart.metrics import minFDE
 from smart.metrics import TokenCls
+from core.losses import SpatialAwareLabelSmoothingLoss, build_ntp_classification_loss
 from smart.modules import SMARTDecoder
 from torch.optim.lr_scheduler import LambdaLR
 import math
@@ -23,6 +24,14 @@ from smart.utils.token_paths import (
     missing_token_error,
     resolve_token_path,
 )
+
+
+def _config_get(config, key, default=None):
+    if config is None:
+        return default
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return getattr(config, key, default)
 
 
 def cal_polygon_contour(x, y, theta, width, length):
@@ -116,10 +125,24 @@ class SMART(pl.LightningModule):
         self.TokenCls = TokenCls(max_guesses=1)
 
         self.test_predictions: Dict[str, object] = dict()
-        self.cls_loss = nn.CrossEntropyLoss(label_smoothing=0.1)
-        self.map_cls_loss = nn.CrossEntropyLoss(label_smoothing=0.1)
+        self.cls_loss = self.build_cls_loss(token_data)
+        loss_config = _config_get(self.model_config, "loss", None)
+        label_smoothing = float(_config_get(loss_config, "label_smoothing", 0.1))
+        self.map_cls_loss = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         self.inference_token = False
         self.rollout_num = 1
+
+    def build_cls_loss(self, token_data):
+        loss_config = _config_get(self.model_config, "loss", None)
+        return build_ntp_classification_loss(
+            loss_config,
+            token_trajectories={
+                0: token_data["traj"]["veh"],
+                1: token_data["traj"]["ped"],
+                2: token_data["traj"]["cyc"],
+            },
+            default_label_smoothing=0.1,
+        )
 
     def get_trajectory_token(self):
         if not os.path.exists(self.token_path):
@@ -179,6 +202,29 @@ class SMART(pl.LightningModule):
         else:
             return contextlib.nullcontext()
 
+    def token_classification_loss(
+        self,
+        logits: torch.Tensor,
+        target: torch.Tensor,
+        eval_mask: torch.Tensor,
+        agent_type: torch.Tensor,
+    ) -> torch.Tensor:
+        if not eval_mask.any():
+            return logits.sum() * 0.0
+
+        logits_for_loss = logits[eval_mask]
+        target_for_loss = target[eval_mask]
+
+        if isinstance(self.cls_loss, SpatialAwareLabelSmoothingLoss):
+            token_groups = agent_type[:, None].expand_as(target)[eval_mask]
+            return self.cls_loss(
+                logits_for_loss,
+                target_for_loss,
+                token_groups=token_groups,
+            )
+
+        return self.cls_loss(logits_for_loss, target_for_loss)
+
     def training_step(self, data, batch_idx):
         if data is None:
             return None
@@ -190,9 +236,11 @@ class SMART(pl.LightningModule):
         next_token_prob = pred["next_token_prob"]
         next_token_idx_gt = pred["next_token_idx_gt"]
         next_token_eval_mask = pred["next_token_eval_mask"]
-        cls_loss = self.cls_loss(
-            next_token_prob[next_token_eval_mask],
-            next_token_idx_gt[next_token_eval_mask],
+        cls_loss = self.token_classification_loss(
+            next_token_prob,
+            next_token_idx_gt,
+            next_token_eval_mask,
+            data["agent"]["type"],
         )
         loss = cls_loss
         self.log(
@@ -220,9 +268,11 @@ class SMART(pl.LightningModule):
         next_token_idx_gt = pred["next_token_idx_gt"]
         next_token_eval_mask = pred["next_token_eval_mask"]
         next_token_prob = pred["next_token_prob"]
-        cls_loss = self.cls_loss(
-            next_token_prob[next_token_eval_mask],
-            next_token_idx_gt[next_token_eval_mask],
+        cls_loss = self.token_classification_loss(
+            next_token_prob,
+            next_token_idx_gt,
+            next_token_eval_mask,
+            data["agent"]["type"],
         )
         loss = cls_loss
         self.TokenCls.update(

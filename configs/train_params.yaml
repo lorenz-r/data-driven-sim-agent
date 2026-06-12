@@ -172,6 +172,12 @@ smart:
     agent_token_build_max_samples: 1000000
     agent_token_build_kdisks_max_attempts: 1000000
     agent_token_build_seed: 42
+  loss:
+    type: "spatial_aware_label_smoothing"
+    label_smoothing: 0.1
+    distance_epsilon: 0.001
+    trajectory_dims: [0, 1]
+    chunk_size: 4096
 
 # ------------------------------------------------------------
 # Output Paths

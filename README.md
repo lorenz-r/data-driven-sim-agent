@@ -137,7 +137,18 @@ smart:
     agent_token_path: "packages/smart/smart/tokens/cluster_frame_5_2048_av2.pkl"
     map_token_path: "packages/smart/smart/tokens/map_traj_token5.pkl"
     build_agent_tokens_if_missing: false
+  loss:
+    type: "spatial_aware_label_smoothing"
+    label_smoothing: 0.1
+    distance_epsilon: 0.001
+    trajectory_dims: [0, 1]
 ```
+
+TrajTok-style spatial-aware label smoothing is implemented as the shared
+`core.losses.SpatialAwareLabelSmoothingLoss`, with
+`core.losses.build_ntp_classification_loss` available for config-driven NTP
+models. It keeps the standard ground-truth mass and distributes smoothing mass
+toward trajectory tokens that are spatially close to the target token.
 
 #### SMART inference
 

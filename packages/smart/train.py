@@ -306,6 +306,15 @@ def run_training(
         smart_config.Model.agent_token_path = smart_config.Dataset.agent_token_path
         smart_config.Model.map_token_path = smart_config.Dataset.map_token_path
 
+    loss_config = None
+    if "smart" in config and "loss" in config["smart"]:
+        loss_config = config["smart"]["loss"]
+    elif "loss" in config:
+        loss_config = config["loss"]
+
+    if loss_config is not None:
+        smart_config.Model.loss = loss_config
+
     maybe_build_agent_tokens_from_config(smart_config)
 
     # -------------------------

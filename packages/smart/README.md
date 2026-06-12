@@ -100,7 +100,18 @@ Dataset:
 Model:
   agent_token_path: "smart/tokens/cluster_frame_5_2048.pkl"
   map_token_path: "smart/tokens/map_traj_token5.pkl"
+  loss:
+    type: "spatial_aware_label_smoothing"
+    label_smoothing: 0.1
+    distance_epsilon: 0.001
+    trajectory_dims: [0, 1]
 ```
+
+The spatial-aware loss follows the TrajTok label-smoothing idea: non-target
+probability mass is assigned to nearby trajectory tokens instead of being spread
+uniformly. The reusable criterion lives at
+`core.losses.SpatialAwareLabelSmoothingLoss`; SMART also re-exports it from
+`smart.losses` for compatibility.
 
 To build an AV2-specific agent motion vocabulary, run from the repository root:
 
