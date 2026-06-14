@@ -1,5 +1,5 @@
 import pickle
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, Tuple, Iterable
 from torch import Tensor
@@ -91,68 +91,146 @@ class TrajTokTokenBuilder:
         self.traj_data: dict[str, np.ndarray] | None = None
         self.vocab: dict | None = None
 
-    def collect_traj_data(
+    def _init_bin_stats(self) -> dict[str, dict[str, np.ndarray]]:
+        stats: dict[str, dict[str, np.ndarray]] = {}
+
+        for agent_class in self.agent_classes:
+            x_binnum = self.x_binnum[agent_class]
+            y_binnum = self.y_binnum[agent_class]
+
+            stats[agent_class] = {
+                "count": np.zeros((x_binnum, y_binnum), dtype=np.int64),
+                "sum": np.zeros(
+                    (x_binnum, y_binnum, self.shift + 1, 3),
+                    dtype=np.float64,
+                ),
+            }
+
+        return stats
+
+    def _update_bin_stats_with_trajs(
+        self,
+        stats: dict[str, dict[str, np.ndarray]],
+        agent_class: str,
+        trajs: np.ndarray,
+    ) -> None:
+        x_binnum = self.x_binnum[agent_class]
+        y_binnum = self.y_binnum[agent_class]
+
+        x_min = self.x_min[agent_class]
+        x_max = self.x_max[agent_class]
+
+        y_min = self.y_min[agent_class]
+        y_max = self.y_max[agent_class]
+
+        grid_end_x = np.round(
+            (trajs[:, self.shift, 0] - x_min) / (x_max - x_min) * x_binnum
+        ).astype(np.int32)
+
+        grid_end_y = np.round(
+            (trajs[:, self.shift, 1] - y_min) / (y_max - y_min) * y_binnum
+        ).astype(np.int32)
+
+        mask = (
+            (grid_end_x >= 0)
+            & (grid_end_x < x_binnum)
+            & (grid_end_y >= 0)
+            & (grid_end_y < y_binnum)
+            & (np.abs(trajs[:, :, 0]).mean(axis=-1) < x_max)
+            & (np.abs(trajs[:, :, 1]).mean(axis=-1) < y_max)
+        )
+
+        grid_end_x = grid_end_x[mask]
+        grid_end_y = grid_end_y[mask]
+        trajs = trajs[mask]
+
+        for i in range(len(trajs)):
+            x = grid_end_x[i]
+            y = grid_end_y[i]
+            stats[agent_class]["count"][x, y] += 1
+            stats[agent_class]["sum"][x, y] += trajs[i]
+
+    def _update_bin_stats_for_class(
+        self,
+        stats: dict[str, dict[str, np.ndarray]],
+        agent_class: str,
+        agent_trajs: np.ndarray,
+    ) -> None:
+        if agent_trajs.shape[0] == 0:
+            return
+
+        origin = np.zeros(
+            (agent_trajs.shape[0], 1, 3),
+            dtype=agent_trajs.dtype,
+        )
+        trajs = np.concatenate([origin, agent_trajs], axis=1)
+
+        if self.max_traj_nums is not None:
+            current_count = int(stats[agent_class]["count"].sum())
+            remaining = self.max_traj_nums - current_count
+
+            if remaining <= 0:
+                return
+
+            trajs = trajs[:remaining]
+
+        self._update_bin_stats_with_trajs(stats, agent_class, trajs)
+
+        if self.flip_trajs:
+            flipped_trajs = trajs.copy()
+            flipped_trajs[:, :, 1] = -flipped_trajs[:, :, 1]
+            flipped_trajs[:, :, 2] = -flipped_trajs[:, :, 2]
+            self._update_bin_stats_with_trajs(stats, agent_class, flipped_trajs)
+
+    def collect_bin_stats(
         self,
         raw_dirs: Iterable[str | Path],
-    ) -> dict[str, np.ndarray]:
-        traj_data: dict[str, list[torch.Tensor]] = {
-            "veh": [],
-            "ped": [],
-            "cyc": [],
-        }
+    ) -> dict[str, dict[str, np.ndarray]]:
+        stats = self._init_bin_stats()
 
         file_paths = _iter_pickle_files(raw_dirs)
 
         if self.max_file_nums is not None:
             file_paths = file_paths[: self.max_file_nums]
 
-        if self.max_workers == 0:
-            for file_path in tqdm(
-                file_paths, desc="Extracting TrajTok trajectory data"
-            ):
-                result = self._get_traj_data(file_path)
-                for agent_class in self.agent_classes:
-                    traj_data[agent_class].extend(result[agent_class])
-        else:
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = [
-                    executor.submit(self._get_traj_data, file_path)
-                    for file_path in file_paths
+        print(f"Found {len(file_paths)} TrajTok source files.")
+
+        def update_from_result(result: dict[str, list[torch.Tensor]]) -> None:
+            for agent_class in self.agent_classes:
+                non_empty = [
+                    x
+                    for x in result[agent_class]
+                    if isinstance(x, torch.Tensor) and x.numel() > 0
                 ]
 
-                for future in tqdm(
-                    as_completed(futures),
-                    total=len(futures),
+                if not non_empty:
+                    continue
+
+                values = torch.cat(non_empty).cpu().numpy().astype(np.float32)
+                self._update_bin_stats_for_class(stats, agent_class, values)
+
+        if self.max_workers == 0:
+            for file_path in tqdm(
+                file_paths,
+                desc="Extracting TrajTok trajectory data",
+            ):
+                result = self._get_traj_data(file_path)
+                update_from_result(result)
+        else:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                for result in tqdm(
+                    executor.map(self._get_traj_data, file_paths),
+                    total=len(file_paths),
                     desc="Extracting TrajTok trajectory data",
                 ):
-                    result = future.result()
-                    for agent_class in self.agent_classes:
-                        traj_data[agent_class].extend(result[agent_class])
-
-        final: dict[str, np.ndarray] = {}
+                    update_from_result(result)
 
         for agent_class in self.agent_classes:
-            non_empty = [
-                x
-                for x in traj_data[agent_class]
-                if isinstance(x, torch.Tensor) and x.numel() > 0
-            ]
+            print(
+                f"traj num of {agent_class}: {int(stats[agent_class]['count'].sum())}"
+            )
 
-            if not non_empty:
-                final[agent_class] = np.empty((0, self.shift, 3), dtype=np.float32)
-                continue
-
-            values = torch.cat(non_empty)
-            headings = values[:, :, -1]
-            heading_diffs = torch.abs(wrap_angle(headings[:, 1:] - headings[:, :-1]))
-            head_valid = heading_diffs.max(-1).values < 30 * np.pi / 180
-            values = values[head_valid].cpu().numpy().astype(np.float32)
-
-            print(f"traj num of {agent_class}: {len(values)}")
-            final[agent_class] = values
-
-        self.traj_data = final
-        return final
+        return stats
 
     def _get_traj_data(self, file_path: str | Path) -> dict[str, list[torch.Tensor]]:
         with Path(file_path).open("rb") as f:
@@ -183,9 +261,17 @@ class TrajTokTokenBuilder:
             trajs = torch.cat([pos_local, head_local.unsqueeze(-1)], dim=-1)
             valid_mask = masks[:, i : i + self.shift + 1].all(dim=-1)
 
-            traj_data["veh"].append(trajs[(types == 0) & valid_mask])
-            traj_data["ped"].append(trajs[(types == 1) & valid_mask])
-            traj_data["cyc"].append(trajs[(types == 2) & valid_mask])
+            headings_local = trajs[:, :, -1]
+            heading_diffs = torch.abs(
+                wrap_angle(headings_local[:, 1:] - headings_local[:, :-1])
+            )
+            head_valid = heading_diffs.max(dim=-1).values < 30 * np.pi / 180
+
+            final_mask = valid_mask & head_valid
+
+            traj_data["veh"].append(trajs[(types == 0) & final_mask])
+            traj_data["ped"].append(trajs[(types == 1) & final_mask])
+            traj_data["cyc"].append(trajs[(types == 2) & final_mask])
 
         return traj_data
 
@@ -229,21 +315,6 @@ class TrajTokTokenBuilder:
 
         return polygon_contour
 
-    def get_nearest_traj(self, x, y, grid_mask, trajs_in_bin):
-        valid_pos = np.argwhere(grid_mask)
-
-        if len(valid_pos) == 0:
-            raise ValueError(
-                "No valid grid positions available for nearest trajectory lookup."
-            )
-
-        distances = np.abs(valid_pos[:, 0] - x) + np.abs(valid_pos[:, 1] - y)
-        nearest_idx = np.argmin(distances)
-        nearest_x, nearest_y = valid_pos[nearest_idx]
-        nearest_traj = np.array(trajs_in_bin[nearest_x][nearest_y]).mean(axis=0)
-
-        return nearest_traj
-
     def interpolate_curve(
         self,
         x,
@@ -278,19 +349,31 @@ class TrajTokTokenBuilder:
 
         return curve_points
 
-    def build_vocab(
+    def get_nearest_traj_from_stats(
         self,
-        traj_data: dict[str, np.ndarray] | None = None,
-    ) -> dict:
-        if traj_data is not None:
-            self.traj_data = traj_data
+        x,
+        y,
+        grid_mask,
+        traj_sum,
+        grid_mask_count,
+    ):
+        valid_pos = np.argwhere(grid_mask)
 
-        if self.traj_data is None:
-            raise RuntimeError(
-                "No trajectory data available. "
-                "Call collect_traj_data(...) before build_vocab(...)."
+        if len(valid_pos) == 0:
+            raise ValueError(
+                "No valid grid positions available for nearest trajectory lookup."
             )
 
+        distances = np.abs(valid_pos[:, 0] - x) + np.abs(valid_pos[:, 1] - y)
+        nearest_idx = np.argmin(distances)
+        nearest_x, nearest_y = valid_pos[nearest_idx]
+
+        return traj_sum[nearest_x, nearest_y] / grid_mask_count[nearest_x, nearest_y]
+
+    def build_vocab_from_bin_stats(
+        self,
+        stats: dict[str, dict[str, np.ndarray]],
+    ) -> dict:
         vocab: dict = {
             "token": {},
             "traj": {},
@@ -315,64 +398,18 @@ class TrajTokTokenBuilder:
             filter_threshold_remove = self.filter_threshold_remove[agent_class]
             valid_count_threshold = self.valid_count_threshold[agent_class]
 
-            agent_trajs = self.traj_data[agent_class]
+            grid_mask_count = stats[agent_class]["count"]
+            traj_sum = stats[agent_class]["sum"]
 
-            if agent_trajs.shape[0] == 0:
+            if grid_mask_count.sum() == 0:
                 raise ValueError(
                     f"No valid {agent_class} trajectories found for TrajTok vocab build."
                 )
-
-            grid_mask_count = np.zeros((x_binnum, y_binnum))
-            traj_in_bin: list[list[list[np.ndarray]]] = [
-                [[] for _ in range(y_binnum)] for _ in range(x_binnum)
-            ]
-
-            origin = np.zeros(
-                (agent_trajs.shape[0], 1, 3),
-                dtype=agent_trajs.dtype,
-            )
-
-            trajs = np.concatenate([origin, agent_trajs], axis=1)
-
-            if self.max_traj_nums:
-                trajs = trajs[: self.max_traj_nums]
-
-            if self.flip_trajs:
-                flip = trajs.copy()
-                flip[:, :, 1] = -flip[:, :, 1]
-                flip[:, :, 2] = -flip[:, :, 2]
-                trajs = np.concatenate([trajs, flip], axis=0)
-
-            grid_end_x = np.round(
-                (trajs[:, self.shift, 0] - x_min) / (x_max - x_min) * x_binnum
-            ).astype(np.int32)
-
-            grid_end_y = np.round(
-                (trajs[:, self.shift, 1] - y_min) / (y_max - y_min) * y_binnum
-            ).astype(np.int32)
-
-            mask = (
-                (grid_end_x >= 0)
-                & (grid_end_x < x_binnum)
-                & (grid_end_y >= 0)
-                & (grid_end_y < y_binnum)
-                & (np.abs(trajs[:, :, 0]).mean(axis=-1) < x_max)
-                & (np.abs(trajs[:, :, 1]).mean(axis=-1) < y_max)
-            )
-
-            grid_end_x = grid_end_x[mask]
-            grid_end_y = grid_end_y[mask]
-            trajs = trajs[mask]
-
-            for i in range(len(trajs)):
-                traj_in_bin[grid_end_x[i]][grid_end_y[i]].append(trajs[i])
 
             raw_eps = []
 
             for x in range(x_binnum):
                 for y in range(y_binnum):
-                    grid_mask_count[x][y] = len(traj_in_bin[x][y])
-
                     raw_eps.append(
                         [
                             x * (x_max - x_min) / x_binnum + x_min,
@@ -400,6 +437,8 @@ class TrajTokTokenBuilder:
 
             token_trajs = []
 
+            valid_mean_mask = grid_mask & grid_mask_filtered
+
             for x in range(x_binnum):
                 for y in range(y_binnum):
                     if not grid_mask_filtered[x, y]:
@@ -409,18 +448,20 @@ class TrajTokTokenBuilder:
                     grid_end_y_value = y * (y_max - y_min) / y_binnum + y_min
 
                     if grid_mask[x, y]:
-                        token_traj = np.array(traj_in_bin[x][y]).mean(axis=0)
+                        token_traj = traj_sum[x, y] / grid_mask_count[x, y]
+                        token_traj = token_traj.astype(np.float32)
                         token_traj[-1, 0] = grid_end_x_value
                         token_traj[-1, 1] = grid_end_y_value
 
                         yaws = token_traj[:, -1]
 
                         if np.abs(yaws[1:] - yaws[:-1]).max() > 10 * np.pi / 180:
-                            nearest_traj = self.get_nearest_traj(
+                            nearest_traj = self.get_nearest_traj_from_stats(
                                 x,
                                 y,
-                                grid_mask & grid_mask_filtered,
-                                traj_in_bin,
+                                valid_mean_mask,
+                                traj_sum,
+                                grid_mask_count,
                             )
 
                             token_traj = self.interpolate_curve(
@@ -429,11 +470,12 @@ class TrajTokTokenBuilder:
                                 nearest_traj[-1, 2],
                             )
                     else:
-                        nearest_traj = self.get_nearest_traj(
+                        nearest_traj = self.get_nearest_traj_from_stats(
                             x,
                             y,
-                            grid_mask & grid_mask_filtered,
-                            traj_in_bin,
+                            valid_mean_mask,
+                            traj_sum,
+                            grid_mask_count,
                         )
 
                         token_traj = self.interpolate_curve(
@@ -500,31 +542,19 @@ def build_trajtok_agent_tokens(
     )
 
     if use_traj_cache:
-        if traj_cache_path is None:
-            raise ValueError("traj_cache_path is required when use_traj_cache=True")
+        raise NotImplementedError(
+            "use_traj_cache=True is not supported with streaming TrajTok bin stats yet."
+        )
 
-        traj_cache = Path(traj_cache_path).expanduser()
+    stats = builder.collect_bin_stats(raw_dirs)
 
-        if traj_cache.exists():
-            print(f"Loading TrajTok trajectory cache from {traj_cache}...")
-            with traj_cache.open("rb") as f:
-                traj_data = pickle.load(f)
-        else:
-            traj_data = builder.collect_traj_data(raw_dirs)
-            traj_cache.parent.mkdir(parents=True, exist_ok=True)
-            with traj_cache.open("wb") as f:
-                pickle.dump(traj_data, f)
-    else:
-        traj_data = builder.collect_traj_data(raw_dirs)
-
-    for agent_class, values in traj_data.items():
-        if values.shape[0] == 0:
+    for agent_class in builder.agent_classes:
+        if stats[agent_class]["count"].sum() == 0:
             raise ValueError(
                 f"No valid {agent_class} trajectories found for TrajTok token build"
             )
 
-    vocab = builder.build_vocab(traj_data)
-
+    vocab = builder.build_vocab_from_bin_stats(stats)
     output = Path(output_path).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
 
