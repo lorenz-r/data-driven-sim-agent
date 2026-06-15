@@ -65,7 +65,7 @@ def main() -> None:
             raw_dirs=[Path(raw_dir) for raw_dir in args.raw_dir],
             output_path=output,
             shift=5,
-            max_file_nums=10_000,
+            max_file_nums=None,
             max_traj_nums=1_000_000,
             max_workers=2,
             use_traj_cache=False,
