@@ -192,8 +192,28 @@ class TrajTokTokenBuilder:
 
         if self.max_file_nums is not None:
             file_paths = file_paths[: self.max_file_nums]
-
         print(f"Found {len(file_paths)} TrajTok source files.")
+        print(
+            "TrajTok settings: "
+            f"shift={self.shift}, "
+            f"max_workers={self.max_workers}, "
+            f"max_file_nums={self.max_file_nums}, "
+            f"max_traj_nums={self.max_traj_nums}, "
+            f"flip_trajs={self.flip_trajs}"
+        )
+
+        def print_progress(processed_files: int) -> None:
+            counts = {
+                agent_class: int(stats[agent_class]["count"].sum())
+                for agent_class in self.agent_classes
+            }
+
+            print(
+                f"Processed {processed_files}/{len(file_paths)} files. "
+                f"traj counts: veh={counts['veh']}, "
+                f"ped={counts['ped']}, "
+                f"cyc={counts['cyc']}"
+            )
 
         def update_from_result(result: dict[str, list[torch.Tensor]]) -> None:
             for agent_class in self.agent_classes:
@@ -210,20 +230,32 @@ class TrajTokTokenBuilder:
                 self._update_bin_stats_for_class(stats, agent_class, values)
 
         if self.max_workers == 0:
-            for file_path in tqdm(
-                file_paths,
-                desc="Extracting TrajTok trajectory data",
+            for processed_files, file_path in enumerate(
+                tqdm(
+                    file_paths,
+                    desc="Extracting TrajTok trajectory data",
+                ),
+                start=1,
             ):
                 result = self._get_traj_data(file_path)
                 update_from_result(result)
+
+                if processed_files % 5000 == 0:
+                    print_progress(processed_files)
         else:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                for result in tqdm(
-                    executor.map(self._get_traj_data, file_paths),
-                    total=len(file_paths),
-                    desc="Extracting TrajTok trajectory data",
+                for processed_files, result in enumerate(
+                    tqdm(
+                        executor.map(self._get_traj_data, file_paths),
+                        total=len(file_paths),
+                        desc="Extracting TrajTok trajectory data",
+                    ),
+                    start=1,
                 ):
                     update_from_result(result)
+
+                    if processed_files % 5000 == 0:
+                        print_progress(processed_files)
 
         for agent_class in self.agent_classes:
             print(
