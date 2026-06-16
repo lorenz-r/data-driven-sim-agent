@@ -351,6 +351,100 @@ def _blob_cache_contents_url(blob_cache_name: str, sas_token: str) -> str:
 
     return _join_sas_url(cache_url, sas_token)
 
+def _has_split_dirs(path: Path) -> bool:
+    return (path / "train").is_dir() and (path / "val").is_dir()
+
+
+def _update_current_symlink(parent_dir: Path, target_dir: Path) -> Path:
+    """
+    Make parent_dir/current point to target_dir.
+
+    Uses a relative symlink:
+        current -> <hash-dir-name>
+
+    Returns:
+        parent_dir / "current"
+    """
+    current = parent_dir / "current"
+
+    if current.is_symlink() or current.exists():
+        if current.is_dir() and not current.is_symlink():
+            raise FileExistsError(
+                f"Cannot replace existing non-symlink directory: {current}"
+            )
+        current.unlink()
+
+    current.symlink_to(target_dir.name, target_is_directory=True)
+    return current
+
+
+def _resolve_cache_data_dir(cache_dir: Path, *, update_current: bool = True) -> Path:
+    """
+    Resolve the actual processed-data directory.
+
+    Supports these layouts:
+
+        cache_dir/
+          train/
+          val/
+
+        cache_dir/
+          current -> <hash>
+          <hash>/
+            train/
+            val/
+
+        cache_dir/
+          <hash>/
+            train/
+            val/
+
+    Returns the directory that directly contains train/ and val/.
+    """
+    cache_dir = cache_dir.expanduser().resolve()
+
+    # Case 1: direct layout
+    # cache_dir/train and cache_dir/val
+    if _has_split_dirs(cache_dir):
+        return cache_dir
+
+    # Case 2: current symlink/directory layout
+    # cache_dir/current/train and cache_dir/current/val
+    current = cache_dir / "current"
+    if current.exists() and _has_split_dirs(current):
+        return current
+
+    # Case 3: hash-child layout
+    # cache_dir/<hash>/train and cache_dir/<hash>/val
+    candidates = [
+        child
+        for child in cache_dir.iterdir()
+        if child.is_dir() and child.name != "current" and _has_split_dirs(child)
+    ]
+
+    if len(candidates) == 1:
+        selected = candidates[0]
+
+        if update_current:
+            return _update_current_symlink(cache_dir, selected)
+
+        return selected
+
+    if len(candidates) > 1:
+        candidate_text = "\n".join(str(path) for path in candidates)
+        raise FileNotFoundError(
+            f"Multiple processed cache directories found under {cache_dir}:\n"
+            f"{candidate_text}\n"
+            "Create/fix the 'current' symlink or pass the exact hash directory."
+        )
+
+    raise FileNotFoundError(
+        f"Could not find a processed cache directory under {cache_dir}. "
+        f"Expected one of:\n"
+        f"  {cache_dir / 'train'} and {cache_dir / 'val'}\n"
+        f"  {cache_dir / 'current' / 'train'} and {cache_dir / 'current' / 'val'}\n"
+        f"  {cache_dir / '<hash>' / 'train'} and {cache_dir / '<hash>' / 'val'}"
+    )
 
 def _validate_cache_dir(cache_dir: Path) -> None:
     """
@@ -398,9 +492,10 @@ def read_cache_from_blob(blob_cache_name: str, local_cache_dir: str | Path) -> P
         check=True,
     )
 
-    _validate_cache_dir(local_cache_dir)
+    resolved_cache_dir = _resolve_cache_data_dir(local_cache_dir, update_current=True)
+    _validate_cache_dir(resolved_cache_dir)
 
-    return local_cache_dir
+    return resolved_cache_dir
 
 
 def write_cache_to_blob(
