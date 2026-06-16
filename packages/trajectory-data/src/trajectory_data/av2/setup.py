@@ -351,6 +351,7 @@ def _blob_cache_contents_url(blob_cache_name: str, sas_token: str) -> str:
 
     return _join_sas_url(cache_url, sas_token)
 
+
 def _has_split_dirs(path: Path) -> bool:
     return (path / "train").is_dir() and (path / "val").is_dir()
 
@@ -445,6 +446,7 @@ def _resolve_cache_data_dir(cache_dir: Path, *, update_current: bool = True) -> 
         f"  {cache_dir / 'current' / 'train'} and {cache_dir / 'current' / 'val'}\n"
         f"  {cache_dir / '<hash>' / 'train'} and {cache_dir / '<hash>' / 'val'}"
     )
+
 
 def _validate_cache_dir(cache_dir: Path) -> None:
     """
