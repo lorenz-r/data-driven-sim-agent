@@ -1,6 +1,7 @@
 import argparse
 import yaml
 import wandb
+import sys
 from trainers.profiling import add_profiler_args
 from trainers.trainer_registry import TRAINER_REGISTRY
 from core.logging.logger_factory import (
@@ -18,6 +19,20 @@ from packages.smart.scripts.setup_av2 import (
     _preprocess_smart_split,
     _hash_preprocessor,
 )
+
+
+def _warn_cache_recommended(context: str) -> None:
+    print(
+        "\n"
+        "WARNING: Processed AV2/SMART data is not being cached.\n"
+        f"Context: {context}\n"
+        "This may waste time and compute because preprocessing can be expensive.\n"
+        "Recommended usage:\n"
+        "  - Use --read-cache with --blob-cache-name when a processed cache already exists.\n"
+        "  - Use --write-cache with --blob-cache-name when creating a processed cache.\n",
+        file=sys.stderr,
+    )
+
 
 # ============================================================
 # Config Utilities
@@ -390,6 +405,22 @@ if __name__ == "__main__":
 
     if args.write_cache and not args.process_smart:
         raise ValueError("--write-cache requires --process-smart.")
+
+    if (args.read_cache or args.write_cache) and not args.blob_cache_name:
+        raise ValueError(
+            "--blob-cache-name is required with --read-cache or --write-cache."
+        )
+
+    if args.process_smart and not args.write_cache:
+        _warn_cache_recommended(
+            "train.py will preprocess SMART data with --process-smart, "
+            "but --write-cache is not set."
+        )
+
+    elif not args.read_cache and not args.write_cache:
+        _warn_cache_recommended(
+            "train.py is running without --read-cache or --write-cache."
+        )
 
     cache = None
 

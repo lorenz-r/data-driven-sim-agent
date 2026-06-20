@@ -39,6 +39,19 @@ REPO_ROOT = SMART_ROOT.parent.parent
 RUST_PKG = REPO_ROOT / "packages" / "smart-preprocess"
 
 
+def _warn_cache_recommended(context: str) -> None:
+    print(
+        "\n"
+        "WARNING: Processed AV2/SMART data is not being cached.\n"
+        f"Context: {context}\n"
+        "This may waste time and compute because preprocessing can be expensive.\n"
+        "Recommended usage:\n"
+        "  - Use --read-cache with --blob-cache-name when a processed cache already exists.\n"
+        "  - Use --write-cache with --blob-cache-name when creating a processed cache.\n",
+        file=sys.stderr,
+    )
+
+
 def _hash_preprocessor() -> str:
     """sha256 of every .rs file in packages/smart-preprocess/src/, sorted."""
     src = RUST_PKG / "src"
@@ -167,6 +180,10 @@ def main() -> None:
             local_cache_dir=cache_dir,
             blob_cache_name=args.blob_cache_name,
             args=args,
+        )
+    else:
+        _warn_cache_recommended(
+            "setup_av2.py is about to run setup/preprocessing without --write-cache."
         )
 
 
