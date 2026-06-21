@@ -27,7 +27,6 @@ from trajectory_data.av2.setup import (
     add_setup_arguments,
     read_cache_from_blob,
     run_setup,
-    update_current_symlink,
     write_cache_to_blob,
 )
 
@@ -153,14 +152,13 @@ def main() -> None:
         )
 
     if args.read_cache:
-        read_cache_from_blob(
+        cache_dir = read_cache_from_blob(
             blob_cache_name=args.blob_cache_name,
             local_cache_dir=args.processed_dir,
         )
-        update_current_symlink(args.processed_dir, args.blob_cache_name)
 
         print(f"Restored processed cache into: {args.processed_dir}")
-        print(f"Updated current symlink: {args.processed_dir / 'current'}")
+        print(f"Resolved processed data directory: {cache_dir}")
         print("Skipping AV2 setup because --read-cache succeeded.")
         return
 
