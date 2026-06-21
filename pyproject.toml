@@ -42,6 +42,7 @@ trajectory-data = { workspace = true }
 [tool.pytest.ini_options]
 testpaths = ["tests/src", "packages/trajectory-data/tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
+pythonpath = ["."]
 markers = [
     "gpu: marks tests requiring a GPU",
     "slow: marks slow tests",

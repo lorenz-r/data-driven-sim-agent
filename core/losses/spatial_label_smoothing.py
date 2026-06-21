@@ -128,11 +128,14 @@ class SpatialAwareLabelSmoothingLoss(nn.Module):
         log_probs = F.log_softmax(valid_logits.float(), dim=-1)
 
         if self._single_feature_name is not None:
+            single_norm_name = self._single_norm_name
+            if single_norm_name is None:
+                raise RuntimeError("Single-token feature buffers are incomplete.")
             losses = self._loss_with_features(
                 log_probs,
                 valid_target,
                 getattr(self, self._single_feature_name),
-                getattr(self, self._single_norm_name),
+                getattr(self, single_norm_name),
             )
         else:
             if token_groups is None:
