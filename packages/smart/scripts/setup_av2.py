@@ -152,13 +152,13 @@ def main() -> None:
         )
 
     if args.read_cache:
-        cache_dir = read_cache_from_blob(
+        resolved_cache_dir = read_cache_from_blob(
             blob_cache_name=args.blob_cache_name,
             local_cache_dir=args.processed_dir,
         )
 
         print(f"Restored processed cache into: {args.processed_dir}")
-        print(f"Resolved processed data directory: {cache_dir}")
+        print(f"Resolved processed data directory: {resolved_cache_dir}")
         print("Skipping AV2 setup because --read-cache succeeded.")
         return
 
