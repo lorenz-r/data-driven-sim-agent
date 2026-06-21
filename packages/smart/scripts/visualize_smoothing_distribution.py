@@ -254,7 +254,9 @@ def plot(args: argparse.Namespace):
     ce_total = ce_mass.copy()
     ce_total[args.target_index] += 1.0 - args.label_smoothing
 
-    ce_reference_mass = float(ce_mass[np.arange(ce_mass.shape[0]) != args.target_index][0])
+    ce_reference_mass = float(
+        ce_mass[np.arange(ce_mass.shape[0]) != args.target_index][0]
+    )
     ce_scale_norm = Normalize(vmin=0.0, vmax=ce_reference_mass, clip=False)
     ce_scale_cmap = plt.get_cmap("magma").copy()
     ce_scale_cmap.set_over("#ffffff")
@@ -333,8 +335,7 @@ def plot(args: argparse.Namespace):
 
     nearest = top_indices[:5]
     nearest_text = ", ".join(
-        f"{idx} (d={distances[idx]:.3g}, p={spatial_mass[idx]:.3g})"
-        for idx in nearest
+        f"{idx} (d={distances[idx]:.3g}, p={spatial_mass[idx]:.3g})" for idx in nearest
     )
     fig.suptitle(
         f"{AGENT_LABELS[args.agent_type]} token {args.target_index} | "
