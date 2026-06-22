@@ -415,7 +415,7 @@ def run_training(
     # Logging
     # =========================================================
 
-    if config["logging"]["wandb_logging"]:
+    if config["logging"]["wandb_logging"] and wandb_logger is not None:
         # SAFE CONFIG LOGGING
         #
         # Avoid logging raw objects/classes.
@@ -429,7 +429,7 @@ def run_training(
             "weight_decay": config["optimization"]["weight_decay"],
         }
 
-        wandb_logger.experiment.config.update(flat_config)
+        wandb_logger.log_hyperparams(flat_config)
 
     # =========================================================
     # Callbacks
