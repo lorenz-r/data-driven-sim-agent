@@ -34,6 +34,52 @@ def _config_get(config, key, default=None):
     return getattr(config, key, default)
 
 
+def _config_bool(value, default=False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def normalize_mtp_loss_config(loss_config):
+    mtp_enabled = _config_bool(_config_get(loss_config, "mtp_enabled", False))
+    if not mtp_enabled:
+        return False, (1,), {1: 1.0}
+
+    offsets_raw = _config_get(loss_config, "mtp_offsets", [1, 2, 3])
+    weights_raw = _config_get(loss_config, "mtp_loss_weights", [1.0, 0.1, 0.03])
+    offsets = tuple(int(offset) for offset in offsets_raw)
+    weights = tuple(float(weight) for weight in weights_raw)
+
+    if len(offsets) != len(weights):
+        raise ValueError("mtp_offsets and mtp_loss_weights must have the same length.")
+    if any(offset <= 0 for offset in offsets):
+        raise ValueError("All mtp_offsets must be positive.")
+    if len(set(offsets)) != len(offsets):
+        raise ValueError("mtp_offsets must be unique.")
+    if 1 not in offsets:
+        raise ValueError("mtp_offsets must include offset 1 when MTP is enabled.")
+
+    return mtp_enabled, offsets, dict(zip(offsets, weights))
+
+
+def compute_weighted_mtp_loss(
+    cls_loss: torch.Tensor,
+    auxiliary_losses: Dict[int, torch.Tensor],
+    loss_weights: Dict[int, float],
+) -> tuple[torch.Tensor, torch.Tensor, Dict[int, torch.Tensor]]:
+    total_loss = cls_loss * float(loss_weights.get(1, 1.0))
+    aux_loss = cls_loss.new_zeros(())
+    weighted_aux_losses = {}
+    for offset in sorted(auxiliary_losses):
+        weighted_loss = auxiliary_losses[offset] * float(loss_weights[offset])
+        weighted_aux_losses[offset] = weighted_loss
+        aux_loss = aux_loss + weighted_loss
+        total_loss = total_loss + weighted_loss
+    return total_loss, aux_loss, weighted_aux_losses
+
+
 def cal_polygon_contour(x, y, theta, width, length):
     left_front_x = x + 0.5 * length * math.cos(theta) - 0.5 * width * math.sin(theta)
     left_front_y = y + 0.5 * length * math.sin(theta) + 0.5 * width * math.cos(theta)
@@ -87,6 +133,12 @@ class SMART(pl.LightningModule):
         self.vis_map = False
         self.noise = True
         token_size = model_config.decoder.token_size
+        loss_config = _config_get(self.model_config, "loss", None)
+        (
+            self.mtp_enabled,
+            self.mtp_offsets,
+            self.mtp_loss_weights,
+        ) = normalize_mtp_loss_config(loss_config)
         self.map_token_traj_path = str(
             resolve_token_path(
                 getattr(model_config, "map_token_path", None),
@@ -119,6 +171,7 @@ class SMART(pl.LightningModule):
             map_token={"traj_src": self.map_token["traj_src"]},
             token_data=token_data,
             token_size=token_size,
+            mtp_offsets=self.mtp_offsets,
         )
         self.minADE = minADE(max_guesses=1)
         self.minFDE = minFDE(max_guesses=1)
@@ -126,7 +179,6 @@ class SMART(pl.LightningModule):
 
         self.test_predictions: Dict[str, object] = dict()
         self.cls_loss = self.build_cls_loss(token_data)
-        loss_config = _config_get(self.model_config, "loss", None)
         label_smoothing = float(_config_get(loss_config, "label_smoothing", 0.1))
         self.map_cls_loss = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         self.inference_token = False
@@ -242,7 +294,33 @@ class SMART(pl.LightningModule):
             next_token_eval_mask,
             data["agent"]["type"],
         )
-        loss = cls_loss
+        auxiliary_losses = {}
+        if self.mtp_enabled:
+            for offset in self.mtp_offsets:
+                if offset == 1:
+                    continue
+                mtp_pred = pred["mtp_predictions"][offset]
+                offset_loss = self.token_classification_loss(
+                    mtp_pred["logits"],
+                    mtp_pred["target"],
+                    mtp_pred["eval_mask"],
+                    data["agent"]["type"],
+                )
+                auxiliary_losses[offset] = offset_loss
+                self.log(
+                    f"mtp_loss_offset_{offset}",
+                    offset_loss,
+                    prog_bar=False,
+                    on_step=True,
+                    on_epoch=True,
+                    batch_size=1,
+                )
+
+        loss, mtp_aux_loss, _ = compute_weighted_mtp_loss(
+            cls_loss,
+            auxiliary_losses,
+            self.mtp_loss_weights,
+        )
         self.log(
             "train_loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=1
         )
@@ -254,6 +332,15 @@ class SMART(pl.LightningModule):
             on_epoch=True,
             batch_size=1,
         )
+        if self.mtp_enabled:
+            self.log(
+                "mtp_aux_loss",
+                mtp_aux_loss,
+                prog_bar=False,
+                on_step=True,
+                on_epoch=True,
+                batch_size=1,
+            )
         return loss
 
     def validation_step(self, data, batch_idx):

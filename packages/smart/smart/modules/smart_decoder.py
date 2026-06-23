@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence
 import torch
 import torch.nn as nn
 from torch_geometric.data import HeteroData
@@ -27,6 +27,7 @@ class SMARTDecoder(nn.Module):
         token_data: Dict,
         use_intention=False,
         token_size=512,
+        mtp_offsets: Optional[Sequence[int]] = None,
     ) -> None:
         super(SMARTDecoder, self).__init__()
         self.map_encoder = SMARTMapDecoder(
@@ -57,6 +58,7 @@ class SMARTDecoder(nn.Module):
             dropout=dropout,
             token_size=token_size,
             token_data=token_data,
+            mtp_offsets=mtp_offsets,
         )
         self.map_enc = None
 

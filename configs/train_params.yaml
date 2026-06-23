@@ -178,6 +178,9 @@ smart:
     distance_epsilon: 0.001
     trajectory_dims: [0, 1]
     chunk_size: 4096
+    mtp_enabled: false
+    mtp_offsets: [1, 2, 3]
+    mtp_loss_weights: [1.0, 0.1, 0.03]
 
 # ------------------------------------------------------------
 # Output Paths

@@ -1,4 +1,4 @@
-from typing import Dict, Mapping, Optional
+from typing import Dict, Mapping, Optional, Sequence
 import torch
 import torch.nn as nn
 from smart.layers import MLPLayer
@@ -32,6 +32,31 @@ def cal_polygon_contour(x, y, theta, width, length):
     return polygon_contour
 
 
+def build_mtp_target_and_mask(
+    agent_token_index: torch.Tensor,
+    valid_mask: torch.Tensor,
+    offset: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if offset < 1:
+        raise ValueError("MTP offset must be positive.")
+    if agent_token_index.ndim != 2:
+        raise ValueError("agent_token_index must have shape [num_agent, num_step].")
+    if valid_mask.shape != agent_token_index.shape:
+        raise ValueError("valid_mask shape must match agent_token_index shape.")
+
+    target = agent_token_index.roll(shifts=-offset, dims=1)
+    eval_mask = valid_mask.bool().clone()
+    for step in range(1, offset + 1):
+        eval_mask &= valid_mask.bool().roll(shifts=-step, dims=1)
+
+    if offset >= eval_mask.shape[1]:
+        eval_mask[:] = False
+    else:
+        eval_mask[:, -offset:] = False
+
+    return target, eval_mask
+
+
 class SMARTAgentDecoder(nn.Module):
     def __init__(
         self,
@@ -49,6 +74,7 @@ class SMARTAgentDecoder(nn.Module):
         dropout: float,
         token_data: Dict,
         token_size=512,
+        mtp_offsets: Optional[Sequence[int]] = None,
     ) -> None:
         super(SMARTAgentDecoder, self).__init__()
         self.dataset = dataset
@@ -153,10 +179,24 @@ class SMARTAgentDecoder(nn.Module):
         self.token_predict_head = MLPLayer(
             input_dim=hidden_dim, hidden_dim=hidden_dim, output_dim=self.token_size
         )
+        self.mtp_offsets = tuple(int(offset) for offset in (mtp_offsets or (1,)))
+        self.mtp_heads = nn.ModuleDict(
+            {
+                str(offset): MLPLayer(
+                    input_dim=hidden_dim,
+                    hidden_dim=hidden_dim,
+                    output_dim=self.token_size,
+                )
+                for offset in self.mtp_offsets
+                if offset != 1
+            }
+        )
         self.trajectory_token = token_data["token"]
         self.trajectory_token_traj = token_data["traj"]
         self.trajectory_token_all = token_data["token_all"]
         self.apply(weight_init)
+        for head in self.mtp_heads.values():
+            head.load_state_dict(self.token_predict_head.state_dict())
         self.shift = 5
         self.beam_size = 5
         self.hist_mask = True
@@ -593,6 +633,21 @@ class SMARTAgentDecoder(nn.Module):
             * next_token_eval_mask.roll(shifts=1, dims=1)
         )
         next_token_eval_mask[:, -1] = False
+        mtp_predictions = {}
+        if self.training:
+            for offset in self.mtp_offsets:
+                if offset == 1:
+                    continue
+                target, eval_mask = build_mtp_target_and_mask(
+                    agent_token_index,
+                    mask,
+                    offset,
+                )
+                mtp_predictions[offset] = {
+                    "logits": self.mtp_heads[str(offset)](feat_a),
+                    "target": target,
+                    "eval_mask": eval_mask,
+                }
 
         return {
             "x_a": feat_a,  # The final agent feature after multi-layer attention, which will be used for token prediction and can also be used for auxiliary loss such as contrastive learning. The dimension of x_a is (num_agent, num_step, hidden_dim).
@@ -600,6 +655,7 @@ class SMARTAgentDecoder(nn.Module):
             "next_token_prob": next_token_prob,  # This is the unnormalized logit output for token prediction, which will be used for computing the loss during training. During inference, we will apply softmax to get the probability distribution over tokens and then select the top-k tokens for trajectory generation. The dimension of next_token_prob is (num_agent, num_step, token_size).
             "next_token_idx_gt": next_token_index_gt,  # This is the ground truth next token index, which is used for computing the loss during training. The dimension of next_token_index_gt is (num_agent, num_step).
             "next_token_eval_mask": next_token_eval_mask,
+            "mtp_predictions": mtp_predictions,
         }
 
     def inference(
