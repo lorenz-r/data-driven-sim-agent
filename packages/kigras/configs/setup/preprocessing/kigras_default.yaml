@@ -1,0 +1,7 @@
+# IO paths for preprocessing
+input:
+  train: ${raw_train}
+  val: ${raw_val}
+output:
+  train: ${processed_train}
+  val: ${processed_val}

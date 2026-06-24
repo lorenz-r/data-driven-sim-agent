@@ -1,0 +1,6 @@
+# KiGRAS Architecture Params
+embedding_dim: 64
+num_head: 4
+encoder_num_layers: 3
+decoder_num_layers: 3
+dropout: 0.1

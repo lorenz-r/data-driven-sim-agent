@@ -1,0 +1,12 @@
+defaults:
+  - _self_
+  - paths  # always load the paths first
+  - model/architecture: kigras_default_arch
+  - model/kinematics: ctra
+  # - setup/caching: TODO
+  # - setup/downloading: TODO
+  - setup/preprocessing: kigras_default
+  - training/dataloader: dataloader_default
+  - training/optimizer: optim_default
+  - training/checkpoints: checkpoints_default
+  # - training/logging: wandb TODO

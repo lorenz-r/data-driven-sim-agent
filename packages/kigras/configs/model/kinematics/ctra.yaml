@@ -1,0 +1,9 @@
+# CTRA-specific configs
+name: ctra
+max_accel: 5.0        # max acceleration (m/s^2)
+max_yaw_rate: 1.5     # max yaw rate (rad/s)
+max_iter: 20
+loss: huber
+num_yaw_bins: 63
+num_accel_bins: 63
+delta_time: 0.1       # timestep (s)

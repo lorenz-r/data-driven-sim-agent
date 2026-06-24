@@ -1,0 +1,13 @@
+# Use default paths from the top level config (don't modify this)
+defaults:
+  - /paths
+train_path: ${processed_train}
+val_path: ${processed_val}
+
+# Loader settings
+batch_size: 1
+val_batch_size: 1
+data_workers: 1
+shuffle_train: true
+pin_memory: true
+persistent_workers: false
