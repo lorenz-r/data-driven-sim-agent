@@ -1,7 +1,6 @@
 import torch
 from torch import Tensor
 import torch.nn as nn
-from pathlib import Path
 
 
 class CTRAKinematics:
@@ -40,7 +39,7 @@ class CTRAKinematics:
 
     def __init__(
         self,
-        name: str = 'ctra',
+        name: str = "ctra",
         delta_time: float = 0.5,
         max_iter: int = 5,
         loss: str = "huber",
@@ -63,7 +62,6 @@ class CTRAKinematics:
         # Action grids
         self.accel_bins = torch.linspace(-max_accel, max_accel, num_accel_bins)
         self.yaw_rate_bins = torch.linspace(-max_yaw_rate, max_yaw_rate, num_yaw_bins)
-
 
     # FORWARD KINEMATICS
     def forward(self, init_state: Tensor, actions: Tensor) -> Tensor:

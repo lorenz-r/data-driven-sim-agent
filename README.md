@@ -385,3 +385,96 @@ Pass `--keep-profile-action-files` if you want to inspect individual actions.
 
 PyTorch traces can become large on full training runs, so prefer `simple` first
 and use `pytorch` on a short profiling run.
+
+### KiGRAS
+
+Supports two kinematics backends: CTRA (Constant
+Turn Rate and Acceleration) and KBM (Kinematic Bicycle Model).
+
+#### Config schema
+
+All model-specific configs live under `packages/kigras/configs/` and use Hydra
+composition:
+
+```
+packages/kigras/configs/
+├── config.yaml                                  # Root: composes all sub-configs
+├── paths.yaml                                   # Data paths (raw & processed)
+├── model/
+│   ├── architecture/kigras_default_arch.yaml    # Transformer dimensions
+│   └── kinematics/{ctra,kbm}.yaml               # Kinematics parameters
+├── training/
+│   ├── trainer/trainer_default.yaml             # Lightning trainer settings
+│   ├── dataloader/dataloader_default.yaml       # Batch size, workers, mode
+│   ├── optimizer/optim_default.yaml             # AdamW, LR, scheduler
+│   ├── checkpointing/checkpoints_default.yaml
+│   └── early_stopping/default_es_behaviour.yaml
+└── setup/preprocessing/kigras_default.yaml      # Preprocessing paths
+```
+
+| Config key | Description | Default |
+|---|---|---|
+| `model.architecture.embedding_dim` | Transformer embedding size | 64 |
+| `model.architecture.num_head` | Multi-head attention heads | 4 |
+| `model.architecture.encoder_num_layers` | Scene encoder layers | 3 |
+| `model.architecture.decoder_num_layers` | Action decoder layers | 3 |
+| `model.architecture.dropout` | Dropout rate | 0.1 |
+| `model.architecture.num_actions` | Control dimensions (accel + steer/yaw) | 2 |
+| `model.architecture.num_action_bins` | Discrete bins per control dim | 63 |
+| `model.kinematics.name` | Kinematics backend (ctra or kbm) | ctra |
+| `model.kinematics.max_accel` | Max acceleration (m/s²) | 5.0 |
+| `model.kinematics.max_yaw_rate` | Max yaw rate (rad/s) | 1.5 |
+| `training.dataloader.mode` | `raw` reads parquets; `proc` reads preprocessed `.npy` | proc |
+| `training.dataloader.train_batch_size` | Training batch size | 1 |
+| `training.dataloader.val_batch_size` | Validation batch size | 1 |
+| `training.trainer.max_epochs` | Max training epochs | 10 |
+
+#### Training via the unified pipeline
+
+```bash
+# Train with defaults (uses kigras's internal Hydra config)
+uv run train.py --model kigras
+
+# With downloads and Hydra overrides
+uv run train.py --download-first \
+                --download-size single \
+                --model kigras \
+                -- \
+                model.architecture.num_action_bins=127
+
+# With data paths and Hydra overrides
+uv run train.py --model kigras \
+                -- \
+                training.trainer.max_epochs=200 \
+                model.architecture.embedding_dim=128
+
+```
+
+Everything after `--` is forwarded as raw Hydra overrides to kigras's config
+composition, giving full access to all model parameters without modifying YAML
+files. NOTE: currently, preprocessing is handled automatically by `trainers/kigras_trainer.py`.
+This behaviour is expected to change with further integration into the pipeline.
+
+#### Standalone usage
+
+KiGRAS can also be run directly without the top-level pipeline:
+
+```bash
+uv run python packages/kigras/train.py training.trainer.max_epochs=200
+uv run python packages/kigras/eval.py
+```
+
+#### Evaluation
+
+After training, use `packages/kigras/eval.py` to evaluate and visualize the output.
+
+#### Data modes
+
+- **Raw mode** (`mode: raw`): reads AV2 parquet files on the fly via
+  `ArgoDataset`. No preprocessing needed, but slower iteration.
+- **Preprocessed mode** (`mode: proc`, default): reads pre-computed `.npy` files
+  with cached kinematics solutions. Run the preprocessing script to generate:
+
+```bash
+uv run python packages/kigras/scripts/preprocess_kinematics.py
+```

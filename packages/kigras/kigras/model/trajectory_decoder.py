@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+
 # from kbm import KinematicBicycleModel
 from ..kinematics.ctra import CTRAKinematics
 
@@ -81,16 +82,13 @@ from ..kinematics.ctra import CTRAKinematics
 class CTRATrajectoryDecoder:
     """Decodes CTRA action tokens back to global trajectories."""
 
-    def __init__(
-        self,
-        **kwargs
-    ):
+    def __init__(self, **kwargs):
         self.ctra = CTRAKinematics(**kwargs)
 
         self.accel_bins = self.ctra.accel_bins
         self.yaw_rate_bins = self.ctra.yaw_rate_bins
-        self.num_accel = kwargs['num_accel_bins']
-        self.num_steer = kwargs['num_yaw_bins']
+        self.num_accel = kwargs["num_accel_bins"]
+        self.num_steer = kwargs["num_yaw_bins"]
 
     def decode_to_global(self, predicted_tokens, focal_history):
         current_step = focal_history[49]

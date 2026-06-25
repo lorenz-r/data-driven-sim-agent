@@ -20,7 +20,7 @@ class ArgoDataModule(L.LightningDataModule):
         pin_memory: bool = True,
         persistent_workers: bool = True,
         shuffle: bool = True,
-        mode: Literal["raw", "proc"] = "proc"
+        mode: Literal["raw", "proc"] = "proc",
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -44,7 +44,9 @@ class ArgoDataModule(L.LightningDataModule):
         if stage in ("predict", None):
             self.predict_dataset = self._make_dataset(self.hparams.test_dir)
 
-    def _create_dataloader(self, dataset, batch_size: int, shuffle: bool = False) -> DataLoader:
+    def _create_dataloader(
+        self, dataset, batch_size: int, shuffle: bool = False
+    ) -> DataLoader:
         return DataLoader(
             dataset,
             batch_size=batch_size,
@@ -57,7 +59,9 @@ class ArgoDataModule(L.LightningDataModule):
 
     def train_dataloader(self):
         return self._create_dataloader(
-            self.train_dataset, self.hparams.train_batch_size, shuffle=self.hparams.shuffle
+            self.train_dataset,
+            self.hparams.train_batch_size,
+            shuffle=self.hparams.shuffle,
         )
 
     def val_dataloader(self):
@@ -67,4 +71,6 @@ class ArgoDataModule(L.LightningDataModule):
         return self._create_dataloader(self.test_dataset, self.hparams.test_batch_size)
 
     def predict_dataloader(self):
-        return self._create_dataloader(self.predict_dataset, self.hparams.test_batch_size)
+        return self._create_dataloader(
+            self.predict_dataset, self.hparams.test_batch_size
+        )

@@ -30,33 +30,35 @@ from omegaconf import DictConfig, OmegaConf
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # Import your dataloader and KBM components
 from kigras.dataloader.dataset import ArgoDataset
+
 # from kbm import KinematicBicycleModel
-from kigras.kinematics.inverse_kinematics import InverseKinematicModule
+# from kigras.kinematics.inverse_kinematics import InverseKinematicModule
 
 
-def run_preprocessing(input_dir: Path | None,
-                      output_dir: Path | None,
-                      kinematics_cfg: OmegaConf | None,
-                      split: str | None
-                      ):
+def run_preprocessing(
+    input_dir: Path | None,
+    output_dir: Path | None,
+    kinematics_cfg: OmegaConf | None,
+    split: str | None,
+):
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if kinematics_cfg.name == "ctra":
         import torch
         from kigras.kinematics.ctra import CTRAKinematics
+
         kinematics = CTRAKinematics(**kinematics_cfg)
 
-    elif kinematics_cfg.name == "kbm":
-        kbm = KinematicBicycleModel(
-            wheelbase=kinematics_cfg.wheelbase,
-            max_steer=kinematics_cfg.max_steer,
-            delta_time=kinematics_cfg.delta_time
-        )
-        kinematics = InverseKinematicModule(
-            kbm, num_accel=kinematics_cfg.num_accel,
-            num_steer=kinematics_cfg.num_steer
-        )
+    # elif kinematics_cfg.name == "kbm":
+    #     kbm = KinematicBicycleModel(
+    #         wheelbase=kinematics_cfg.wheelbase,
+    #         max_steer=kinematics_cfg.max_steer,
+    #         delta_time=kinematics_cfg.delta_time,
+    #     )
+    #     kinematics = InverseKinematicModule(
+    #         kbm, num_accel=kinematics_cfg.num_accel, num_steer=kinematics_cfg.num_steer
+    #     )
     else:
         raise ValueError(f"Unsupported kinematics type: {kinematics_cfg.name}")
 
@@ -73,8 +75,8 @@ def run_preprocessing(input_dir: Path | None,
         data = raw_dataset[i]
 
         N = data["agents"]["future"].shape[0]  # number of agents
-        track_ids = data["agents"]["track_ids"]
-        agent_action_tokens = np.full((N, 60), -1, dtype=np.int64)
+        # track_ids = data["agents"]["track_ids"]
+        # agent_action_tokens = np.full((N, 60), -1, dtype=np.int64)
 
         if kinematics_cfg.name == "ctra":
             state_49 = data["agents"]["history"][:, 49]  # Shape: (N, 7)
@@ -124,34 +126,34 @@ def run_preprocessing(input_dir: Path | None,
             token_ids = kinematics.actions_to_token_ids(actions).numpy()
             data["agents"]["action_tokens"] = token_ids  # (N, 60)
 
-        # TODO: Adjust this to process mutiple agents as well
-        elif kinematics_cfg.name == "kbm":
-            focal_id = data["focal_track_id"]
-            focal_idx = track_ids.index(focal_id)
-            future = data["agents"]["future"]
+        # # TODO: Adjust this to process mutiple agents as well
+        # elif kinematics_cfg.name == "kbm":
+        #     focal_id = data["focal_track_id"]
+        #     focal_idx = track_ids.index(focal_id)
+        #     future = data["agents"]["future"]
 
-            focal_hist = data["agents"]["history"][focal_idx, 49]
-            c_x, c_y = focal_hist[0], focal_hist[1]
-            c_yaw = np.arctan2(focal_hist[3], focal_hist[2])
-            c_v = np.hypot(focal_hist[4], focal_hist[5])
-            current_state = [c_x, c_y, c_yaw, c_v]
+        #     focal_hist = data["agents"]["history"][focal_idx, 49]
+        #     c_x, c_y = focal_hist[0], focal_hist[1]
+        #     c_yaw = np.arctan2(focal_hist[3], focal_hist[2])
+        #     c_v = np.hypot(focal_hist[4], focal_hist[5])
+        #     current_state = [c_x, c_y, c_yaw, c_v]
 
-            valid_mask = future[..., 6] > 0
-            valid_targets = future[focal_idx, valid_mask[focal_idx], :2]
-            if len(valid_targets) == 0:
-                preprocessed_data_list.append(data)
-                continue
+        #     valid_mask = future[..., 6] > 0
+        #     valid_targets = future[focal_idx, valid_mask[focal_idx], :2]
+        #     if len(valid_targets) == 0:
+        #         preprocessed_data_list.append(data)
+        #         continue
 
-            trajectory_for_ik = [current_state] + valid_targets.tolist()
-            action_tokens = kinematics.solve_actions(trajectory_for_ik)
+        #     trajectory_for_ik = [current_state] + valid_targets.tolist()
+        #     action_tokens = kinematics.solve_actions(trajectory_for_ik)
 
-            n_valid_focal = int(valid_mask[focal_idx].sum())
-            agent_action_tokens[focal_idx, :n_valid_focal] = action_tokens[
-                :n_valid_focal
-            ]
+        #     n_valid_focal = int(valid_mask[focal_idx].sum())
+        #     agent_action_tokens[focal_idx, :n_valid_focal] = action_tokens[
+        #         :n_valid_focal
+        #     ]
 
-            # TODO: multi-agent KBM - currently only populates focal agent's tokens
-            data["agents"]["action_tokens"] = agent_action_tokens  # (N, 60)
+        #     # TODO: multi-agent KBM - currently only populates focal agent's tokens
+        #     data["agents"]["action_tokens"] = agent_action_tokens  # (N, 60)
 
         preprocessed_data_list.append(data)
 
@@ -221,7 +223,7 @@ def process(cfg):
             input_dir=Path(proc_cfg.input[split]),
             output_dir=Path(proc_cfg.output[split]),
             kinematics_cfg=kin_cfg,
-            split=split
+            split=split,
         )
         end = time.perf_counter()
         print(f"Preprocessing {split} total time: {end - start:.2f} seconds")

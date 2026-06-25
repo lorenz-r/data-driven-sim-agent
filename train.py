@@ -159,7 +159,7 @@ def process_2_smart(
 def parse_args():
     if "--" in sys.argv:
         idx = sys.argv.index("--")
-        additional_overrides = sys.argv[idx + 1:]
+        additional_overrides = sys.argv[idx + 1 :]
         sys.argv = sys.argv[:idx]
     else:
         additional_overrides = []
@@ -455,7 +455,7 @@ if __name__ == "__main__":
                     args=args,
                 )
 
-        if args.model == 'kigras':
+        if args.model == "kigras":
             # TODO: implement kigras preprocessing
             # Reads raw AV2 from av2_data/raw_av2/, writes to data/kigras_processed/
             # currently, this is done in trainers/kigras_trainer.py

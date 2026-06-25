@@ -238,14 +238,15 @@ class ArgoDataset(Dataset):
       - Preprocessed (when processed_path!=None): loads a pre-saved numpy blob for fast iteration.
     """
 
-    def __init__(self,
-                 raw_path: Path | None = None,
-                 processed_path: Path | None = None,
-                ):
-        
+    def __init__(
+        self,
+        raw_path: Path | None = None,
+        processed_path: Path | None = None,
+    ):
+
         # path checks
         if not processed_path and not raw_path:
-            raise ValueError ("Please pass at least one: [ raw_path | raw_path ]")
+            raise ValueError("Please pass at least one: [ raw_path | raw_path ]")
         if processed_path and raw_path:
             raise ValueError("Please pass only one: [ raw_path | raw_path ]")
         for path in (raw_path, processed_path):
@@ -254,11 +255,11 @@ class ArgoDataset(Dataset):
                     raise ValueError(f"Invalid path: {path}")
                 elif not any(path.iterdir()):
                     raise ValueError(f"Path empty: {path}")
-                
-        path = (processed_path if processed_path else raw_path)
+
+        path = processed_path if processed_path else raw_path
         self.path = cast(Path, path).resolve()
-        self.mode = 'proc' if processed_path else 'raw'
-        
+        self.mode = "proc" if processed_path else "raw"
+
         if processed_path:
             self.split = self._load_preprocessed(self.path)
             self.num_files = len(self.split)
@@ -267,14 +268,16 @@ class ArgoDataset(Dataset):
             self.num_files = len(self.filenames)
 
     def _load_preprocessed(self, processed_path: Path):
-        return np.load(processed_path/f"{processed_path.name}_split.npy", allow_pickle=True)
+        return np.load(
+            processed_path / f"{processed_path.name}_split.npy", allow_pickle=True
+        )
 
     # Length / getitem
     def __len__(self) -> int:
         return self.num_files
 
     def __getitem__(self, idx: int) -> dict:
-        if self.mode == 'proc':
+        if self.mode == "proc":
             return self._get_preprocessed(idx)
 
         data = self._load_scene(idx)
@@ -294,9 +297,7 @@ class ArgoDataset(Dataset):
         The graph is an explicit directed node graph - see the 'graph' section above for the schema.
         """
         file_id = self.filenames[idx]
-        parquet_path = os.path.join(
-            self.path, file_id, f"scenario_{file_id}.parquet"
-        )
+        parquet_path = os.path.join(self.path, file_id, f"scenario_{file_id}.parquet")
         scenario = load_argoverse_scenario_parquet(Path(parquet_path))
 
         agents = self._extract_agents(scenario)
@@ -420,9 +421,7 @@ class ArgoDataset(Dataset):
 
         Returns a dict with the schema documented in the module docstring.
         """
-        map_path = os.path.join(
-            self.path, file_id, f"log_map_archive_{file_id}.json"
-        )
+        map_path = os.path.join(self.path, file_id, f"log_map_archive_{file_id}.json")
         avm = ArgoverseStaticMap.from_json(Path(map_path))
         lane_ids = avm.get_scenario_lane_segment_ids()
 

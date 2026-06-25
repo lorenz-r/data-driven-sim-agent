@@ -23,7 +23,7 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
         train_batch_size=dl_cfg.train_batch_size,
         val_batch_size=dl_cfg.val_batch_size,
         num_workers=dl_cfg.data_workers,
-        mode=dl_cfg.mode
+        mode=dl_cfg.mode,
     )
 
     model = KiGRAS(
@@ -45,6 +45,7 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
 
     if es_cfg.enabled:
         from pytorch_lightning.callbacks import EarlyStopping
+
         callbacks.append(
             EarlyStopping(
                 monitor=es_cfg.monitor,
@@ -65,7 +66,7 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
         strategy=strategy,
         callbacks=callbacks,
         logger=wandb_logger,
-        **trainer_cfg
+        **trainer_cfg,
     )
 
     ckpt_dir = Path(ckpt_cfg.dirpath)

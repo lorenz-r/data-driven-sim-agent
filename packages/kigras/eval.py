@@ -138,8 +138,9 @@ def main(cfg: DictConfig) -> None:
 
     print(f"Focal ADE: {ade:.2f}m")
     print(f"Focal FDE: {fde:.2f}m")
-    fig = plot_trajectories(
-        gt_trajs, pred_trajs,
+    _ = plot_trajectories(
+        gt_trajs,
+        pred_trajs,
         agent_labels=[str(t) for t in track_ids],
         title=f"Multi-Agent Rollout  |  Focal ADE: {ade:.2f}m  FDE: {fde:.2f}m",
     )

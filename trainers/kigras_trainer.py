@@ -22,7 +22,7 @@ class KigrasTrainer(BaseTrainer):
         process(cfg)
 
         return run_training(cfg, wandb_logger=self.wandb_logger)
-    
+
     def validate(self):
         print(f"Validating with {self.name}...")
 
