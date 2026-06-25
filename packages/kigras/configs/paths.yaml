@@ -1,7 +1,7 @@
 # Single source of truth for all data paths, adjust to your needs
 package_root: ${hydra:runtime.cwd} # run from the top-level dir in monorepo
-raw_train: ${package_root}/data/raw/train
-raw_val: ${package_root}/data/raw/val
-processed_train: ${package_root}/data/kigras_processed/train
-processed_val: ${package_root}/data/kigras_processed/val
+raw_train: ${package_root}/av2_data/raw_av2/train
+raw_val: ${package_root}/av2_data/raw_av2/val
+processed_train: ${package_root}/av2_data/kigras_processed/train
+processed_val: ${package_root}/av2_data/kigras_processed/val
 checkpoint_save_path: ${package_root}/checkpoints

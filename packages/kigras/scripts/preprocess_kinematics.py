@@ -211,11 +211,7 @@ def test():
         print("It worked!")
 
 
-@hydra.main(config_path="../configs", config_name="config", version_base=None)
-def main(cfg: DictConfig) -> None:
-    OmegaConf.resolve(cfg)
-    OmegaConf.set_struct(cfg, False)
-
+def process(cfg):
     proc_cfg = cfg.setup.preprocessing
     kin_cfg = cfg.model.kinematics
 
@@ -229,6 +225,13 @@ def main(cfg: DictConfig) -> None:
         )
         end = time.perf_counter()
         print(f"Preprocessing {split} total time: {end - start:.2f} seconds")
+
+
+@hydra.main(config_path="../configs", config_name="config", version_base=None)
+def main(cfg: DictConfig) -> None:
+    OmegaConf.resolve(cfg)
+    OmegaConf.set_struct(cfg, False)
+    process(cfg)
 
 
 if __name__ == "__main__":

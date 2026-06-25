@@ -151,16 +151,19 @@ def process_2_smart(
     return cache_dir
 
 
-def make_splits():
-    return
-
-
 # ============================================================
 # CLI Argument Parsing
 # ============================================================
 
 
 def parse_args():
+    if "--" in sys.argv:
+        idx = sys.argv.index("--")
+        additional_overrides = sys.argv[idx + 1:]
+        sys.argv = sys.argv[:idx]
+    else:
+        additional_overrides = []
+
     parser = argparse.ArgumentParser()
 
     # --------------------------------------------------------
@@ -296,7 +299,9 @@ def parse_args():
     # --------------------------------------------------------
     add_profiler_args(parser)
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.additional_overrides = additional_overrides
+    return args
 
 
 # ============================================================
@@ -449,12 +454,25 @@ if __name__ == "__main__":
                     blob_cache_name=args.blob_cache_name,
                     args=args,
                 )
+
+        if args.model == 'kigras':
+            # TODO: implement kigras preprocessing
+            # Reads raw AV2 from av2_data/raw_av2/, writes to data/kigras_processed/
+            # currently, this is done in trainers/kigras_trainer.py
+            pass
+
     if cache is not None:
         # Dynamically adjust file paths based on the SMART preprocessing/cache.
         args.train_path = str(cache / "train")
         args.val_path = str(cache / "val")
 
     config = build_config(args=args)
+
+    # [AM] NOTE: Add configs after '--' as overrides (currently only used in kigras)
+    # Current usage of CLI includes additional parameters which, if passed, override kigras hydra.
+    # Example:
+    #   uv run train.py --model kigras -- training.trainer.max_epochs=200 paths.processed_train=/custom/path
+    config["model"]["overrides"] = [a for a in args.additional_overrides if a != "--"]
 
     print("\n========== FINAL CONFIG ==========")
     print(yaml.dump(config, sort_keys=False))
