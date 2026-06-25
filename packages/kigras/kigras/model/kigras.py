@@ -11,8 +11,7 @@ from ..utils.train_utils import transform_batch
 class KiGRAS(pl.LightningModule):
     def __init__(
         self,
-        num_accel_bins=63,
-        num_steer_bins=63,
+        vocab_size=3969,
         num_semantic_classes=10,
         d_model=64,
         nhead=4,
@@ -22,7 +21,7 @@ class KiGRAS(pl.LightningModule):
         lr=2e-4,
         weight_decay=1e-4,
     ):
-        vocab_size = num_accel_bins * num_steer_bins
+        vocab_size = vocab_size
 
         super().__init__()
         self.save_hyperparameters()

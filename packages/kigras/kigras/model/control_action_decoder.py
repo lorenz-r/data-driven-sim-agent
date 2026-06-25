@@ -119,7 +119,7 @@ class ActionDecoder(nn.Module):
         # Memory padding mask - prevents cross-attending to invalid agents
         mem_key_padding_mask = None
         if agent_valid is not None:
-            mem_key_padding_mask = ~agent_valid.reshape(B * N, T)  # [B*N, T]
+            mem_key_padding_mask = (~agent_valid.reshape(B * N, T)).float()  # [B*N, T]
 
         out = self.decoder(
             tgt,

@@ -3,5 +3,5 @@ name: kbm
 wheelbase: 2.5        # vehicle wheelbase (m)
 max_steer: 0.785      # max steering angle (rad)
 delta_time: 0.1       # timestep (s)
-num_steer: 63
-num_accel: 63
+num_steer: ${model.architecture.num_action_bins}
+num_accel: ${model.architecture.num_action_bins}

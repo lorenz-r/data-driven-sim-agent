@@ -1,0 +1,9 @@
+# Torch Lighning checkpointing settings.
+# For reference, see: https://lightning.ai/docs/pytorch/stable/api/lightning.pytorch.callbacks.ModelCheckpoint.html
+save_last: true
+save_top_k: 3
+every_n_epochs: 1
+monitor: "val_loss"
+mode: "min"
+dirpath: ${checkpoint_save_path}
+filename: "{epoch:02d}"

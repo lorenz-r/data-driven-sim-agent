@@ -234,8 +234,8 @@ class ArgoDataset(Dataset):
     """Argoverse 2 motion forecasting dataset.
 
     Two modes:
-      - Raw (default): loads parquet files on the fly.
-      - Preprocessed: loads a pre-saved numpy blob for fast iteration. #TODO: implement this
+      - Raw (when raw_path!=None): loads parquet files on the fly.
+      - Preprocessed (when processed_path!=None): loads a pre-saved numpy blob for fast iteration.
     """
 
     def __init__(self,
@@ -243,9 +243,11 @@ class ArgoDataset(Dataset):
                  processed_path: Path | None = None,
                 ):
         
+        # path checks
+        if not processed_path and not raw_path:
+            raise ValueError ("Please pass at least one: [ raw_path | raw_path ]")
         if processed_path and raw_path:
-            raise ValueError("Please choose only one: [ raw_path | raw_path ]")
-        
+            raise ValueError("Please pass only one: [ raw_path | raw_path ]")
         for path in (raw_path, processed_path):
             if path:
                 if not path.exists():
@@ -256,7 +258,7 @@ class ArgoDataset(Dataset):
         path = (processed_path if processed_path else raw_path)
         self.path = cast(Path, path).resolve()
         self.mode = 'proc' if processed_path else 'raw'
-
+        
         if processed_path:
             self.split = self._load_preprocessed(self.path)
             self.num_files = len(self.split)
@@ -265,7 +267,7 @@ class ArgoDataset(Dataset):
             self.num_files = len(self.filenames)
 
     def _load_preprocessed(self, processed_path: Path):
-        return np.load(processed_path, allow_pickle=True)
+        return np.load(processed_path/f"{processed_path.name}_split.npy", allow_pickle=True)
 
     # Length / getitem
     def __len__(self) -> int:
