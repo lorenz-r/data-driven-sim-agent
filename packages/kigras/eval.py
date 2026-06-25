@@ -3,13 +3,13 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
-
 from kigras.dataloader.dataset import ArgoDataset, collate_fn
 from kigras.model.kigras import KiGRAS
 from kigras.utils.train_utils import transform_batch
-from kigras.model.trajectory_decoder import AV2TrajectoryDecoder, CTRATrajectoryDecoder
+from kigras.model.trajectory_decoder import CTRATrajectoryDecoder
+from kigras.utils.visualization import plot_trajectories
 
 
 @torch.no_grad()
@@ -95,77 +95,34 @@ def evaluate_scenario(model, batch, device, traj_decoder):
     return all_pred_xy, all_gt_xy, track_ids, ade, fde
 
 
-def plot_trajectories(pred_trajs, gt_trajs, track_ids, ade, fde):
-    num_agents = len(pred_trajs)
-    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-
-    for j in range(num_agents):
-        pred = pred_trajs[j]
-        gt = gt_trajs[j]
-        c = f"C{j}"
-        alpha = max(0.3, 1.0 - 0.03 * j)
-        ax.plot(gt[:, 0], gt[:, 1], "-", alpha=alpha, linewidth=1.0, c=c)
-        ax.plot(pred[:, 0], pred[:, 1], "--", alpha=alpha, linewidth=1.0, c=c)
-        ax.scatter(gt[0, 0], gt[0, 1], c=c, marker="o", s=20, zorder=5)
-        label = track_ids[j] if isinstance(track_ids[j], str) else str(track_ids[j])
-        ax.text(gt[0, 0], gt[0, 1], f"  {label}", fontsize=5, c=c, va="bottom")
-
-    ax.set_aspect("equal")
-    ax.set_title(f"Multi-Agent Rollout  |  Focal ADE: {ade:.2f}m  FDE: {fde:.2f}m")
-    ax.set_xlabel("X (meters)")
-    ax.set_ylabel("Y (meters)")
-    ax.legend(
-        [plt.Line2D([], [], c="k", ls="-"), plt.Line2D([], [], c="k", ls="--")],
-        ["GT", "pred"],
-        fontsize=8,
-    )
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    plt.show()
-
-
-@hydra.main(config_path="../../configs", config_name="config", version_base=None)
+@hydra.main(config_path="./configs", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
+    OmegaConf.resolve(cfg)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    ckpt_path = Path(cfg["checkpointing"]["save_dir"]) / "last.ckpt"
+    kin_cfg = cfg.model.kinematics
+
+    ckpt_path = Path(cfg.checkpoint_save_path) / "last.ckpt"
     if ckpt_path.exists():
         try:
             model = KiGRAS.load_from_checkpoint(ckpt_path).to(device)
             print(f"Loaded checkpoint from {ckpt_path}")
         except RuntimeError as e:
-            print(
-                f"Checkpoint incompatible (architecture changed), starting fresh: {e}"
-            )
-            model = KiGRAS().to(device)
+            print(f"Checkpoint incompatible (architecture changed): {e}")
+            return
     else:
-        print(f"No checkpoint at {ckpt_path}, starting fresh model")
-        model = KiGRAS().to(device)
+        print(f"No checkpoint at {ckpt_path}")
+        return
 
-    kin_type = cfg.kigras.get("kinematics_type", "kbm")
-    num_accel = cfg.kigras.get("num_accel_bins", 63)
-    num_steer = cfg.kigras.get("num_steer_bins", 63)
+    kin_type = kin_cfg.name
+
     if kin_type == "ctra":
-        traj_decoder = CTRATrajectoryDecoder(
-            num_accel=num_accel,
-            num_steer=num_steer,
-            max_accel=cfg.kigras.get("max_accel", 5.0),
-            max_yaw_rate=cfg.kigras.get("max_yaw_rate", 1.5),
-        )
+        traj_decoder = CTRATrajectoryDecoder(**kin_cfg)
     else:
-        traj_decoder = AV2TrajectoryDecoder(num_accel=num_accel, num_steer=num_steer)
+        # traj_decoder = AV2TrajectoryDecoder(num_accel=num_bins, num_steer=num_bins)
+        pass
 
-    val_path = cfg["data"].get("val_path")
-    if val_path is None:
-        processed_root = Path("data") / f"{cfg.model.model_name}_processed"
-        val_path = str(processed_root / "val" / "val_split.npy")
-
-    if val_path.endswith(".npy"):
-        val_config: dict = {"preprocess": True, "preprocess_path": val_path}
-    else:
-        val_config = {"root": val_path, "preprocess": False}
-
-    val_dataset = ArgoDataset(val_config, train=False)
+    val_dataset = ArgoDataset(processed_path=Path(cfg.processed_val))
     val_loader = DataLoader(
         val_dataset,
         batch_size=1,
@@ -181,7 +138,12 @@ def main(cfg: DictConfig) -> None:
 
     print(f"Focal ADE: {ade:.2f}m")
     print(f"Focal FDE: {fde:.2f}m")
-    plot_trajectories(pred_trajs, gt_trajs, track_ids, ade, fde)
+    fig = plot_trajectories(
+        gt_trajs, pred_trajs,
+        agent_labels=[str(t) for t in track_ids],
+        title=f"Multi-Agent Rollout  |  Focal ADE: {ade:.2f}m  FDE: {fde:.2f}m",
+    )
+    plt.show()
 
 
 if __name__ == "__main__":

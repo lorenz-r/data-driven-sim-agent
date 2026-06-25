@@ -111,13 +111,12 @@ def run_preprocessing(input_dir: Path | None,
                 full_obs_t, quantize=True, valid_mask=full_mask_t
             )
 
-            # from kigras.utils.plot_rollout import plot_kinematic_rollout
+            # from kigras.utils.visualization import plot_trajectories
             # import matplotlib.pyplot as plt
-            # fig = plot_kinematic_rollout(
-            #     observed_states=full_obs_t,
-            #     actions=actions,
-            #     valid_mask=full_mask_t,
-            #     kinematics=kinematics,
+            # fig = plot_trajectories(
+            #     gt_trajs=[full_obs_t[..., :2]],
+            #     pred_trajs=[rollout_xy],
+            #     info_lines=[f"kinematics: {type(kinematics).__name__}", f"dt={kinematics.dt}"],
             # )
             # plt.show()
             # quit()

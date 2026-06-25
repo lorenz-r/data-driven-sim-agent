@@ -64,22 +64,6 @@ class CTRAKinematics:
         self.accel_bins = torch.linspace(-max_accel, max_accel, num_accel_bins)
         self.yaw_rate_bins = torch.linspace(-max_yaw_rate, max_yaw_rate, num_yaw_bins)
 
-    @classmethod
-    def from_config(cls, path: str | Path = ""):
-        import yaml
-
-        cfg = yaml.safe_load(Path(path).read_text())
-
-        kin_cfg = cfg.get("kinematics", cfg)
-
-        return cls(
-            dt=kin_cfg.get("dt", 0.5),
-            max_iter=kin_cfg.get("max_iter", 5),
-            num_accel=kin_cfg.get("num_accel", 63),
-            num_yaw=kin_cfg.get("num_yaw", 63),
-            max_accel=kin_cfg.get("max_accel", 5.0),
-            max_yaw_rate=kin_cfg.get("max_yaw_rate", 1.5),
-        )
 
     # FORWARD KINEMATICS
     def forward(self, init_state: Tensor, actions: Tensor) -> Tensor:
