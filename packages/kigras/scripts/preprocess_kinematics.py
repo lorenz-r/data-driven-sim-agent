@@ -36,10 +36,10 @@ from kigras.dataloader.dataset import ArgoDataset
 
 
 def run_preprocessing(
-    input_dir: Path | None,
-    output_dir: Path | None,
-    kinematics_cfg: OmegaConf | None,
-    split: str | None,
+    input_dir: Path,
+    output_dir: Path,
+    kinematics_cfg: OmegaConf,
+    split: str,
 ):
 
     output_dir.mkdir(parents=True, exist_ok=True)
