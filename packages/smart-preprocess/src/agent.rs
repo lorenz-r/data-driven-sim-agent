@@ -47,7 +47,7 @@ fn is_vehicle_like(object_type: &str) -> bool {
 
 /// SMART category: 3 for every AV2 vehicle/bus track category, 1 otherwise.
 fn smart_category(object_category: i64, object_type: &str) -> u8 {
-    if is_vehicle_like(object_type) && matches!(object_category, 0 | 1 | 2 | 3) {
+    if is_vehicle_like(object_type) && matches!(object_category, 0..=3) {
         3
     } else {
         1
@@ -249,7 +249,7 @@ pub fn build_agent_data(parquet_path: &Path) -> Result<AgentData> {
     let has_predictable = included_ids.iter().any(|tid| {
         map[tid]
             .first()
-            .map(|r| is_vehicle_like(&r.object_type) && matches!(r.object_category, 0 | 1 | 2 | 3))
+            .map(|r| is_vehicle_like(&r.object_type) && matches!(r.object_category, 0..=3))
             .unwrap_or(false)
     });
     if !has_predictable {
