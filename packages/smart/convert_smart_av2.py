@@ -31,7 +31,7 @@ INV_SMART_AGENT_TYPE = {
     2: ObjectType.CYCLIST,
     3: ObjectType.UNKNOWN,
 }
-INV_SMART_CATEGORY = {3: TrackCategory.FOCAL_TRACK, 1: TrackCategory.SCORED_TRACK}
+INV_SMART_CATEGORY = {3: TrackCategory.SCORED_TRACK, 1: TrackCategory.UNSCORED_TRACK}
 INV_SMART_POLY_TYPE = {0: "VEHICLE", 1: "BIKE", 2: "BUS", 3: "PEDESTRIAN"}
 
 
