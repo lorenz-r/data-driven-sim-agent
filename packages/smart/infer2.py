@@ -3,14 +3,22 @@ from argparse import ArgumentParser
 from pathlib import Path
 from typing import Optional
 
+SMART_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = SMART_ROOT.parent.parent
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SMART_ROOT) not in sys.path:
+    sys.path.insert(0, str(SMART_ROOT))
+
 try:
     from infer2_utils import run_inference_pipeline
-except ImportError:
+except ImportError as exc:
+    if exc.name != "infer2_utils":
+        raise
     from .infer2_utils import run_inference_pipeline
 
 
-SMART_ROOT = Path(__file__).resolve().parent
-REPO_ROOT = SMART_ROOT.parent.parent
 DEFAULT_INPUT_PATH = SMART_ROOT / "data" / "processed" / "current" / "val"
 DEFAULT_RAW_DATA_FOLDER = SMART_ROOT / "data" / "raw" / "val"
 DEFAULT_OUTPUT_FOLDER = SMART_ROOT / "data" / "preds"
