@@ -22,8 +22,7 @@ except ImportError as exc:
 DEFAULT_INPUT_PATH = SMART_ROOT / "data" / "processed" / "current" / "val"
 DEFAULT_RAW_DATA_FOLDER = SMART_ROOT / "data" / "raw" / "val"
 DEFAULT_OUTPUT_FOLDER = SMART_ROOT / "data" / "preds"
-DEFAULT_CONFIG_PATH = SMART_ROOT / "configs" / "validation" / "validation_scalable.yaml"
-DEFAULT_CHECKPOINT_PATH = REPO_ROOT / "smart-checkpoints" / "run_01" / "last.ckpt"
+DEFAULT_CHECKPOINT_PATH = REPO_ROOT / "model.ckpt"
 DEFAULT_BATCH_VISUALIZATION_LIMIT = 10
 
 
@@ -84,7 +83,6 @@ def _run_setup_dialog(args) -> None:
             args.batch_visualization_limit,
         )
     args.checkpoint = _prompt_path("Checkpoint path", args.checkpoint)
-    args.config = _prompt_path("Config path", args.config)
     args.device = _prompt_text("Device (cpu/cuda)", args.device)
     args.sample_tokens = _prompt_bool("Sample rollout tokens", args.sample_tokens)
 
@@ -134,12 +132,6 @@ def main() -> None:
         type=str,
         default=str(DEFAULT_CHECKPOINT_PATH),
         help=f"Path to model checkpoint (default: {DEFAULT_CHECKPOINT_PATH})",
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        default=str(DEFAULT_CONFIG_PATH),
-        help=f"Path to config file (default: {DEFAULT_CONFIG_PATH})",
     )
     parser.add_argument(
         "--format",
@@ -242,7 +234,6 @@ def main() -> None:
         raw_data_folder=args.raw_data_folder,
         output_dir=args.output,
         checkpoint_path=args.checkpoint,
-        config_path=args.config,
         visualize=args.visualize,
         device=args.device,
         sample_tokens=args.sample_tokens,

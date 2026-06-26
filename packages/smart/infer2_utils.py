@@ -2,14 +2,19 @@ import pickle
 from pathlib import Path
 from typing import Any, Optional
 
+import easydict
 import numpy as np
 import torch
 from torch_geometric.data import HeteroData
 
 from smart.datasets.preprocess import TokenProcessor
 from smart.model.smart import SMART
-from smart.utils.config import load_config_act
 from smart.utils.log import Logging
+from smart.utils.token_paths import (
+    default_agent_token_path,
+    default_map_token_path,
+    missing_token_error,
+)
 
 
 def resolve_inference_targets(input_path: str | Path) -> list[Path]:
@@ -24,35 +29,98 @@ def resolve_inference_targets(input_path: str | Path) -> list[Path]:
     raise FileNotFoundError(f"Inference input not found: {path}")
 
 
+def _to_easydict(value: Any) -> Any:
+    if isinstance(value, easydict.EasyDict):
+        return value
+    if isinstance(value, dict):
+        return easydict.EasyDict(
+            {key: _to_easydict(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return [_to_easydict(item) for item in value]
+    return value
+
+
+def _load_checkpoint_model_config(checkpoint_path: Path) -> Any:
+    checkpoint = torch.load(
+        checkpoint_path,
+        map_location=torch.device("cpu"),
+        weights_only=False,
+    )
+    hyper_parameters = checkpoint.get("hyper_parameters")
+    if not isinstance(hyper_parameters, dict):
+        raise ValueError(
+            f"Checkpoint {checkpoint_path} does not contain hyper_parameters"
+        )
+    if "model_config" not in hyper_parameters:
+        raise ValueError(
+            f"Checkpoint {checkpoint_path} does not contain "
+            "hyper_parameters['model_config']"
+        )
+    return _to_easydict(hyper_parameters["model_config"])
+
+
+def _canonical_token_path(
+    saved_path: Optional[str],
+    default_path: Path,
+    *,
+    label: str,
+) -> Path:
+    if saved_path:
+        candidate = Path(saved_path).expanduser()
+        expected_path = default_path.parent / candidate.name
+    else:
+        expected_path = default_path
+
+    if not expected_path.exists():
+        raise missing_token_error(expected_path, label)
+    return expected_path
+
+
+def _normalise_checkpoint_token_paths(model_config: Any) -> None:
+    token_size = int(model_config.decoder.token_size)
+    agent_token_path = _canonical_token_path(
+        getattr(model_config, "agent_token_path", None),
+        default_agent_token_path(token_size),
+        label="Agent",
+    )
+    map_token_path = _canonical_token_path(
+        getattr(model_config, "map_token_path", None),
+        default_map_token_path(),
+        label="Map",
+    )
+    model_config.agent_token_path = str(agent_token_path)
+    model_config.map_token_path = str(map_token_path)
+
+
 def load_model_and_processor(
     *,
-    config_path: str | Path,
-    checkpoint_path: Optional[str | Path],
+    checkpoint_path: str | Path,
     device: str,
 ) -> tuple[SMART, TokenProcessor, Any]:
-    config = load_config_act(str(config_path))
-    config.Trainer.accelerator = device
+    checkpoint = Path(checkpoint_path).expanduser()
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
 
-    model = SMART(config.Model)
-    if checkpoint_path:
-        checkpoint = Path(checkpoint_path).expanduser()
-        if not checkpoint.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
-        logger = Logging().log(level="DEBUG")
-        print(f"Loading checkpoint: {checkpoint}")
-        model.load_params_from_file(
-            str(checkpoint),
-            logger=logger,
-            to_cpu=(device == "cpu"),
-        )
+    model_config = _load_checkpoint_model_config(checkpoint)
+    _normalise_checkpoint_token_paths(model_config)
+
+    model = SMART(model_config)
+    logger = Logging().log(level="DEBUG")
+    print(f"Loading checkpoint: {checkpoint}")
+    model.load_params_from_file(
+        str(checkpoint),
+        logger=logger,
+        to_cpu=(device == "cpu"),
+    )
     model.eval()
 
     token_processor = TokenProcessor(
-        config.Model.decoder.token_size,
-        agent_token_path=getattr(config.Model, "agent_token_path", None),
-        map_token_path=getattr(config.Model, "map_token_path", None),
+        model_config.decoder.token_size,
+        agent_token_path=model_config.agent_token_path,
+        map_token_path=model_config.map_token_path,
     )
-    return model, token_processor, config
+    return model, token_processor, model_config
 
 
 def _fit_pred_valid_mask(
@@ -436,8 +504,7 @@ def run_inference_pipeline(
     input_path: str | Path,
     raw_data_folder: str | Path,
     output_dir: str | Path,
-    checkpoint_path: Optional[str | Path],
-    config_path: str | Path,
+    checkpoint_path: str | Path,
     visualize: bool,
     device: str,
     sample_tokens: bool,
@@ -456,7 +523,6 @@ def run_inference_pipeline(
         raise FileNotFoundError(f"Raw data folder not found: {raw_path}")
 
     model, token_processor, _ = load_model_and_processor(
-        config_path=config_path,
         checkpoint_path=checkpoint_path,
         device=device,
     )
