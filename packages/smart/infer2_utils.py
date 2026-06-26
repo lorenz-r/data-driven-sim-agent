@@ -143,6 +143,73 @@ def filter_out_of_bounds_valid_mask(
     return pred_valid_mask, int(out_of_bounds.sum().item())
 
 
+def _agent_token_shift(model: SMART) -> int:
+    encoder = getattr(model, "encoder", None)
+    agent_encoder = getattr(encoder, "agent_encoder", None)
+    return int(getattr(agent_encoder, "shift", 5))
+
+
+def _pad_trajectory_tail(pred_traj: torch.Tensor, pad_steps: int) -> torch.Tensor:
+    if pad_steps <= 0:
+        return pred_traj
+    if pred_traj.shape[1] == 0:
+        raise ValueError("Cannot pad an empty predicted trajectory")
+
+    if pred_traj.shape[1] >= 2:
+        delta = pred_traj[:, -1] - pred_traj[:, -2]
+    else:
+        delta = torch.zeros_like(pred_traj[:, -1])
+
+    steps = torch.arange(
+        1,
+        pad_steps + 1,
+        dtype=pred_traj.dtype,
+        device=pred_traj.device,
+    )
+    tail = pred_traj[:, -1:, :] + steps[None, :, None] * delta[:, None, :]
+    return torch.cat([pred_traj, tail], dim=1)
+
+
+def _pad_heading_tail(pred_head: torch.Tensor, pad_steps: int) -> torch.Tensor:
+    if pad_steps <= 0:
+        return pred_head
+    if pred_head.shape[1] == 0:
+        raise ValueError("Cannot pad an empty predicted heading")
+
+    tail = pred_head[:, -1:].expand(-1, pad_steps)
+    return torch.cat([pred_head, tail], dim=1)
+
+
+def align_token_rollout_to_future_horizon(
+    pred_traj: torch.Tensor,
+    pred_head: torch.Tensor,
+    *,
+    model: SMART,
+) -> tuple[torch.Tensor, torch.Tensor, int]:
+    """Align dense token rollout output to raw future timesteps.
+
+    The recurrent token decoder starts the first predicted token from the
+    previous complete token anchor. With 50 historical frames and shift=5, that
+    first dense chunk covers t=46..50, while AV2 future output starts at t=50.
+    Dropping the pre-future substeps prevents a visible history/future snap.
+    """
+    shift = _agent_token_shift(model)
+    drop_steps = (model.num_historical_steps - 1) % shift
+    if drop_steps == 0:
+        return pred_traj, pred_head, 0
+    if pred_traj.shape[1] <= drop_steps or pred_head.shape[1] <= drop_steps:
+        raise ValueError(
+            "Predicted rollout is shorter than the token/future alignment offset: "
+            f"drop_steps={drop_steps}, pred_traj={tuple(pred_traj.shape)}, "
+            f"pred_head={tuple(pred_head.shape)}"
+        )
+
+    target_steps = pred_traj.shape[1]
+    pred_traj = _pad_trajectory_tail(pred_traj[:, drop_steps:], drop_steps)
+    pred_head = _pad_heading_tail(pred_head[:, drop_steps:], drop_steps)
+    return pred_traj[:, :target_steps], pred_head[:, :target_steps], drop_steps
+
+
 def _to_numpy(value: Any) -> np.ndarray:
     if isinstance(value, torch.Tensor):
         return value.detach().cpu().numpy()
@@ -173,6 +240,11 @@ def run_scenario_inference(
 
     pred_traj = inference_output["pred_traj"]
     pred_head = inference_output["pred_head"]
+    pred_traj, pred_head, alignment_drop_steps = align_token_rollout_to_future_horizon(
+        pred_traj,
+        pred_head,
+        model=model,
+    )
     pred_valid_mask = build_pred_valid_mask(data_sample, pred_traj, model)
 
     agent_data = smart_data["agent"]
@@ -185,6 +257,11 @@ def run_scenario_inference(
     )
 
     print(f"Predicted trajectories shape: {pred_traj.shape}")
+    if alignment_drop_steps:
+        print(
+            "Aligned token rollout to future horizon: "
+            f"dropped {alignment_drop_steps} pre-future step(s) and padded tail"
+        )
     print(
         "Filtered predictions: "
         f"{pred_valid_mask.sum().item()} / {pred_valid_mask.numel()} valid, "
@@ -199,6 +276,7 @@ def run_scenario_inference(
         "last_pos": _to_numpy(last_pos),
         "num_agents": int(pred_traj.shape[0]),
         "num_timesteps": int(pred_traj.shape[1]),
+        "alignment_drop_steps": alignment_drop_steps,
     }
     if "gt" in inference_output:
         prediction_data["gt"] = _to_numpy(inference_output["gt"])
