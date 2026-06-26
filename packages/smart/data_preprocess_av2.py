@@ -336,7 +336,12 @@ def _category_for_track(track) -> int:
       3 → focal / scored (tracks-to-predict)
       1 → all other agents present in the scene
     """
-    if track.category in (TrackCategory.FOCAL_TRACK, TrackCategory.SCORED_TRACK):
+    if track.category in (
+        TrackCategory.FOCAL_TRACK,
+        TrackCategory.SCORED_TRACK,
+        TrackCategory.UNSCORED_TRACK,
+        TrackCategory.TRACK_FRAGMENT,
+    ) and track.object_type in (ObjectType.VEHICLE, ObjectType.BUS):
         return 3
     return 1
 
@@ -348,6 +353,8 @@ def _included_track_indices(scenario: ArgoverseScenario) -> List[int]:
     """
     included: List[int] = []
     for idx, track in enumerate(scenario.tracks):
+        if track.object_type not in (ObjectType.VEHICLE, ObjectType.BUS):
+            continue
         if any(
             _state_present(s) and int(getattr(s, "timestep", -1)) == CURRENT_TIME_INDEX
             for s in track.object_states
@@ -687,7 +694,14 @@ def process_scenario(scenario_dir: Path, output_dir: Path) -> bool:
         return False
 
     has_predictable = any(
-        t.category in (TrackCategory.FOCAL_TRACK, TrackCategory.SCORED_TRACK)
+        t.category
+        in (
+            TrackCategory.FOCAL_TRACK,
+            TrackCategory.SCORED_TRACK,
+            TrackCategory.UNSCORED_TRACK,
+            TrackCategory.TRACK_FRAGMENT,
+        )
+        and t.object_type in (ObjectType.VEHICLE, ObjectType.BUS)
         for t in scenario.tracks
     )
     if not has_predictable:

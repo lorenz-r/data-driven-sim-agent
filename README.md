@@ -98,6 +98,11 @@ The preprocessor is a standalone Rust/PyO3 crate. It reads raw AV2 parquet +
 JSON files directly (no `av2` Python package needed) and writes `.pkl` files
 identical to the Python pipeline.
 
+SMART preprocessing keeps vehicle and bus tracks observed at the current
+timestep (`t=49`). For those included tracks, all AV2 forecasting categories
+(`TRACK_FRAGMENT`, `UNSCORED_TRACK`, `SCORED_TRACK`, and `FOCAL_TRACK`) are
+mapped to SMART prediction category `3`.
+
 The crate is a uv workspace member, so `uv sync` builds it automatically via
 maturin. No manual build step is needed.
 

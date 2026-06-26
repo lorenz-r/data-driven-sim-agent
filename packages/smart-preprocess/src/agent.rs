@@ -41,9 +41,13 @@ fn default_box(object_type: &str) -> (f32, f32, f32) {
     }
 }
 
-/// SMART category: 3 for focal/scored, 1 for everything else.
-fn smart_category(object_category: i64) -> u8 {
-    if object_category == 2 || object_category == 3 {
+fn is_vehicle_like(object_type: &str) -> bool {
+    matches!(object_type, "vehicle" | "bus")
+}
+
+/// SMART category: 3 for every AV2 vehicle/bus track category, 1 otherwise.
+fn smart_category(object_category: i64, object_type: &str) -> u8 {
+    if is_vehicle_like(object_type) && matches!(object_category, 0 | 1 | 2 | 3) {
         3
     } else {
         1
@@ -227,9 +231,9 @@ pub fn build_agent_data(parquet_path: &Path) -> Result<AgentData> {
     let included_ids: Vec<String> = order
         .iter()
         .filter(|tid| {
-            map[*tid]
-                .iter()
-                .any(|r| r.timestep == CURRENT_TIME_INDEX && r.observed)
+            map[*tid].iter().any(|r| {
+                is_vehicle_like(&r.object_type) && r.timestep == CURRENT_TIME_INDEX && r.observed
+            })
         })
         .cloned()
         .collect();
@@ -245,7 +249,7 @@ pub fn build_agent_data(parquet_path: &Path) -> Result<AgentData> {
     let has_predictable = included_ids.iter().any(|tid| {
         map[tid]
             .first()
-            .map(|r| r.object_category == 2 || r.object_category == 3)
+            .map(|r| is_vehicle_like(&r.object_type) && matches!(r.object_category, 0 | 1 | 2 | 3))
             .unwrap_or(false)
     });
     if !has_predictable {
@@ -280,7 +284,7 @@ pub fn build_agent_data(parquet_path: &Path) -> Result<AgentData> {
         }
 
         agent_type.push(object_type_to_smart(&first.object_type));
-        agent_category.push(smart_category(first.object_category));
+        agent_category.push(smart_category(first.object_category, &first.object_type));
 
         let (length, width, height) = default_box(&first.object_type);
 
