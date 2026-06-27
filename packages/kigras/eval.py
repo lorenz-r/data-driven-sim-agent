@@ -29,18 +29,23 @@ def evaluate_scenario(model, batch, device, traj_decoder):
     track_ids = batch["agents"][i]["track_ids"]
     f_idx = track_ids.index(focal_id)
 
-    # Transform all 110 timesteps at once
+    # action_tokens[k] predicts the transition from state 49+k to state 50+k,
+    # so eval must encode the same pre-action states 49..108.
+    input_traj = full_traj[:, 49:-1, :]
+
+    # Transform all pre-action timesteps at once
     local_states, local_map_pos, local_map_dir = transform_batch(
-        full_traj.unsqueeze(0),  # [1, N, 110, 7]
+        input_traj.unsqueeze(0),  # [1, N, 60, 7]
         graph_pos.unsqueeze(0),  # [1, M, 2]
         graph_dir.unsqueeze(0),  # [1, M, 2]
     )
-    # Index the 60 future timesteps
-    states_seq = local_states[:, :, :, 50:, :]  # [1, N, N, 60, 7]
-    map_pos_seq = local_map_pos[:, :, 50:, :, :]  # [1, N, 60, M, 2]
-    map_dir_seq = local_map_dir[:, :, 50:, :, :]  # [1, N, 60, M, 2]
+    states_seq = local_states  # [1, N, N, 60, 7]
+    map_pos_seq = local_map_pos  # [1, N, 60, M, 2]
+    map_dir_seq = local_map_dir  # [1, N, 60, M, 2]
 
-    agent_valid = future[:, :, 6].bool().unsqueeze(0)  # [1, N, 60]
+    agent_valid = (
+        full_traj[:, 49:-1, 6].bool() & full_traj[:, 50:, 6].bool()
+    ).unsqueeze(0)  # [1, N, 60]
 
     # Pre-encode all 60 future timesteps in parallel
     B, N, _, T, _ = states_seq.shape
