@@ -299,7 +299,9 @@ def _compute_scenario_metrics_from_data(
     scored_eval_valid = eval_valid_mask[target_mask]
     use_headings = not no_headings and pred_head is not None and gt_head is not None
     scored_gt_head = _selected(gt_head, target_mask) if use_headings else None
-    scored_pred_head = pred_head[:, target_mask] if pred_head is not None and use_headings else None
+    scored_pred_head = (
+        pred_head[:, target_mask] if pred_head is not None and use_headings else None
+    )
 
     forecasting = metrics.compute_forecasting_metric_scores(
         gt_positions=scored_gt,
