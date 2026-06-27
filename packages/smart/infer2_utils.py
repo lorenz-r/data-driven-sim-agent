@@ -2,9 +2,11 @@ import json
 import pickle
 import platform
 import sys
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from uuid import uuid4
 
 import easydict
 import numpy as np
@@ -67,6 +69,11 @@ def _jsonable(value: Any) -> Any:
 
 def _json_string(value: Any) -> np.ndarray:
     return np.asarray(json.dumps(_jsonable(value), sort_keys=True).encode("utf-8"))
+
+
+def _make_inference_run_id() -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{timestamp}_{uuid4().hex[:8]}"
 
 
 def _load_checkpoint_model_config(checkpoint_path: Path) -> Any:
@@ -355,6 +362,7 @@ def run_scenario_inference(
     model: SMART,
     token_processor: TokenProcessor,
     sample_tokens: bool,
+    save_prediction: bool,
     run_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     scenario_id = input_file.stem
@@ -438,16 +446,19 @@ def run_scenario_inference(
     if gt_valid_mask is not None:
         prediction_data["gt_valid_mask"] = _to_numpy(gt_valid_mask.bool())
 
-    smart_output_path = save_smart_prediction(
-        output_dir=output_dir,
-        scenario_id=scenario_id,
-        prediction_data=prediction_data,
-    )
-    print(f"Saved SMART predictions to: {smart_output_path}")
+    smart_output_path = None
+    if save_prediction:
+        smart_output_path = save_smart_prediction(
+            output_dir=output_dir,
+            scenario_id=scenario_id,
+            prediction_data=prediction_data,
+        )
+        print(f"Saved SMART predictions to: {smart_output_path}")
 
     return {
         "scenario_id": scenario_id,
         "smart_data": smart_data,
+        "prediction_data": prediction_data,
         "pred_traj": pred_traj.detach().cpu(),
         "pred_head": pred_head.detach().cpu(),
         "pred_valid_mask": pred_valid_mask.detach().cpu(),
@@ -466,6 +477,71 @@ def save_smart_prediction(
     smart_output_path = smart_output_dir / f"{scenario_id}.npz"
     np.savez_compressed(smart_output_path, **prediction_data)
     return smart_output_path
+
+
+def _write_npz_array(archive: zipfile.ZipFile, key: str, value: Any) -> None:
+    with archive.open(f"{key}.npy", "w", force_zip64=True) as file:
+        np.lib.format.write_array(file, np.asarray(value), allow_pickle=False)
+
+
+def _write_batch_scenario_npz(
+    archive: zipfile.ZipFile,
+    scenario_key: str,
+    prediction_data: dict[str, Any],
+) -> list[str]:
+    fields = []
+    for field, value in prediction_data.items():
+        if value is None:
+            continue
+        _write_npz_array(archive, f"{scenario_key}_{field}", value)
+        fields.append(field)
+    _write_npz_array(archive, f"{scenario_key}_fields", np.asarray(fields, dtype=str))
+    return fields
+
+
+def _write_batch_metadata_npz(
+    archive: zipfile.ZipFile,
+    *,
+    run_id: str,
+    run_metadata: dict[str, Any],
+    scenario_ids: list[str],
+    scenario_keys: list[str],
+    visualized_scenario_ids: list[str],
+    num_agents: list[int],
+    num_timesteps: list[int],
+) -> None:
+    _write_npz_array(archive, "format_version", np.asarray("smart_batch_rollouts_v2"))
+    _write_npz_array(archive, "run_id", np.asarray(run_id))
+    _write_npz_array(archive, "scenario_ids", np.asarray(scenario_ids, dtype=str))
+    _write_npz_array(archive, "scenario_keys", np.asarray(scenario_keys, dtype=str))
+    _write_npz_array(
+        archive,
+        "visualized_scenario_ids",
+        np.asarray(visualized_scenario_ids, dtype=str),
+    )
+    _write_npz_array(archive, "num_scenarios", np.asarray(len(scenario_ids)))
+    _write_npz_array(archive, "num_agents", np.asarray(num_agents, dtype=np.int64))
+    _write_npz_array(
+        archive,
+        "num_timesteps",
+        np.asarray(num_timesteps, dtype=np.int64),
+    )
+    _write_npz_array(
+        archive,
+        "inference_metadata_json",
+        _json_string(
+            {
+                **run_metadata,
+                "batch": {
+                    "format_version": "smart_batch_rollouts_v2",
+                    "run_id": run_id,
+                    "scenario_ids": scenario_ids,
+                    "scenario_keys": scenario_keys,
+                    "visualized_scenario_ids": visualized_scenario_ids,
+                },
+            }
+        ),
+    )
 
 
 def prediction_to_argoverse(smart_data, pred_traj, pred_head, pred_valid_mask):
@@ -617,8 +693,11 @@ def run_inference_pipeline(
     )
     checkpoint = Path(checkpoint_path).expanduser()
     model_config = model.model_config
+    run_id = _make_inference_run_id()
+    batch_output_path = output_path / f"batch_predictions_{run_id}.npz"
     run_metadata = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "run_id": run_id,
         "checkpoint": _checkpoint_metadata(checkpoint),
         "model_config": _jsonable(model_config),
         "cli": {
@@ -643,55 +722,91 @@ def run_inference_pipeline(
     }
 
     print(f"Running SMART inference on {len(targets)} scenario(s)")
+    print(f"Saving collected batch predictions to: {batch_output_path}")
     results = []
     visualized_count = 0
+    scenario_ids = []
+    scenario_keys = []
+    visualized_scenario_ids = []
+    all_num_agents = []
+    all_num_timesteps = []
 
-    for index, target in enumerate(targets, start=1):
-        print(f"\n[{index}/{len(targets)}] {target.stem}")
-        result = run_scenario_inference(
-            input_file=target,
-            output_dir=output_path,
-            model=model,
-            token_processor=token_processor,
-            sample_tokens=sample_tokens,
+    with zipfile.ZipFile(
+        batch_output_path,
+        mode="w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as batch_archive:
+        for index, target in enumerate(targets, start=1):
+            print(f"\n[{index}/{len(targets)}] {target.stem}")
+            scenario_key = f"scenario_{index - 1:06d}"
+            should_visualize = visualize and (
+                batch_visualization_limit is None
+                or visualized_count < batch_visualization_limit
+            )
+            result = run_scenario_inference(
+                input_file=target,
+                output_dir=output_path,
+                model=model,
+                token_processor=token_processor,
+                sample_tokens=sample_tokens,
+                save_prediction=should_visualize,
+                run_metadata=run_metadata,
+            )
+            prediction_data = result.pop("prediction_data")
+            _write_batch_scenario_npz(
+                batch_archive,
+                scenario_key,
+                prediction_data,
+            )
+
+            scenario_ids.append(result["scenario_id"])
+            scenario_keys.append(scenario_key)
+            all_num_agents.append(int(prediction_data["num_agents"]))
+            all_num_timesteps.append(int(prediction_data["num_timesteps"]))
+            results.append(result)
+
+            pred_scenario = None
+            if should_visualize:
+                pred_scenario = prediction_to_argoverse(
+                    result["smart_data"],
+                    result["pred_traj"],
+                    result["pred_head"],
+                    result["pred_valid_mask"],
+                )
+
+            scenario_output_dir = output_path / result["scenario_id"]
+            if format_av2 and should_visualize:
+                save_av2_prediction(
+                    scenario_output_dir=scenario_output_dir,
+                    scenario_id=result["scenario_id"],
+                    pred_scenario=pred_scenario,
+                )
+
+            if should_visualize:
+                save_pipeline_visualizations(
+                    scenario_id=result["scenario_id"],
+                    raw_data_folder=raw_path,
+                    scenario_output_dir=scenario_output_dir,
+                    pred_scenario=pred_scenario,
+                )
+                visualized_scenario_ids.append(result["scenario_id"])
+                visualized_count += 1
+            elif visualize:
+                print(
+                    "Skipping GIF visualization for this scenario "
+                    f"(batch limit: {batch_visualization_limit})."
+                )
+
+        _write_batch_metadata_npz(
+            batch_archive,
+            run_id=run_id,
             run_metadata=run_metadata,
+            scenario_ids=scenario_ids,
+            scenario_keys=scenario_keys,
+            visualized_scenario_ids=visualized_scenario_ids,
+            num_agents=all_num_agents,
+            num_timesteps=all_num_timesteps,
         )
-        results.append(result)
 
-        should_visualize = visualize and (
-            batch_visualization_limit is None
-            or visualized_count < batch_visualization_limit
-        )
-
-        pred_scenario = None
-        if format_av2 or should_visualize:
-            pred_scenario = prediction_to_argoverse(
-                result["smart_data"],
-                result["pred_traj"],
-                result["pred_head"],
-                result["pred_valid_mask"],
-            )
-
-        scenario_output_dir = output_path / result["scenario_id"]
-        if format_av2:
-            save_av2_prediction(
-                scenario_output_dir=scenario_output_dir,
-                scenario_id=result["scenario_id"],
-                pred_scenario=pred_scenario,
-            )
-
-        if should_visualize:
-            save_pipeline_visualizations(
-                scenario_id=result["scenario_id"],
-                raw_data_folder=raw_path,
-                scenario_output_dir=scenario_output_dir,
-                pred_scenario=pred_scenario,
-            )
-            visualized_count += 1
-        elif visualize:
-            print(
-                "Skipping GIF visualization for this scenario "
-                f"(batch limit: {batch_visualization_limit})."
-            )
-
+    print(f"Saved collected batch predictions to: {batch_output_path}")
     return results
