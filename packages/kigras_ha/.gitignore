@@ -1,0 +1,8 @@
+__pycache__/
+.pytest_cache/
+checkpoints/
+lightning_logs/
+data/
+visualization/
+*.pdf
+.venv
