@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -83,7 +83,7 @@ def _load_meta_metrics():
 
 def _jsonable(value: Any) -> Any:
     if is_dataclass(value):
-        return _jsonable(asdict(value))
+        return _jsonable(asdict(cast(Any, value)))
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -299,7 +299,7 @@ def _compute_scenario_metrics_from_data(
     scored_eval_valid = eval_valid_mask[target_mask]
     use_headings = not no_headings and pred_head is not None and gt_head is not None
     scored_gt_head = _selected(gt_head, target_mask) if use_headings else None
-    scored_pred_head = pred_head[:, target_mask] if use_headings else None
+    scored_pred_head = pred_head[:, target_mask] if pred_head is not None and use_headings else None
 
     forecasting = metrics.compute_forecasting_metric_scores(
         gt_positions=scored_gt,
@@ -558,8 +558,8 @@ def main() -> None:
 
     npz_files = _resolve_npz_inputs(args.input)
     metrics = _load_meta_metrics()
-    scenarios = []
-    input_metadata = []
+    scenarios: list[dict[str, Any]] = []
+    input_metadata: list[dict[str, Any]] = []
     for npz_path in npz_files:
         input_scenarios, batch_metadata = _input_scenarios(
             npz_path,
@@ -582,7 +582,7 @@ def main() -> None:
         stem = args.input.stem if args.input.is_file() else args.input.name
         output_path = args.input.parent / f"{stem}_metrics.json"
 
-    report = {
+    report: dict[str, Any] = {
         "format_version": "smart_inference_metrics_v1",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "evaluation_metadata": {

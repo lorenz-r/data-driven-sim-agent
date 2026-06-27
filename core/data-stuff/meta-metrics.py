@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 
@@ -151,17 +152,17 @@ DEFAULT_OBJECT_WIDTH = 2.0
 
 
 def _as_position_array(positions: ArrayLike) -> np.ndarray:
-    positions = np.asarray(positions, dtype=float)
-    if positions.ndim < 2 or positions.shape[-1] not in (2, 3):
+    position_values = np.asarray(positions, dtype=float)
+    if position_values.ndim < 2 or position_values.shape[-1] not in (2, 3):
         raise ValueError("positions must have shape (..., steps, 2) or (..., steps, 3)")
-    return positions
+    return position_values
 
 
 def _as_time_array(values: ArrayLike, name: str) -> np.ndarray:
-    values = np.asarray(values, dtype=float)
-    if values.ndim < 1:
+    time_values = np.asarray(values, dtype=float)
+    if time_values.ndim < 1:
         raise ValueError(f"{name} must have shape (..., steps)")
-    return values
+    return time_values
 
 
 def _central_diff(values: np.ndarray, *, axis: int, pad_value: float) -> np.ndarray:
@@ -249,12 +250,12 @@ def compute_kinematic_features(
     if seconds_per_step <= 0:
         raise ValueError("seconds_per_step must be positive")
 
-    positions = _as_position_array(positions)
-    if positions.shape[-1] == 2:
-        z = np.zeros((*positions.shape[:-1], 1), dtype=positions.dtype)
-        positions = np.concatenate([positions, z], axis=-1)
+    position_values = _as_position_array(positions)
+    if position_values.shape[-1] == 2:
+        z = np.zeros((*position_values.shape[:-1], 1), dtype=position_values.dtype)
+        position_values = np.concatenate([position_values, z], axis=-1)
 
-    dpos = _central_diff(positions, axis=-2, pad_value=np.nan)
+    dpos = _central_diff(position_values, axis=-2, pad_value=np.nan)
     linear_speed = np.linalg.norm(dpos, ord=2, axis=-1) / seconds_per_step
     linear_acceleration = (
         _central_diff(linear_speed, axis=-1, pad_value=np.nan) / seconds_per_step
@@ -263,14 +264,15 @@ def compute_kinematic_features(
     angular_speed = None
     angular_acceleration = None
     if headings is not None:
-        headings = _as_time_array(headings, "headings")
-        if headings.shape != positions.shape[:-1]:
+        heading_values = _as_time_array(headings, "headings")
+        if heading_values.shape != position_values.shape[:-1]:
             raise ValueError(
-                f"headings shape {headings.shape} must match positions time "
-                f"shape {positions.shape[:-1]}"
+                f"headings shape {heading_values.shape} must match positions time "
+                f"shape {position_values.shape[:-1]}"
             )
         dheading_step = (
-            _wrap_angle(_central_diff(headings, axis=-1, pad_value=np.nan) * 2.0) / 2.0
+            _wrap_angle(_central_diff(heading_values, axis=-1, pad_value=np.nan) * 2.0)
+            / 2.0
         )
         angular_speed = dheading_step / seconds_per_step
         d2heading_step = (
@@ -282,13 +284,13 @@ def compute_kinematic_features(
     speed_valid = None
     acceleration_valid = None
     if valid is not None:
-        valid = np.asarray(valid, dtype=bool)
-        if valid.shape != positions.shape[:-1]:
+        valid_values = np.asarray(valid, dtype=bool)
+        if valid_values.shape != position_values.shape[:-1]:
             raise ValueError(
-                f"valid shape {valid.shape} must match positions time "
-                f"shape {positions.shape[:-1]}"
+                f"valid shape {valid_values.shape} must match positions time "
+                f"shape {position_values.shape[:-1]}"
             )
-        speed_valid, acceleration_valid = compute_kinematic_validity(valid)
+        speed_valid, acceleration_valid = compute_kinematic_validity(valid_values)
 
     return KinematicFeatures(
         linear_speed=linear_speed,
@@ -558,24 +560,24 @@ def _broadcast_object_time_values(
     if values is None:
         return np.full(target_shape, default, dtype=float)
 
-    values = np.asarray(values, dtype=float)
-    if values.ndim == 0:
-        return np.full(target_shape, float(values), dtype=float)
-    if values.ndim == 1:
-        values = values[np.newaxis, :, np.newaxis]
-    elif values.ndim == 2:
-        values = values[np.newaxis, ...]
-    elif values.ndim != 3:
+    value_array = np.asarray(values, dtype=float)
+    if value_array.ndim == 0:
+        return np.full(target_shape, float(value_array), dtype=float)
+    if value_array.ndim == 1:
+        value_array = value_array[np.newaxis, :, np.newaxis]
+    elif value_array.ndim == 2:
+        value_array = value_array[np.newaxis, ...]
+    elif value_array.ndim != 3:
         raise ValueError(
             f"{name} must be scalar or have shape (objects), "
             "(objects, steps), or (samples, objects, steps)"
         )
 
     try:
-        return np.broadcast_to(values, target_shape).astype(float)
+        return np.broadcast_to(value_array, target_shape).astype(float)
     except ValueError as exc:
         raise ValueError(
-            f"{name} shape {values.shape} cannot broadcast to {target_shape}"
+            f"{name} shape {value_array.shape} cannot broadcast to {target_shape}"
         ) from exc
 
 
@@ -951,7 +953,7 @@ def _numba_distance_to_nearest_object_one_sample(
                     positions[other_index, step, 1],
                     lengths[other_index, step] - 2.0 * shrink_b,
                     widths[other_index, step] - 2.0 * shrink_b,
-                    headings[other_index, step],
+                    float(headings[other_index, step]),
                 )
                 best = min(best, core_distance - shrink_a - shrink_b)
             distances[eval_index, step] = best
@@ -993,11 +995,11 @@ def _distance_to_nearest_object_one_sample(
                     positions[object_index, step, :2],
                     lengths[object_index, step] - 2.0 * shrink_a,
                     widths[object_index, step] - 2.0 * shrink_a,
-                    headings[object_index, step],
+                    float(headings[object_index, step]),
                     positions[other_index, step, :2],
                     lengths[other_index, step] - 2.0 * shrink_b,
                     widths[other_index, step] - 2.0 * shrink_b,
-                    headings[other_index, step],
+                    float(headings[other_index, step]),
                 )
                 best = min(best, core_distance - shrink_a - shrink_b)
             distances[eval_index, step] = best
@@ -1147,7 +1149,7 @@ def _time_to_collision_one_sample(
                 )
                 if following and long_distance < best_distance:
                     best_distance = long_distance
-                    best_speed = speed[other_index, step]
+                    best_speed = float(speed[other_index, step])
 
             relative_speed = ego_speed - best_speed
             if relative_speed > 0.0 and best_distance < EXTREMELY_LARGE_DISTANCE:
@@ -1233,7 +1235,7 @@ def _numba_time_to_collision_one_sample(
                 )
                 if following and long_distance < best_distance:
                     best_distance = long_distance
-                    best_speed = speed[other_index, step]
+                    best_speed = float(speed[other_index, step])
 
             relative_speed = ego_speed - best_speed
             if relative_speed > 0.0 and best_distance < EXTREMELY_LARGE_DISTANCE:
@@ -1585,9 +1587,11 @@ def compute_womd_kinematic_metric_scores(
             WOMD_KINEMATIC_HISTOGRAMS["angular_speed"],
             valid=gt_features.speed_valid,
         )
+        gt_angular_acceleration = cast(np.ndarray, gt_features.angular_acceleration)
+        sim_angular_acceleration = cast(np.ndarray, sim_features.angular_acceleration)
         angular_acceleration = histogram_likelihood_score(
-            gt_features.angular_acceleration,
-            sim_features.angular_acceleration,
+            gt_angular_acceleration,
+            sim_angular_acceleration,
             WOMD_KINEMATIC_HISTOGRAMS["angular_acceleration"],
             valid=gt_features.acceleration_valid,
         )
