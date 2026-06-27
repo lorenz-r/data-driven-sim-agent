@@ -65,8 +65,8 @@ def _token_data(token_size=7):
     }
 
 
-def test_mtp_auxiliary_heads_are_copied_from_main_head():
-    decoder = SMARTAgentDecoder(
+def _decoder(**kwargs):
+    decoder_kwargs = dict(
         dataset="waymo",
         input_dim=2,
         hidden_dim=8,
@@ -83,8 +83,16 @@ def test_mtp_auxiliary_heads_are_copied_from_main_head():
         token_size=7,
         mtp_offsets=(1, 2, 3),
     )
+    decoder_kwargs.update(kwargs)
+    return SMARTAgentDecoder(**decoder_kwargs)
+
+
+def test_mtp_auxiliary_heads_are_copied_from_main_head():
+    decoder = _decoder()
 
     assert set(decoder.mtp_heads.keys()) == {"2", "3"}
+    assert not decoder.mtp_use_transformer_head
+    assert len(decoder.mtp_t_attn_head_layers) == 0
     main_state = decoder.token_predict_head.state_dict()
     for head in decoder.mtp_heads.values():
         for name, value in head.state_dict().items():
@@ -96,7 +104,7 @@ def test_mtp_auxiliary_heads_are_copied_from_main_head():
 
 
 def test_mtp_config_validation_and_defaults():
-    enabled, offsets, weights = normalize_mtp_loss_config(
+    enabled, offsets, weights, use_transformer_head = normalize_mtp_loss_config(
         {
             "mtp_enabled": True,
             "mtp_offsets": [1, 2, 3],
@@ -107,6 +115,25 @@ def test_mtp_config_validation_and_defaults():
     assert enabled
     assert offsets == (1, 2, 3)
     assert weights == {1: 1.0, 2: 0.1, 3: 0.03}
+    assert not use_transformer_head
+
+    (
+        enabled,
+        offsets,
+        weights,
+        use_transformer_head,
+    ) = normalize_mtp_loss_config(
+        {
+            "mtp_enabled": True,
+            "mtp_use_transformer_head": True,
+            "mtp_offsets": [1, 2],
+            "mtp_loss_weights": [1.0, 0.1],
+        }
+    )
+    assert enabled
+    assert offsets == (1, 2)
+    assert weights == {1: 1.0, 2: 0.1}
+    assert use_transformer_head
 
     with pytest.raises(ValueError, match="must include offset 1"):
         normalize_mtp_loss_config(
@@ -116,6 +143,34 @@ def test_mtp_config_validation_and_defaults():
                 "mtp_loss_weights": [0.1, 0.03],
             }
         )
+
+
+def test_mtp_auxiliary_transformer_heads_are_copied_from_main_head_layer():
+    decoder = _decoder(num_layers=2, mtp_use_transformer_head=True)
+
+    assert set(decoder.mtp_t_attn_head_layers.keys()) == {"2", "3"}
+    assert set(decoder.mtp_pt2a_attn_head_layers.keys()) == {"2", "3"}
+    assert set(decoder.mtp_a2a_attn_head_layers.keys()) == {"2", "3"}
+
+    head_groups = [
+        (decoder.t_attn_layers[-1], decoder.mtp_t_attn_head_layers),
+        (decoder.pt2a_attn_layers[-1], decoder.mtp_pt2a_attn_head_layers),
+        (decoder.a2a_attn_layers[-1], decoder.mtp_a2a_attn_head_layers),
+    ]
+    for main_layer, aux_layers in head_groups:
+        main_state = main_layer.state_dict()
+        for aux_layer in aux_layers.values():
+            for name, value in aux_layer.state_dict().items():
+                assert torch.equal(value, main_state[name])
+            for main_param, aux_param in zip(
+                main_layer.parameters(), aux_layer.parameters()
+            ):
+                assert main_param.data_ptr() != aux_param.data_ptr()
+
+
+def test_mtp_transformer_head_requires_at_least_one_agent_layer():
+    with pytest.raises(ValueError, match="requires at least one agent decoder layer"):
+        _decoder(num_layers=0, mtp_use_transformer_head=True)
 
 
 def test_mtp_weighted_loss_aggregation():

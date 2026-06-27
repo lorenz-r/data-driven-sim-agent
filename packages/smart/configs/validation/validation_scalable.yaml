@@ -62,6 +62,7 @@ Model:
     trajectory_dims: [0, 1]
     chunk_size: 4096
     mtp_enabled: false
+    mtp_use_transformer_head: false
   decoder:
     <<: *time_info
     num_map_layers: 3

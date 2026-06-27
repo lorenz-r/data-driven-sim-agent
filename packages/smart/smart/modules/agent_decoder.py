@@ -1,3 +1,4 @@
+import copy
 from typing import Dict, Mapping, Optional, Sequence
 import torch
 import torch.nn as nn
@@ -75,6 +76,7 @@ class SMARTAgentDecoder(nn.Module):
         token_data: Dict,
         token_size=512,
         mtp_offsets: Optional[Sequence[int]] = None,
+        mtp_use_transformer_head: bool = False,
     ) -> None:
         super(SMARTAgentDecoder, self).__init__()
         self.dataset = dataset
@@ -89,6 +91,11 @@ class SMARTAgentDecoder(nn.Module):
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.dropout = dropout
+        self.mtp_use_transformer_head = bool(mtp_use_transformer_head)
+        if self.mtp_use_transformer_head and num_layers < 1:
+            raise ValueError(
+                "mtp_use_transformer_head requires at least one agent decoder layer."
+            )
 
         input_dim_x_a = 2
         input_dim_r_t = 4
@@ -180,6 +187,9 @@ class SMARTAgentDecoder(nn.Module):
             input_dim=hidden_dim, hidden_dim=hidden_dim, output_dim=self.token_size
         )
         self.mtp_offsets = tuple(int(offset) for offset in (mtp_offsets or (1,)))
+        self.mtp_aux_offsets = tuple(
+            offset for offset in self.mtp_offsets if offset != 1
+        )
         self.mtp_heads = nn.ModuleDict(
             {
                 str(offset): MLPLayer(
@@ -187,16 +197,50 @@ class SMARTAgentDecoder(nn.Module):
                     hidden_dim=hidden_dim,
                     output_dim=self.token_size,
                 )
-                for offset in self.mtp_offsets
-                if offset != 1
+                for offset in self.mtp_aux_offsets
             }
         )
+        self.mtp_t_attn_head_layers = nn.ModuleDict()
+        self.mtp_pt2a_attn_head_layers = nn.ModuleDict()
+        self.mtp_a2a_attn_head_layers = nn.ModuleDict()
+        if self.mtp_use_transformer_head:
+            self.mtp_t_attn_head_layers = nn.ModuleDict(
+                {
+                    str(offset): copy.deepcopy(self.t_attn_layers[-1])
+                    for offset in self.mtp_aux_offsets
+                }
+            )
+            self.mtp_pt2a_attn_head_layers = nn.ModuleDict(
+                {
+                    str(offset): copy.deepcopy(self.pt2a_attn_layers[-1])
+                    for offset in self.mtp_aux_offsets
+                }
+            )
+            self.mtp_a2a_attn_head_layers = nn.ModuleDict(
+                {
+                    str(offset): copy.deepcopy(self.a2a_attn_layers[-1])
+                    for offset in self.mtp_aux_offsets
+                }
+            )
         self.trajectory_token = token_data["token"]
         self.trajectory_token_traj = token_data["traj"]
         self.trajectory_token_all = token_data["token_all"]
         self.apply(weight_init)
-        for head in self.mtp_heads.values():
-            head.load_state_dict(self.token_predict_head.state_dict())
+        for offset in self.mtp_aux_offsets:
+            offset_key = str(offset)
+            self.mtp_heads[offset_key].load_state_dict(
+                self.token_predict_head.state_dict()
+            )
+            if self.mtp_use_transformer_head:
+                self.mtp_t_attn_head_layers[offset_key].load_state_dict(
+                    self.t_attn_layers[-1].state_dict()
+                )
+                self.mtp_pt2a_attn_head_layers[offset_key].load_state_dict(
+                    self.pt2a_attn_layers[-1].state_dict()
+                )
+                self.mtp_a2a_attn_head_layers[offset_key].load_state_dict(
+                    self.a2a_attn_layers[-1].state_dict()
+                )
         self.shift = 5
         self.beam_size = 5
         self.hist_mask = True
@@ -522,6 +566,44 @@ class SMARTAgentDecoder(nn.Module):
         r_pl2a = self.r_pt2a_emb(continuous_inputs=r_pl2a, categorical_embs=None)
         return edge_index_pl2a, r_pl2a
 
+    def _apply_agent_attention_layer(
+        self,
+        feat_a,
+        t_attn_layer,
+        pt2a_attn_layer,
+        a2a_attn_layer,
+        map_x_pt,
+        num_step,
+        r_t,
+        edge_index_t,
+        r_pl2a,
+        edge_index_pl2a,
+        r_a2a,
+        edge_index_a2a,
+    ):
+        feat_a = feat_a.reshape(
+            -1, self.hidden_dim
+        )  # Graph attention expects [nodes, features].
+        feat_a = t_attn_layer(feat_a, r_t, edge_index_t)
+        feat_a = (
+            feat_a.reshape(-1, num_step, self.hidden_dim)
+            .transpose(0, 1)
+            .reshape(-1, self.hidden_dim)
+        )
+        feat_a = pt2a_attn_layer(
+            (
+                map_x_pt.repeat_interleave(repeats=num_step, dim=0)
+                .reshape(-1, num_step, self.hidden_dim)
+                .transpose(0, 1)
+                .reshape(-1, self.hidden_dim),
+                feat_a,
+            ),
+            r_pl2a,
+            edge_index_pl2a,
+        )
+        feat_a = a2a_attn_layer(feat_a, r_a2a, edge_index_a2a)
+        return feat_a.reshape(num_step, -1, self.hidden_dim).transpose(0, 1)
+
     def forward(
         self, data: HeteroData, map_enc: Mapping[str, torch.Tensor]
     ) -> Dict[str, torch.Tensor]:
@@ -586,36 +668,39 @@ class SMARTAgentDecoder(nn.Module):
 
         # Performs three graph attention operations for each layer: temporal attention, map-to-agent attention, and agent-to-agent attention. The temporal attention captures the temporal dependencies of each agent's trajectory, the map-to-agent attention captures the influence of the map on the agent, and the agent-to-agent attention captures the interactions between agents. The output feature feat_a is updated after each attention operation and is used for the next layer of attention. After multi-layer attention, feat_a contains rich information about the agent's state, its interaction with the map, and its interaction with other agents, which is then used for token prediction.
         # This is probably the most important code block from the forward method. In order, temporal attention, map-to-agent attention, and agent-to-agent attention are performed for each layer. The temporal attention is performed first because it only involves the agent's own features and can help to capture the temporal dynamics of the agent's trajectory. The map-to-agent attention is performed next because the map information can provide important context for understanding the agent's behavior and can help to refine the agent's feature representation. The agent-to-agent attention is performed last because it captures the interactions between agents, which can be influenced by both the agent's own state and the map context. By performing these three types of attention in each layer, we can effectively integrate temporal, spatial, and social information to learn a comprehensive representation of the agent's state and its future trajectory.
-        for i in range(self.num_layers):
-            feat_a = feat_a.reshape(
-                -1, self.hidden_dim
-            )  # Graph attention expects [nodes, features], so we reshape the feature from [num_agent, num_step, hidden_dim] to [num_agent*num_step, hidden_dim]
-
-            # i selects the current temporal attention layer
-            # feat_a has been reshaped into (nodes, features) format for attention computation
-            # r_t is the edge feature for temporal attention, which has been embedded into the same hidden dimension as feat_a
-            # edge_index_t is the edge index for temporal attention, which indicates the connections between nodes (agent-time pairs) in the temporal graph
-            feat_a = self.t_attn_layers[i](feat_a, r_t, edge_index_t)
-
-            feat_a = (
-                feat_a.reshape(-1, num_step, self.hidden_dim)
-                .transpose(0, 1)
-                .reshape(-1, self.hidden_dim)
-            )
-            feat_a = self.pt2a_attn_layers[i](
-                (
-                    map_enc["x_pt"]
-                    .repeat_interleave(repeats=num_step, dim=0)
-                    .reshape(-1, num_step, self.hidden_dim)
-                    .transpose(0, 1)
-                    .reshape(-1, self.hidden_dim),
-                    feat_a,
-                ),
+        num_shared_layers = self.num_layers - int(self.mtp_use_transformer_head)
+        for i in range(num_shared_layers):
+            feat_a = self._apply_agent_attention_layer(
+                feat_a,
+                self.t_attn_layers[i],
+                self.pt2a_attn_layers[i],
+                self.a2a_attn_layers[i],
+                map_enc["x_pt"],
+                num_step,
+                r_t,
+                edge_index_t,
                 r_pl2a,
                 edge_index_pl2a,
+                r_a2a,
+                edge_index_a2a,
             )
-            feat_a = self.a2a_attn_layers[i](feat_a, r_a2a, edge_index_a2a)
-            feat_a = feat_a.reshape(num_step, -1, self.hidden_dim).transpose(0, 1)
+
+        mtp_shared_feat_a = feat_a
+        if self.mtp_use_transformer_head:
+            feat_a = self._apply_agent_attention_layer(
+                mtp_shared_feat_a,
+                self.t_attn_layers[-1],
+                self.pt2a_attn_layers[-1],
+                self.a2a_attn_layers[-1],
+                map_enc["x_pt"],
+                num_step,
+                r_t,
+                edge_index_t,
+                r_pl2a,
+                edge_index_pl2a,
+                r_a2a,
+                edge_index_a2a,
+            )
 
         num_agent, num_step, hidden_dim, traj_num, traj_dim = agent_token_traj.shape
         next_token_prob = self.token_predict_head(
@@ -635,16 +720,31 @@ class SMARTAgentDecoder(nn.Module):
         next_token_eval_mask[:, -1] = False
         mtp_predictions = {}
         if self.training:
-            for offset in self.mtp_offsets:
-                if offset == 1:
-                    continue
+            for offset in self.mtp_aux_offsets:
+                offset_key = str(offset)
+                mtp_feat_a = feat_a
+                if self.mtp_use_transformer_head:
+                    mtp_feat_a = self._apply_agent_attention_layer(
+                        mtp_shared_feat_a,
+                        self.mtp_t_attn_head_layers[offset_key],
+                        self.mtp_pt2a_attn_head_layers[offset_key],
+                        self.mtp_a2a_attn_head_layers[offset_key],
+                        map_enc["x_pt"],
+                        num_step,
+                        r_t,
+                        edge_index_t,
+                        r_pl2a,
+                        edge_index_pl2a,
+                        r_a2a,
+                        edge_index_a2a,
+                    )
                 target, eval_mask = build_mtp_target_and_mask(
                     agent_token_index,
                     mask,
                     offset,
                 )
                 mtp_predictions[offset] = {
-                    "logits": self.mtp_heads[str(offset)](feat_a),
+                    "logits": self.mtp_heads[offset_key](mtp_feat_a),
                     "target": target,
                     "eval_mask": eval_mask,
                 }
@@ -776,27 +876,20 @@ class SMARTAgentDecoder(nn.Module):
             for i in range(self.num_layers):
                 if i in feat_a_t_dict:
                     feat_a = feat_a_t_dict[i]
-                feat_a = feat_a.reshape(-1, self.hidden_dim)
-                feat_a = self.t_attn_layers[i](feat_a, r_t, edge_index_t)
-                feat_a = (
-                    feat_a.reshape(-1, num_step, self.hidden_dim)
-                    .transpose(0, 1)
-                    .reshape(-1, self.hidden_dim)
-                )
-                feat_a = self.pt2a_attn_layers[i](
-                    (
-                        map_enc["x_pt"]
-                        .repeat_interleave(repeats=num_step, dim=0)
-                        .reshape(-1, num_step, self.hidden_dim)
-                        .transpose(0, 1)
-                        .reshape(-1, self.hidden_dim),
-                        feat_a,
-                    ),
+                feat_a = self._apply_agent_attention_layer(
+                    feat_a,
+                    self.t_attn_layers[i],
+                    self.pt2a_attn_layers[i],
+                    self.a2a_attn_layers[i],
+                    map_enc["x_pt"],
+                    num_step,
+                    r_t,
+                    edge_index_t,
                     r_pl2a,
                     edge_index_pl2a,
+                    r_a2a,
+                    edge_index_a2a,
                 )
-                feat_a = self.a2a_attn_layers[i](feat_a, r_a2a, edge_index_a2a)
-                feat_a = feat_a.reshape(num_step, -1, self.hidden_dim).transpose(0, 1)
 
                 if i + 1 not in feat_a_t_dict:
                     feat_a_t_dict[i + 1] = feat_a

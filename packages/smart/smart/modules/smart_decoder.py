@@ -28,6 +28,7 @@ class SMARTDecoder(nn.Module):
         use_intention=False,
         token_size=512,
         mtp_offsets: Optional[Sequence[int]] = None,
+        mtp_use_transformer_head: bool = False,
     ) -> None:
         super(SMARTDecoder, self).__init__()
         self.map_encoder = SMARTMapDecoder(
@@ -59,6 +60,7 @@ class SMARTDecoder(nn.Module):
             token_size=token_size,
             token_data=token_data,
             mtp_offsets=mtp_offsets,
+            mtp_use_transformer_head=mtp_use_transformer_head,
         )
         self.map_enc = None
 

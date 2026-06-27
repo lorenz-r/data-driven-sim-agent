@@ -45,10 +45,13 @@ def _config_bool(value, default=False) -> bool:
 def normalize_mtp_loss_config(loss_config):
     mtp_enabled = _config_bool(_config_get(loss_config, "mtp_enabled", False))
     if not mtp_enabled:
-        return False, (1,), {1: 1.0}
+        return False, (1,), {1: 1.0}, False
 
     offsets_raw = _config_get(loss_config, "mtp_offsets", [1, 2, 3])
     weights_raw = _config_get(loss_config, "mtp_loss_weights", [1.0, 0.1, 0.03])
+    use_transformer_head = _config_bool(
+        _config_get(loss_config, "mtp_use_transformer_head", False)
+    )
     offsets = tuple(int(offset) for offset in offsets_raw)
     weights = tuple(float(weight) for weight in weights_raw)
 
@@ -61,7 +64,7 @@ def normalize_mtp_loss_config(loss_config):
     if 1 not in offsets:
         raise ValueError("mtp_offsets must include offset 1 when MTP is enabled.")
 
-    return mtp_enabled, offsets, dict(zip(offsets, weights))
+    return mtp_enabled, offsets, dict(zip(offsets, weights)), use_transformer_head
 
 
 def compute_weighted_mtp_loss(
@@ -138,6 +141,7 @@ class SMART(pl.LightningModule):
             self.mtp_enabled,
             self.mtp_offsets,
             self.mtp_loss_weights,
+            self.mtp_use_transformer_head,
         ) = normalize_mtp_loss_config(loss_config)
         self.map_token_traj_path = str(
             resolve_token_path(
@@ -172,6 +176,7 @@ class SMART(pl.LightningModule):
             token_data=token_data,
             token_size=token_size,
             mtp_offsets=self.mtp_offsets,
+            mtp_use_transformer_head=self.mtp_use_transformer_head,
         )
         self.minADE = minADE(max_guesses=1)
         self.minFDE = minFDE(max_guesses=1)
