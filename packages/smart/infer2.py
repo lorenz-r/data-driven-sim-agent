@@ -24,6 +24,7 @@ DEFAULT_RAW_DATA_FOLDER = SMART_ROOT / "data" / "raw" / "val"
 DEFAULT_OUTPUT_FOLDER = SMART_ROOT / "data" / "preds"
 DEFAULT_CHECKPOINT_PATH = REPO_ROOT / "model.ckpt"
 DEFAULT_BATCH_VISUALIZATION_LIMIT = 10
+DEFAULT_ROLLOUTS_PER_SCENARIO = 16
 
 
 def _prompt_path(label: str, default: Path | str) -> str:
@@ -85,6 +86,12 @@ def _run_setup_dialog(args) -> None:
     args.checkpoint = _prompt_path("Checkpoint path", args.checkpoint)
     args.device = _prompt_text("Device (cpu/cuda)", args.device)
     args.sample_tokens = _prompt_bool("Sample rollout tokens", args.sample_tokens)
+    args.rollouts_per_scenario = _prompt_optional_int(
+        "Rollouts per scenario",
+        args.rollouts_per_scenario,
+    )
+    if args.rollouts_per_scenario is None:
+        args.rollouts_per_scenario = DEFAULT_ROLLOUTS_PER_SCENARIO
 
 
 def main() -> None:
@@ -196,10 +203,24 @@ def main() -> None:
     )
     parser.add_argument(
         "--sample-tokens",
+        dest="sample_tokens",
         action="store_true",
+        default=True,
+        help=("Sample among top-k rollout tokens for diverse rollouts (default)."),
+    )
+    parser.add_argument(
+        "--no-sample-tokens",
+        dest="sample_tokens",
+        action="store_false",
+        help="Use deterministic top-1 tokens for every rollout.",
+    )
+    parser.add_argument(
+        "--rollouts-per-scenario",
+        type=int,
+        default=DEFAULT_ROLLOUTS_PER_SCENARIO,
         help=(
-            "Sample among top-k rollout tokens. By default inference uses top-1 "
-            "tokens for deterministic evaluation."
+            "Number of rollouts to generate for each scenario "
+            f"(default: {DEFAULT_ROLLOUTS_PER_SCENARIO})."
         ),
     )
 
@@ -226,6 +247,8 @@ def main() -> None:
         and args.batch_visualization_limit < 0
     ):
         args.batch_visualization_limit = None
+    if args.rollouts_per_scenario < 1:
+        raise ValueError("--rollouts-per-scenario must be at least 1")
 
     format_av2 = args.format in ("av2", "both")
 
@@ -237,6 +260,7 @@ def main() -> None:
         visualize=args.visualize,
         device=args.device,
         sample_tokens=args.sample_tokens,
+        rollouts_per_scenario=args.rollouts_per_scenario,
         format_av2=format_av2,
         batch_visualization_limit=args.batch_visualization_limit,
     )

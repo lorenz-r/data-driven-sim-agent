@@ -355,6 +355,106 @@ def _agent_metadata(agent_data: Any) -> dict[str, Any]:
     return metadata
 
 
+def _validate_rollouts_per_scenario(rollouts_per_scenario: int) -> int:
+    if rollouts_per_scenario < 1:
+        raise ValueError("rollouts_per_scenario must be at least 1")
+    return rollouts_per_scenario
+
+
+def _run_rollouts(
+    model: SMART,
+    data_sample: HeteroData,
+    *,
+    rollouts_per_scenario: int,
+    sample_tokens: bool,
+    last_pos: torch.Tensor | np.ndarray,
+) -> dict[str, torch.Tensor]:
+    rollouts_per_scenario = _validate_rollouts_per_scenario(rollouts_per_scenario)
+    if rollouts_per_scenario > 1 and not sample_tokens:
+        print(
+            "rollouts_per_scenario > 1 with sample_tokens=False will produce "
+            "duplicate deterministic top-1 rollouts."
+        )
+
+    pred_traj_rollouts = []
+    pred_head_rollouts = []
+    pred_valid_mask_rollouts = []
+    pred_prob_rollouts = []
+    next_token_idx_rollouts = []
+    alignment_drop_steps = []
+    out_of_bounds_total = 0
+    first_output = None
+
+    with torch.no_grad():
+        data_sample = model.match_token_map(data_sample)
+        data_sample = model.sample_pt_pred(data_sample)
+        for rollout_idx in range(rollouts_per_scenario):
+            inference_output = model.inference(
+                data_sample,
+                sample_tokens=sample_tokens,
+            )
+            if first_output is None:
+                first_output = inference_output
+
+            pred_traj = inference_output["pred_traj"]
+            pred_head = inference_output["pred_head"]
+            pred_traj, pred_head, drop_steps = align_token_rollout_to_future_horizon(
+                pred_traj,
+                pred_head,
+                model=model,
+            )
+            pred_valid_mask = build_pred_valid_mask(data_sample, pred_traj, model)
+            pred_valid_mask, out_of_bounds_count = filter_out_of_bounds_valid_mask(
+                pred_traj,
+                pred_valid_mask,
+                last_pos,
+            )
+            out_of_bounds_total += out_of_bounds_count
+            alignment_drop_steps.append(drop_steps)
+
+            pred_traj_rollouts.append(pred_traj.detach().cpu())
+            pred_head_rollouts.append(pred_head.detach().cpu())
+            pred_valid_mask_rollouts.append(pred_valid_mask.detach().cpu())
+            if "pred_prob" in inference_output:
+                pred_prob_rollouts.append(inference_output["pred_prob"].detach().cpu())
+            if "next_token_idx" in inference_output:
+                next_token_idx_rollouts.append(
+                    inference_output["next_token_idx"].detach().cpu()
+                )
+
+            print(
+                f"Rollout {rollout_idx + 1}/{rollouts_per_scenario}: "
+                f"{pred_valid_mask.sum().item()} / {pred_valid_mask.numel()} valid, "
+                f"{out_of_bounds_count} out of bounds"
+            )
+
+    if first_output is None:
+        raise RuntimeError("No rollout was produced")
+
+    num_timesteps = pred_traj_rollouts[0].shape[1]
+    result = {
+        "pred_traj": torch.stack(pred_traj_rollouts, dim=0),
+        "pred_head": torch.stack(pred_head_rollouts, dim=0),
+        "pred_valid_mask": torch.stack(pred_valid_mask_rollouts, dim=0),
+        "alignment_drop_steps": torch.as_tensor(alignment_drop_steps, dtype=torch.long),
+        "out_of_bounds_count": torch.tensor(out_of_bounds_total),
+    }
+    if "gt" in first_output:
+        result["gt"] = first_output["gt"].detach().cpu()
+
+    gt_head = _future_agent_field(data_sample, model, "heading", num_timesteps)
+    gt_valid_mask = _future_agent_field(data_sample, model, "valid_mask", num_timesteps)
+    if gt_head is not None:
+        result["gt_head"] = gt_head.detach().cpu()
+    if gt_valid_mask is not None:
+        result["gt_valid_mask"] = gt_valid_mask.detach().cpu().bool()
+    if pred_prob_rollouts:
+        result["pred_prob"] = torch.stack(pred_prob_rollouts, dim=0)
+    if next_token_idx_rollouts:
+        result["next_token_idx"] = torch.stack(next_token_idx_rollouts, dim=0)
+    return result
+
+
 def run_scenario_inference(
     *,
     input_file: Path,
@@ -362,6 +462,7 @@ def run_scenario_inference(
     model: SMART,
     token_processor: TokenProcessor,
     sample_tokens: bool,
+    rollouts_per_scenario: int,
     save_prediction: bool,
     run_metadata: dict[str, Any],
 ) -> dict[str, Any]:
@@ -374,39 +475,34 @@ def run_scenario_inference(
     data_sample = HeteroData(smart_data) if isinstance(smart_data, dict) else smart_data
     data_sample = token_processor.preprocess(data_sample)
 
-    with torch.no_grad():
-        data_sample = model.match_token_map(data_sample)
-        data_sample = model.sample_pt_pred(data_sample)
-        inference_output = model.inference(data_sample, sample_tokens=sample_tokens)
-
-    pred_traj = inference_output["pred_traj"]
-    pred_head = inference_output["pred_head"]
-    pred_traj, pred_head, alignment_drop_steps = align_token_rollout_to_future_horizon(
-        pred_traj,
-        pred_head,
-        model=model,
-    )
-    pred_valid_mask = build_pred_valid_mask(data_sample, pred_traj, model)
-
     agent_data = smart_data["agent"]
     last_observed_idx = model.num_historical_steps - 1
     last_pos = agent_data["position"][:, last_observed_idx]
-    pred_valid_mask, out_of_bounds_count = filter_out_of_bounds_valid_mask(
-        pred_traj,
-        pred_valid_mask,
-        last_pos,
+    rollout_output = _run_rollouts(
+        model,
+        data_sample,
+        rollouts_per_scenario=rollouts_per_scenario,
+        sample_tokens=sample_tokens,
+        last_pos=last_pos,
     )
 
-    print(f"Predicted trajectories shape: {pred_traj.shape}")
-    if alignment_drop_steps:
+    pred_traj = rollout_output["pred_traj"]
+    pred_head = rollout_output["pred_head"]
+    pred_valid_mask = rollout_output["pred_valid_mask"]
+    alignment_drop_steps = rollout_output["alignment_drop_steps"]
+    out_of_bounds_count = rollout_output["out_of_bounds_count"]
+
+    print(f"Predicted rollouts shape: {pred_traj.shape}")
+    if bool(torch.any(alignment_drop_steps)):
         print(
             "Aligned token rollout to future horizon: "
-            f"dropped {alignment_drop_steps} pre-future step(s) and padded tail"
+            f"dropped {int(alignment_drop_steps.max().item())} pre-future step(s) "
+            "and padded tail"
         )
     print(
         "Filtered predictions: "
         f"{pred_valid_mask.sum().item()} / {pred_valid_mask.numel()} valid, "
-        f"{out_of_bounds_count} out of bounds"
+        f"{int(out_of_bounds_count.item())} out of bounds"
     )
 
     prediction_data = {
@@ -414,11 +510,12 @@ def run_scenario_inference(
         "pred_traj": _to_numpy(pred_traj),
         "pred_head": _to_numpy(pred_head),
         "pred_valid_mask": _to_numpy(pred_valid_mask),
+        "rollouts_per_scenario": rollouts_per_scenario,
         "last_pos": _to_numpy(last_pos),
-        "num_agents": int(pred_traj.shape[0]),
-        "num_timesteps": int(pred_traj.shape[1]),
-        "alignment_drop_steps": alignment_drop_steps,
-        "out_of_bounds_count": out_of_bounds_count,
+        "num_agents": int(pred_traj.shape[1]),
+        "num_timesteps": int(pred_traj.shape[2]),
+        "alignment_drop_steps": _to_numpy(alignment_drop_steps),
+        "out_of_bounds_count": int(out_of_bounds_count.item()),
         "inference_metadata_json": _json_string(
             {
                 **run_metadata,
@@ -432,19 +529,15 @@ def run_scenario_inference(
         ),
     }
     prediction_data.update(_agent_metadata(agent_data))
-    if "gt" in inference_output:
-        prediction_data["gt"] = _to_numpy(inference_output["gt"])
-    gt_head = _future_agent_field(data_sample, model, "heading", pred_traj.shape[1])
-    gt_valid_mask = _future_agent_field(
-        data_sample,
-        model,
-        "valid_mask",
-        pred_traj.shape[1],
-    )
-    if gt_head is not None:
-        prediction_data["gt_head"] = _to_numpy(gt_head)
-    if gt_valid_mask is not None:
-        prediction_data["gt_valid_mask"] = _to_numpy(gt_valid_mask.bool())
+    for optional_key in (
+        "gt",
+        "gt_head",
+        "gt_valid_mask",
+        "pred_prob",
+        "next_token_idx",
+    ):
+        if optional_key in rollout_output:
+            prediction_data[optional_key] = _to_numpy(rollout_output[optional_key])
 
     smart_output_path = None
     if save_prediction:
@@ -459,9 +552,9 @@ def run_scenario_inference(
         "scenario_id": scenario_id,
         "smart_data": smart_data,
         "prediction_data": prediction_data,
-        "pred_traj": pred_traj.detach().cpu(),
-        "pred_head": pred_head.detach().cpu(),
-        "pred_valid_mask": pred_valid_mask.detach().cpu(),
+        "pred_traj": pred_traj[0].detach().cpu(),
+        "pred_head": pred_head[0].detach().cpu(),
+        "pred_valid_mask": pred_valid_mask[0].detach().cpu(),
         "smart_output_path": smart_output_path,
     }
 
@@ -509,6 +602,7 @@ def _write_batch_metadata_npz(
     visualized_scenario_ids: list[str],
     num_agents: list[int],
     num_timesteps: list[int],
+    rollouts_per_scenario: list[int],
 ) -> None:
     _write_npz_array(archive, "format_version", np.asarray("smart_batch_rollouts_v2"))
     _write_npz_array(archive, "run_id", np.asarray(run_id))
@@ -525,6 +619,11 @@ def _write_batch_metadata_npz(
         archive,
         "num_timesteps",
         np.asarray(num_timesteps, dtype=np.int64),
+    )
+    _write_npz_array(
+        archive,
+        "rollouts_per_scenario",
+        np.asarray(rollouts_per_scenario, dtype=np.int64),
     )
     _write_npz_array(
         archive,
@@ -673,9 +772,11 @@ def run_inference_pipeline(
     visualize: bool,
     device: str,
     sample_tokens: bool,
+    rollouts_per_scenario: int,
     format_av2: bool,
     batch_visualization_limit: Optional[int],
 ) -> list[dict[str, Any]]:
+    rollouts_per_scenario = _validate_rollouts_per_scenario(rollouts_per_scenario)
     targets = resolve_inference_targets(input_path)
     output_path = Path(output_dir).expanduser()
     raw_path = Path(raw_data_folder).expanduser()
@@ -709,6 +810,7 @@ def run_inference_pipeline(
             "visualize": visualize,
             "device": device,
             "sample_tokens": sample_tokens,
+            "rollouts_per_scenario": rollouts_per_scenario,
             "format_av2": format_av2,
             "batch_visualization_limit": batch_visualization_limit,
         },
@@ -729,6 +831,7 @@ def run_inference_pipeline(
     visualized_scenario_ids = []
     all_num_agents = []
     all_num_timesteps = []
+    all_rollouts_per_scenario = []
 
     with zipfile.ZipFile(
         batch_output_path,
@@ -748,6 +851,7 @@ def run_inference_pipeline(
                 model=model,
                 token_processor=token_processor,
                 sample_tokens=sample_tokens,
+                rollouts_per_scenario=rollouts_per_scenario,
                 save_prediction=should_visualize,
                 run_metadata=run_metadata,
             )
@@ -762,6 +866,9 @@ def run_inference_pipeline(
             scenario_keys.append(scenario_key)
             all_num_agents.append(int(prediction_data["num_agents"]))
             all_num_timesteps.append(int(prediction_data["num_timesteps"]))
+            all_rollouts_per_scenario.append(
+                int(prediction_data["rollouts_per_scenario"])
+            )
             results.append(result)
 
             pred_scenario = None
@@ -805,6 +912,7 @@ def run_inference_pipeline(
             visualized_scenario_ids=visualized_scenario_ids,
             num_agents=all_num_agents,
             num_timesteps=all_num_timesteps,
+            rollouts_per_scenario=all_rollouts_per_scenario,
         )
 
     print(f"Saved collected batch predictions to: {batch_output_path}")
