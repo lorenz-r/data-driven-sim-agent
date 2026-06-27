@@ -702,7 +702,6 @@ def run_inference_pipeline(
         "model_config": _jsonable(model_config),
         "cli": {
             "input_path": str(input_path),
-            "input_files": [str(target) for target in targets],
             "input_file_count": len(targets),
             "raw_data_folder": str(raw_data_folder),
             "output_dir": str(output_dir),

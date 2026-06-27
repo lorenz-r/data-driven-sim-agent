@@ -227,6 +227,33 @@ def _score_summary(score: Any) -> dict[str, Any]:
     return summary
 
 
+def _compact_inference_metadata(metadata: dict[str, Any] | None) -> Any:
+    if metadata is None:
+        return None
+
+    compact = _jsonable(metadata)
+    if not isinstance(compact, dict):
+        return compact
+
+    cli = compact.get("cli")
+    if isinstance(cli, dict):
+        cli.pop("input_files", None)
+
+    batch = compact.get("batch")
+    if isinstance(batch, dict):
+        scenario_ids = batch.pop("scenario_ids", None)
+        scenario_keys = batch.pop("scenario_keys", None)
+        visualized_ids = batch.pop("visualized_scenario_ids", None)
+        if scenario_ids is not None:
+            batch["scenario_count"] = len(scenario_ids)
+        if scenario_keys is not None:
+            batch["scenario_key_count"] = len(scenario_keys)
+        if visualized_ids is not None:
+            batch["visualized_scenario_count"] = len(visualized_ids)
+
+    return compact
+
+
 def _compute_scenario_metrics_from_data(
     data: Any,
     *,
@@ -311,7 +338,7 @@ def _compute_scenario_metrics_from_data(
     return {
         "scenario_id": scenario_id,
         "input_npz": input_label,
-        "inference_metadata": inference_metadata,
+        "inference_metadata": _compact_inference_metadata(inference_metadata),
         "counts": {
             "agents": int(num_agents),
             "target_agents": int(np.sum(target_mask)),
@@ -522,6 +549,11 @@ def main() -> None:
         action="store_true",
         help="Skip WOMD-style interactive metrics.",
     )
+    parser.add_argument(
+        "--include-scenario-metrics",
+        action="store_true",
+        help="Include the full per-scenario metric log in the output JSON.",
+    )
     args = parser.parse_args()
 
     npz_files = _resolve_npz_inputs(args.input)
@@ -541,7 +573,7 @@ def main() -> None:
             input_metadata.append(
                 {
                     "input_npz": str(npz_path),
-                    "inference_metadata": batch_metadata,
+                    "inference_metadata": _compact_inference_metadata(batch_metadata),
                 }
             )
 
@@ -560,6 +592,7 @@ def main() -> None:
                 "seconds_per_step": args.seconds_per_step,
                 "no_headings": args.no_headings,
                 "no_interactive": args.no_interactive,
+                "include_scenario_metrics": args.include_scenario_metrics,
             },
             "input_metadata": input_metadata,
             "masking_policy": {
@@ -576,8 +609,9 @@ def main() -> None:
             scenarios,
             include_interactive=not args.no_interactive,
         ),
-        "scenario_metrics": scenarios,
     }
+    if args.include_scenario_metrics:
+        report["scenario_metrics"] = scenarios
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as file:
