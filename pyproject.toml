@@ -6,6 +6,7 @@ requires-python = ">=3.11,<3.12"
 dependencies = [
     "hydra-core>=1.3.3",
     "kigras",
+    "kigras_ha",
     "mypy>=2.1.0",
     "numpy>=1.26.4",
     "ruff>=0.15.13",
@@ -33,6 +34,7 @@ members = [
     "packages/trajectory-data",
     "tests",
     "packages/kigras",
+    "packages/kigras_ha",
 ]
 
 [tool.uv.sources]
@@ -43,6 +45,7 @@ smart = { workspace = true }
 smart-preprocess = { workspace = true }
 trajectory-data = { workspace = true }
 kigras = { workspace = true, editable = true }
+kigras_ha = { workspace = true, editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests/src", "packages/trajectory-data/tests"]

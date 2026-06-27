@@ -1,14 +1,16 @@
-from kigras_ha.dataloader.datamodule import ArgoDataModule
+from kigras.dataloader.datamodule import ArgoDataModule
 from kigras_ha.model.kigras_ha import KiGRAS_HA
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.strategies import DDPStrategy
 
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+import torch
+from pathlib import Path
 
 
-def run_training(config: dict, wandb_logger=None, return_metrics_path=None) -> dict:
+def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -> dict:
     """Unified training entrypoint for KiGRAS_HA.
 
     Parameters
@@ -26,27 +28,28 @@ def run_training(config: dict, wandb_logger=None, return_metrics_path=None) -> d
     dict
         Training metrics (currently empty, reserved for future use).
     """
-    data_cfg = config["data"]
-    training_cfg = config["training"]
-    optim_cfg = config["optimization"]
-    ckpt_cfg = config.get("checkpointing", {})
-    resume_cfg = config.get("resume", {})
+    dl_cfg = cfg.training.dataloader
+    optim_cfg = cfg.training.optimizer
+    ckpt_cfg = cfg.training.checkpointing
+    es_cfg = cfg.training.early_stopping
+    trainer_cfg = cfg.training.trainer
+    model_cfg = cfg.model.architecture
 
     # ------------------------------------------------------------------
     # Datamodule
     # ------------------------------------------------------------------
     datamodule = ArgoDataModule(
-        train_raw_dir=data_cfg["train_path"],
-        val_raw_dir=data_cfg.get("val_path", data_cfg["train_path"]),
-        train_batch_size=data_cfg["batch_size"],
-        val_batch_size=data_cfg.get("val_batch_size", data_cfg["batch_size"]),
-        num_workers=data_cfg.get("data_workers", 8),
+        train_dir=dl_cfg.train_path,
+        val_dir=dl_cfg.val_path,
+        train_batch_size=dl_cfg.train_batch_size,
+        val_batch_size=dl_cfg.val_batch_size,
+        num_workers=dl_cfg.data_workers,
+        mode=dl_cfg.mode,
     )
 
     # ------------------------------------------------------------------
     # Model
     # ------------------------------------------------------------------
-    model_cfg = config.get("model", {})
     model = KiGRAS_HA(
         lr=optim_cfg["learning_rate"],
         weight_decay=optim_cfg["weight_decay"],
@@ -60,7 +63,7 @@ def run_training(config: dict, wandb_logger=None, return_metrics_path=None) -> d
     # ------------------------------------------------------------------
     # Callbacks
     # ------------------------------------------------------------------
-    checkpoint = ModelCheckpoint(
+    """checkpoint = ModelCheckpoint(
         dirpath=ckpt_cfg.get("save_dir", "checkpoints"),
         filename="{epoch:02d}",
         monitor="val_loss",  # TODO: Make variable metric for config
@@ -68,28 +71,30 @@ def run_training(config: dict, wandb_logger=None, return_metrics_path=None) -> d
         mode=ckpt_cfg.get("mode", "min"),
         every_n_epochs=1,
         save_last=True,
-    )
-    callbacks = [checkpoint]
+    )"""
+    callbacks = []
 
-    if config.get("early_stopping", {}).get("enabled", False):
+    checkpoint = ModelCheckpoint(**ckpt_cfg)
+    callbacks.append(checkpoint)
+
+    if es_cfg.enabled:
         from pytorch_lightning.callbacks import EarlyStopping
 
-        es = config["early_stopping"]
         callbacks.append(
             EarlyStopping(
-                monitor=es["monitor"],
-                patience=es.get("patience", 5),
-                mode=es.get("mode", "min"),
+                monitor=es_cfg.monitor,
+                patience=es_cfg.patience,
+                mode=es_cfg.mode,
             )
         )
 
     # ------------------------------------------------------------------
     # Strategy
     # ------------------------------------------------------------------
-    devices = training_cfg.get("devices", 1)
+    num_devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
     strategy = (
         DDPStrategy(find_unused_parameters=True, gradient_as_bucket_view=True)
-        if devices > 1
+        if num_devices > 1
         else "auto"
     )
 
@@ -97,31 +102,37 @@ def run_training(config: dict, wandb_logger=None, return_metrics_path=None) -> d
     # Trainer
     # ------------------------------------------------------------------
     trainer = pl.Trainer(
-        accelerator=training_cfg.get("accelerator", "auto"),
-        devices=devices,
+        devices=num_devices,
         strategy=strategy,
         callbacks=callbacks,
-        max_epochs=training_cfg["max_epochs"],
-        num_sanity_val_steps=0,
-        gradient_clip_val=training_cfg.get("gradient_clip_val", 0.5),
-        precision=training_cfg.get("precision", "32"),
         logger=wandb_logger,
+        **trainer_cfg,
     )
 
     # ------------------------------------------------------------------
     # Fit (with optional resume)
     # ------------------------------------------------------------------
-    ckpt_path = resume_cfg.get("checkpoint_path", "")
-    if ckpt_path:
-        trainer.fit(model, datamodule, ckpt_path=ckpt_path)
-    else:
-        trainer.fit(model, datamodule)
+    ckpt_dir = Path(ckpt_cfg.dirpath)
+    ckpt_path = None
+    if ckpt_dir.exists() and any(ckpt_dir.iterdir()):
+        ckpt_files = sorted(ckpt_dir.glob("*.ckpt"))
+        if ckpt_files:
+            ckpt_path = str(ckpt_files[-1])
+    trainer.fit(model, datamodule, ckpt_path=ckpt_path)
 
     return {"end_loss": trainer.callback_metrics.get("val_loss", None)}
 
 
-@hydra.main(config_path="../../configs", config_name="config", version_base=None)
+"""@hydra.main(config_path="../../configs", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
+    run_training(cfg)
+"""
+
+
+@hydra.main(config_path="./configs", config_name="config", version_base=None)
+def main(cfg: DictConfig) -> None:
+    OmegaConf.resolve(cfg)
+    OmegaConf.set_struct(cfg, False)
     run_training(cfg)
 
 

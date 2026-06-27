@@ -1,4 +1,9 @@
 from trainers.smart_trainer import SmartTrainer
 from trainers.kigras_trainer import KigrasTrainer
+from trainers.kigras_ha_trainer import Kigras_HA_Trainer
 
-TRAINER_REGISTRY = {"smart": SmartTrainer, "kigras": KigrasTrainer}
+TRAINER_REGISTRY = {
+    "smart": SmartTrainer,
+    "kigras": KigrasTrainer,
+    "kigras_ha": Kigras_HA_Trainer,
+}
