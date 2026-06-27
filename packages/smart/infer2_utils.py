@@ -1,4 +1,8 @@
+import json
 import pickle
+import platform
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -39,6 +43,30 @@ def _to_easydict(value: Any) -> Any:
     if isinstance(value, list):
         return [_to_easydict(item) for item in value]
     return value
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, easydict.EasyDict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().tolist()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return repr(value)
+
+
+def _json_string(value: Any) -> np.ndarray:
+    return np.asarray(json.dumps(_jsonable(value), sort_keys=True).encode("utf-8"))
 
 
 def _load_checkpoint_model_config(checkpoint_path: Path) -> Any:
@@ -91,6 +119,19 @@ def _normalise_checkpoint_token_paths(model_config: Any) -> None:
     )
     model_config.agent_token_path = str(agent_token_path)
     model_config.map_token_path = str(map_token_path)
+
+
+def _checkpoint_metadata(checkpoint_path: Path) -> dict[str, Any]:
+    stat = checkpoint_path.stat()
+    return {
+        "path": str(checkpoint_path),
+        "resolved_path": str(checkpoint_path.resolve()),
+        "size_bytes": stat.st_size,
+        "mtime_utc": datetime.fromtimestamp(
+            stat.st_mtime,
+            tz=timezone.utc,
+        ).isoformat(),
+    }
 
 
 def load_model_and_processor(
@@ -284,6 +325,29 @@ def _to_numpy(value: Any) -> np.ndarray:
     return np.asarray(value)
 
 
+def _future_agent_field(
+    data_sample: HeteroData,
+    model: SMART,
+    field_name: str,
+    num_timesteps: int,
+) -> torch.Tensor | None:
+    if field_name not in data_sample["agent"]:
+        return None
+    value = data_sample["agent"][field_name]
+    if not isinstance(value, torch.Tensor):
+        value = torch.as_tensor(value)
+    start = model.num_historical_steps
+    return value[:, start : start + num_timesteps].contiguous()
+
+
+def _agent_metadata(agent_data: Any) -> dict[str, Any]:
+    metadata = {}
+    for field in ("id", "type", "category"):
+        if field in agent_data:
+            metadata[f"agent_{field}"] = _to_numpy(agent_data[field])
+    return metadata
+
+
 def run_scenario_inference(
     *,
     input_file: Path,
@@ -291,6 +355,7 @@ def run_scenario_inference(
     model: SMART,
     token_processor: TokenProcessor,
     sample_tokens: bool,
+    run_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     scenario_id = input_file.stem
     print(f"Running inference on: {scenario_id}")
@@ -345,9 +410,33 @@ def run_scenario_inference(
         "num_agents": int(pred_traj.shape[0]),
         "num_timesteps": int(pred_traj.shape[1]),
         "alignment_drop_steps": alignment_drop_steps,
+        "out_of_bounds_count": out_of_bounds_count,
+        "inference_metadata_json": _json_string(
+            {
+                **run_metadata,
+                "scenario": {
+                    "scenario_id": scenario_id,
+                    "input_file": str(input_file),
+                    "input_file_resolved": str(input_file.resolve()),
+                    "smart_output_format": "smart_inference_npz_v2",
+                },
+            }
+        ),
     }
+    prediction_data.update(_agent_metadata(agent_data))
     if "gt" in inference_output:
         prediction_data["gt"] = _to_numpy(inference_output["gt"])
+    gt_head = _future_agent_field(data_sample, model, "heading", pred_traj.shape[1])
+    gt_valid_mask = _future_agent_field(
+        data_sample,
+        model,
+        "valid_mask",
+        pred_traj.shape[1],
+    )
+    if gt_head is not None:
+        prediction_data["gt_head"] = _to_numpy(gt_head)
+    if gt_valid_mask is not None:
+        prediction_data["gt_valid_mask"] = _to_numpy(gt_valid_mask.bool())
 
     smart_output_path = save_smart_prediction(
         output_dir=output_dir,
@@ -526,6 +615,32 @@ def run_inference_pipeline(
         checkpoint_path=checkpoint_path,
         device=device,
     )
+    checkpoint = Path(checkpoint_path).expanduser()
+    model_config = model.model_config
+    run_metadata = {
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "checkpoint": _checkpoint_metadata(checkpoint),
+        "model_config": _jsonable(model_config),
+        "cli": {
+            "input_path": str(input_path),
+            "input_files": [str(target) for target in targets],
+            "input_file_count": len(targets),
+            "raw_data_folder": str(raw_data_folder),
+            "output_dir": str(output_dir),
+            "checkpoint_path": str(checkpoint_path),
+            "visualize": visualize,
+            "device": device,
+            "sample_tokens": sample_tokens,
+            "format_av2": format_av2,
+            "batch_visualization_limit": batch_visualization_limit,
+        },
+        "runtime": {
+            "python": sys.version,
+            "platform": platform.platform(),
+            "torch": torch.__version__,
+            "numpy": np.__version__,
+        },
+    }
 
     print(f"Running SMART inference on {len(targets)} scenario(s)")
     results = []
@@ -539,6 +654,7 @@ def run_inference_pipeline(
             model=model,
             token_processor=token_processor,
             sample_tokens=sample_tokens,
+            run_metadata=run_metadata,
         )
         results.append(result)
 
