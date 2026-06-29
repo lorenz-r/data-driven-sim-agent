@@ -1,4 +1,4 @@
-from hydra import initialize, compose
+from hydra import initialize_config_dir, compose
 from omegaconf import OmegaConf
 from trainers.base_trainer import BaseTrainer
 from packages.kigras_ha.train import run_training
@@ -16,10 +16,11 @@ class Kigras_HA_Trainer(BaseTrainer):
 
         project_root = Path(__file__).resolve().parent.parent
         overrides = list(self.config["model"].get("overrides", []))
-        overrides.append(f"package_root={project_root}")
+        overrides.append(f"package_root='{project_root}'")
         self.name = self.__class__.__name__
 
-        with initialize(config_path="../packages/kigras/configs", version_base=None):
+        config_dir = str(project_root / "packages" / "kigras" / "configs")
+        with initialize_config_dir(config_dir=config_dir, version_base=None):
             cfg = compose(config_name="config", overrides=overrides)
 
         print(OmegaConf.to_yaml(cfg))

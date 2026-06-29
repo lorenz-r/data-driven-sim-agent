@@ -12,3 +12,6 @@ defaults:
   - training/checkpointing: checkpoints_default
   - training/early_stopping: default_es_behaviour
   # - training/logging: wandb TODO
+
+resume:
+  checkpoint_path: auto

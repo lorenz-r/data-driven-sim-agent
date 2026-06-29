@@ -112,24 +112,24 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
     # ------------------------------------------------------------------
     # Fit (with optional resume)
     # ------------------------------------------------------------------
-    ckpt_dir = Path(ckpt_cfg.dirpath)
-    ckpt_path = None
-    if ckpt_dir.exists() and any(ckpt_dir.iterdir()):
-        ckpt_files = sorted(ckpt_dir.glob("*.ckpt"))
-        if ckpt_files:
-            ckpt_path = str(ckpt_files[-1])
+    resume_path = cfg.get("resume", {}).get("checkpoint_path", "auto")
+    if resume_path and resume_path != "auto":
+        ckpt_path = resume_path
+    elif resume_path == "auto":
+        ckpt_dir = Path(ckpt_cfg.dirpath)
+        ckpt_path = None
+        if ckpt_dir.exists() and any(ckpt_dir.iterdir()):
+            ckpt_files = sorted(ckpt_dir.glob("*.ckpt"))
+            if ckpt_files:
+                ckpt_path = str(ckpt_files[-1])
+    else:
+        ckpt_path = None
     trainer.fit(model, datamodule, ckpt_path=ckpt_path)
 
     return {"end_loss": trainer.callback_metrics.get("val_loss", None)}
 
 
-"""@hydra.main(config_path="../../configs", config_name="config", version_base=None)
-def main(cfg: DictConfig) -> None:
-    run_training(cfg)
-"""
-
-
-@hydra.main(config_path="./configs", config_name="config", version_base=None)
+@hydra.main(config_path="../kigras/configs", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)

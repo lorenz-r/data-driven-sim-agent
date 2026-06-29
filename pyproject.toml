@@ -44,8 +44,8 @@ integration-tests = { workspace = true }
 smart = { workspace = true }
 smart-preprocess = { workspace = true }
 trajectory-data = { workspace = true }
-kigras = { workspace = true, editable = true }
-kigras_ha = { workspace = true, editable = true }
+kigras = { workspace = true}
+kigras_ha = { workspace = true}
 
 [tool.pytest.ini_options]
 testpaths = ["tests/src", "packages/trajectory-data/tests"]
