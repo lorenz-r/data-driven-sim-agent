@@ -477,13 +477,19 @@ class SMART(pl.LightningModule):
             left_side = (data["pt_token"]["side"][pt] == 0).sum()
             right_side = (data["pt_token"]["side"][pt] == 1).sum()
             center_side = (data["pt_token"]["side"][pt] == 2).sum()
-            count_nums.append(torch.Tensor([left_side, right_side, center_side]))
+            count_nums.append(torch.stack([left_side, right_side, center_side]))
         count_nums = torch.stack(count_nums, dim=0)
         num_polyline = int(count_nums.max().item())
         traj_mask = torch.zeros(
-            (int(len(pl_idx_full.unique())), 3, num_polyline), dtype=bool
+            (int(len(pl_idx_full.unique())), 3, num_polyline),
+            dtype=bool,
+            device=traj_pos.device,
         )
-        idx_matrix = torch.arange(traj_mask.size(2)).unsqueeze(0).unsqueeze(0)
+        idx_matrix = (
+            torch.arange(traj_mask.size(2), device=traj_pos.device)
+            .unsqueeze(0)
+            .unsqueeze(0)
+        )
         idx_matrix = idx_matrix.expand(traj_mask.size(0), traj_mask.size(1), -1)  #
         counts_num_expanded = count_nums.unsqueeze(-1)
         mask_update = idx_matrix < counts_num_expanded
@@ -510,11 +516,15 @@ class SMART(pl.LightningModule):
 
     def sample_pt_pred(self, data):
         traj_mask = data["pt_token"]["traj_mask"]
-        raw_pt_index = torch.arange(1, traj_mask.shape[2]).repeat(
+        raw_pt_index = torch.arange(
+            1,
+            traj_mask.shape[2],
+            device=traj_mask.device,
+        ).repeat(
             traj_mask.shape[0], traj_mask.shape[1], 1
         )
         masked_pt_index = raw_pt_index.view(-1)[
-            torch.randperm(raw_pt_index.numel())[
+            torch.randperm(raw_pt_index.numel(), device=traj_mask.device)[
                 : traj_mask.shape[0]
                 * traj_mask.shape[1]
                 * ((traj_mask.shape[2] - 1) // 3)

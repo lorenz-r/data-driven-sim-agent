@@ -141,11 +141,49 @@ def _checkpoint_metadata(checkpoint_path: Path) -> dict[str, Any]:
     }
 
 
+def resolve_inference_device(device: str | torch.device) -> torch.device:
+    requested_device = torch.device(device)
+    if requested_device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA inference was requested with --device cuda, but "
+            "torch.cuda.is_available() is False."
+        )
+    if requested_device.type not in ("cpu", "cuda"):
+        raise ValueError(f"Unsupported inference device: {requested_device}")
+    return requested_device
+
+
+def _model_device(model: SMART) -> torch.device:
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cpu")
+
+
+def _move_value_to_device(value: Any, device: torch.device) -> Any:
+    if isinstance(value, torch.Tensor):
+        return value.to(device=device, non_blocking=device.type == "cuda")
+    if isinstance(value, HeteroData):
+        value = value.to(device)
+        for store in value.stores:
+            for key, item in list(store.items()):
+                store[key] = _move_value_to_device(item, device)
+        return value
+    if isinstance(value, dict):
+        return {key: _move_value_to_device(item, device) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_move_value_to_device(item, device) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_move_value_to_device(item, device) for item in value)
+    return value
+
+
 def load_model_and_processor(
     *,
     checkpoint_path: str | Path,
     device: str,
-) -> tuple[SMART, TokenProcessor, Any]:
+) -> tuple[SMART, TokenProcessor, Any, torch.device]:
+    resolved_device = resolve_inference_device(device)
     checkpoint = Path(checkpoint_path).expanduser()
     if not checkpoint.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
@@ -159,8 +197,9 @@ def load_model_and_processor(
     model.load_params_from_file(
         str(checkpoint),
         logger=logger,
-        to_cpu=(device == "cpu"),
+        to_cpu=(resolved_device.type == "cpu"),
     )
+    model.to(resolved_device)
     model.eval()
 
     token_processor = TokenProcessor(
@@ -168,7 +207,11 @@ def load_model_and_processor(
         agent_token_path=model_config.agent_token_path,
         map_token_path=model_config.map_token_path,
     )
-    return model, token_processor, model_config
+    return model, token_processor, model_config, resolved_device
+
+
+def _move_sample_to_model_device(data_sample: HeteroData, model: SMART) -> HeteroData:
+    return _move_value_to_device(data_sample, _model_device(model))
 
 
 def _fit_pred_valid_mask(
@@ -340,9 +383,12 @@ def _future_agent_field(
 ) -> torch.Tensor | None:
     if field_name not in data_sample["agent"]:
         return None
+    device = _model_device(model)
     value = data_sample["agent"][field_name]
     if not isinstance(value, torch.Tensor):
-        value = torch.as_tensor(value)
+        value = torch.as_tensor(value, device=device)
+    else:
+        value = value.to(device=device, non_blocking=device.type == "cuda")
     start = model.num_historical_steps
     return value[:, start : start + num_timesteps].contiguous()
 
@@ -385,7 +431,17 @@ def _run_rollouts(
     out_of_bounds_total = 0
     first_output = None
 
-    with torch.no_grad():
+    data_sample = _move_sample_to_model_device(data_sample, model)
+    model_device = _model_device(model)
+    if isinstance(last_pos, torch.Tensor):
+        last_pos = last_pos.to(
+            device=model_device,
+            non_blocking=model_device.type == "cuda",
+        )
+    else:
+        last_pos = torch.as_tensor(last_pos, device=model_device)
+
+    with torch.inference_mode():
         data_sample = model.match_token_map(data_sample)
         data_sample = model.sample_pt_pred(data_sample)
         for rollout_idx in range(rollouts_per_scenario):
@@ -788,7 +844,7 @@ def run_inference_pipeline(
     if will_visualize_any and not raw_path.exists():
         raise FileNotFoundError(f"Raw data folder not found: {raw_path}")
 
-    model, token_processor, _ = load_model_and_processor(
+    model, token_processor, _, resolved_device = load_model_and_processor(
         checkpoint_path=checkpoint_path,
         device=device,
     )
@@ -809,6 +865,7 @@ def run_inference_pipeline(
             "checkpoint_path": str(checkpoint_path),
             "visualize": visualize,
             "device": device,
+            "resolved_device": str(resolved_device),
             "sample_tokens": sample_tokens,
             "rollouts_per_scenario": rollouts_per_scenario,
             "format_av2": format_av2,
