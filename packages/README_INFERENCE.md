@@ -26,6 +26,7 @@ uv run python packages/smart/infer2.py \
   --input packages/smart/data/processed/current/val/ \
   --output packages/smart/data/preds \
   --checkpoint checkpoints/last.ckpt \
+  --batch-size 8 \
   --rollouts-per-scenario 16 \
   --batch-visualization-limit 2
 ```
@@ -39,12 +40,17 @@ uv run python packages/smart/infer2.py \
 - `--output`: output directory for batch predictions and optional scenario-level
   artifacts.
 - `--device`: `cpu` or `cuda`.
+- `--batch-size`: number of scenarios to run per model inference batch.
 
 ### Rollouts
 
 `--rollouts-per-scenario` controls how many sampled futures are generated per
 scenario. The default is `16`. Waymo-style evaluation often uses `32`, but `16`
 is currently used as a speed/coverage compromise for larger validation batches.
+
+Scenarios are batched for the model inference pass according to `--batch-size`.
+Per-scenario preprocessing and map-token matching still run per scenario, then
+the prepared graphs are collated for rollout inference.
 
 By default, `--sample-tokens` is enabled, so repeated rollouts can differ because
 tokens are sampled. If `--no-sample-tokens` is used, inference takes deterministic

@@ -25,6 +25,7 @@ DEFAULT_OUTPUT_FOLDER = SMART_ROOT / "data" / "preds"
 DEFAULT_CHECKPOINT_PATH = REPO_ROOT / "model.ckpt"
 DEFAULT_BATCH_VISUALIZATION_LIMIT = 10
 DEFAULT_ROLLOUTS_PER_SCENARIO = 16
+DEFAULT_BATCH_SIZE = 8
 
 
 def _prompt_path(label: str, default: Path | str) -> str:
@@ -92,6 +93,9 @@ def _run_setup_dialog(args) -> None:
     )
     if args.rollouts_per_scenario is None:
         args.rollouts_per_scenario = DEFAULT_ROLLOUTS_PER_SCENARIO
+    args.batch_size = _prompt_optional_int("Scenario batch size", args.batch_size)
+    if args.batch_size is None:
+        args.batch_size = DEFAULT_BATCH_SIZE
 
 
 def main() -> None:
@@ -223,6 +227,15 @@ def main() -> None:
             f"(default: {DEFAULT_ROLLOUTS_PER_SCENARIO})."
         ),
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        help=(
+            "Number of scenarios to run per model inference batch "
+            f"(default: {DEFAULT_BATCH_SIZE})."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -249,6 +262,8 @@ def main() -> None:
         args.batch_visualization_limit = None
     if args.rollouts_per_scenario < 1:
         raise ValueError("--rollouts-per-scenario must be at least 1")
+    if args.batch_size < 1:
+        raise ValueError("--batch-size must be at least 1")
 
     format_av2 = args.format in ("av2", "both")
 
@@ -261,6 +276,7 @@ def main() -> None:
         device=args.device,
         sample_tokens=args.sample_tokens,
         rollouts_per_scenario=args.rollouts_per_scenario,
+        batch_size=args.batch_size,
         format_av2=format_av2,
         batch_visualization_limit=args.batch_visualization_limit,
     )

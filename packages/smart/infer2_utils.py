@@ -11,7 +11,7 @@ from uuid import uuid4
 import easydict
 import numpy as np
 import torch
-from torch_geometric.data import HeteroData
+from torch_geometric.data import Batch, HeteroData
 
 from smart.datasets.preprocess import TokenProcessor
 from smart.model.smart import SMART
@@ -302,6 +302,27 @@ def filter_out_of_bounds_valid_mask(
     return pred_valid_mask, int(out_of_bounds.sum().item())
 
 
+def filter_out_of_bounds_valid_mask_by_scenario(
+    pred_traj: torch.Tensor,
+    pred_valid_mask: torch.Tensor,
+    last_pos: torch.Tensor | np.ndarray,
+    agent_ptr: list[int],
+    *,
+    dist_threshold: float = 1000.0,
+) -> tuple[torch.Tensor, list[int]]:
+    device = pred_traj.device
+    last_pos_tensor = torch.as_tensor(last_pos, dtype=pred_traj.dtype, device=device)
+    pred_valid_mask = pred_valid_mask.to(device=device, dtype=torch.bool).clone()
+    dist = torch.linalg.norm(pred_traj - last_pos_tensor[:, None, :2], dim=-1)
+    out_of_bounds = pred_valid_mask & (dist > dist_threshold)
+    scenario_counts = [
+        int(out_of_bounds[start:end].sum().item())
+        for start, end in zip(agent_ptr[:-1], agent_ptr[1:])
+    ]
+    pred_valid_mask = pred_valid_mask & ~out_of_bounds
+    return pred_valid_mask, scenario_counts
+
+
 def _agent_token_shift(model: SMART) -> int:
     encoder = getattr(model, "encoder", None)
     agent_encoder = getattr(encoder, "agent_encoder", None)
@@ -405,6 +426,95 @@ def _validate_rollouts_per_scenario(rollouts_per_scenario: int) -> int:
     if rollouts_per_scenario < 1:
         raise ValueError("rollouts_per_scenario must be at least 1")
     return rollouts_per_scenario
+
+
+def _validate_batch_size(batch_size: int) -> int:
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+    return batch_size
+
+
+def _target_chunks(
+    targets: list[Path],
+    batch_size: int,
+) -> list[tuple[int, list[Path]]]:
+    return [
+        (start, targets[start : start + batch_size])
+        for start in range(0, len(targets), batch_size)
+    ]
+
+
+def _node_count(value: Any, fallback: torch.Tensor | None = None) -> int:
+    if value is None:
+        if fallback is None:
+            raise ValueError("Cannot infer node count without a value or fallback")
+        return int(fallback.shape[0])
+    if isinstance(value, torch.Tensor):
+        if value.numel() != 1:
+            raise ValueError(f"Expected scalar num_nodes, got shape {tuple(value.shape)}")
+        return int(value.item())
+    return int(value)
+
+
+def _normalise_ready_graph_for_batch(data_sample: HeteroData) -> HeteroData:
+    pt_token = dict(data_sample["pt_token"])
+    pt_token.pop("traj_mask", None)
+    pt_num_nodes = _node_count(
+        pt_token.get("num_nodes"),
+        fallback=pt_token.get("position"),
+    )
+    del data_sample["pt_token"]
+    for key, value in pt_token.items():
+        if key != "num_nodes":
+            data_sample["pt_token"][key] = value
+    data_sample["pt_token"].num_nodes = pt_num_nodes
+
+    edge_type = ("pt_token", "to", "map_polygon")
+    edge_data = dict(data_sample[edge_type])
+    del data_sample[edge_type]
+    for key, value in edge_data.items():
+        data_sample[edge_type][key] = value
+
+    if "map_save" in data_sample:
+        del data_sample["map_save"]
+
+    return data_sample
+
+
+def _prepare_scenario_for_batch(
+    *,
+    input_file: Path,
+    model: SMART,
+    token_processor: TokenProcessor,
+) -> dict[str, Any]:
+    scenario_id = input_file.stem
+    print(f"Preparing inference on: {scenario_id}")
+
+    with input_file.open("rb") as file:
+        smart_data = pickle.load(file)
+
+    data_sample = HeteroData(smart_data) if isinstance(smart_data, dict) else smart_data
+    data_sample = token_processor.preprocess(data_sample)
+    data_sample = _move_sample_to_model_device(data_sample, model)
+
+    with torch.inference_mode():
+        data_sample = model.match_token_map(data_sample)
+        data_sample = model.sample_pt_pred(data_sample)
+
+    data_sample = _normalise_ready_graph_for_batch(data_sample)
+
+    agent_data = smart_data["agent"]
+    last_observed_idx = model.num_historical_steps - 1
+    last_pos = agent_data["position"][:, last_observed_idx]
+
+    return {
+        "scenario_id": scenario_id,
+        "input_file": input_file,
+        "smart_data": smart_data,
+        "agent_data": agent_data,
+        "data_sample": data_sample,
+        "last_pos": last_pos,
+    }
 
 
 def _run_rollouts(
@@ -511,37 +621,152 @@ def _run_rollouts(
     return result
 
 
-def run_scenario_inference(
+def _run_batched_rollouts(
+    model: SMART,
+    prepared_scenarios: list[dict[str, Any]],
+    *,
+    rollouts_per_scenario: int,
+    sample_tokens: bool,
+) -> list[dict[str, torch.Tensor]]:
+    rollouts_per_scenario = _validate_rollouts_per_scenario(rollouts_per_scenario)
+    if not prepared_scenarios:
+        return []
+    if rollouts_per_scenario > 1 and not sample_tokens:
+        print(
+            "rollouts_per_scenario > 1 with sample_tokens=False will produce "
+            "duplicate deterministic top-1 rollouts."
+        )
+
+    batch = Batch.from_data_list(
+        [scenario["data_sample"] for scenario in prepared_scenarios]
+    )
+    batch = _move_sample_to_model_device(batch, model)
+    model_device = _model_device(model)
+    agent_ptr = batch["agent"]["ptr"].detach().cpu().tolist()
+    last_pos = torch.cat(
+        [
+            torch.as_tensor(scenario["last_pos"], device=model_device)
+            for scenario in prepared_scenarios
+        ],
+        dim=0,
+    )
+
+    pred_traj_rollouts = []
+    pred_head_rollouts = []
+    pred_valid_mask_rollouts = []
+    pred_prob_rollouts = []
+    next_token_idx_rollouts = []
+    alignment_drop_steps = []
+    out_of_bounds_counts = [0 for _ in prepared_scenarios]
+    first_output = None
+
+    with torch.inference_mode():
+        for rollout_idx in range(rollouts_per_scenario):
+            inference_output = model.inference(
+                batch,
+                sample_tokens=sample_tokens,
+            )
+            if first_output is None:
+                first_output = inference_output
+
+            pred_traj = inference_output["pred_traj"]
+            pred_head = inference_output["pred_head"]
+            pred_traj, pred_head, drop_steps = align_token_rollout_to_future_horizon(
+                pred_traj,
+                pred_head,
+                model=model,
+            )
+            pred_valid_mask = build_pred_valid_mask(batch, pred_traj, model)
+            pred_valid_mask, rollout_out_of_bounds_counts = (
+                filter_out_of_bounds_valid_mask_by_scenario(
+                    pred_traj,
+                    pred_valid_mask,
+                    last_pos,
+                    agent_ptr,
+                )
+            )
+            for scenario_idx, count in enumerate(rollout_out_of_bounds_counts):
+                out_of_bounds_counts[scenario_idx] += count
+            alignment_drop_steps.append(drop_steps)
+
+            pred_traj_rollouts.append(pred_traj.detach().cpu())
+            pred_head_rollouts.append(pred_head.detach().cpu())
+            pred_valid_mask_rollouts.append(pred_valid_mask.detach().cpu())
+            if "pred_prob" in inference_output:
+                pred_prob_rollouts.append(inference_output["pred_prob"].detach().cpu())
+            if "next_token_idx" in inference_output:
+                next_token_idx_rollouts.append(
+                    inference_output["next_token_idx"].detach().cpu()
+                )
+
+            print(
+                f"Rollout {rollout_idx + 1}/{rollouts_per_scenario}: "
+                f"{pred_valid_mask.sum().item()} / {pred_valid_mask.numel()} valid, "
+                f"{sum(rollout_out_of_bounds_counts)} out of bounds"
+            )
+
+    if first_output is None:
+        raise RuntimeError("No rollout was produced")
+
+    pred_traj = torch.stack(pred_traj_rollouts, dim=0)
+    pred_head = torch.stack(pred_head_rollouts, dim=0)
+    pred_valid_mask = torch.stack(pred_valid_mask_rollouts, dim=0)
+    num_timesteps = pred_traj.shape[2]
+    alignment_drop_steps_tensor = torch.as_tensor(
+        alignment_drop_steps,
+        dtype=torch.long,
+    )
+    gt = first_output.get("gt")
+    if gt is not None:
+        gt = gt.detach().cpu()
+    gt_head = _future_agent_field(batch, model, "heading", num_timesteps)
+    gt_valid_mask = _future_agent_field(batch, model, "valid_mask", num_timesteps)
+    if gt_head is not None:
+        gt_head = gt_head.detach().cpu()
+    if gt_valid_mask is not None:
+        gt_valid_mask = gt_valid_mask.detach().cpu().bool()
+    pred_prob = torch.stack(pred_prob_rollouts, dim=0) if pred_prob_rollouts else None
+    next_token_idx = (
+        torch.stack(next_token_idx_rollouts, dim=0) if next_token_idx_rollouts else None
+    )
+
+    scenario_outputs = []
+    for scenario_idx, (start, end) in enumerate(zip(agent_ptr[:-1], agent_ptr[1:])):
+        scenario_output = {
+            "pred_traj": pred_traj[:, start:end],
+            "pred_head": pred_head[:, start:end],
+            "pred_valid_mask": pred_valid_mask[:, start:end],
+            "alignment_drop_steps": alignment_drop_steps_tensor.clone(),
+            "out_of_bounds_count": torch.tensor(out_of_bounds_counts[scenario_idx]),
+        }
+        if gt is not None:
+            scenario_output["gt"] = gt[start:end]
+        if gt_head is not None:
+            scenario_output["gt_head"] = gt_head[start:end]
+        if gt_valid_mask is not None:
+            scenario_output["gt_valid_mask"] = gt_valid_mask[start:end]
+        if pred_prob is not None:
+            scenario_output["pred_prob"] = pred_prob[:, start:end]
+        if next_token_idx is not None:
+            scenario_output["next_token_idx"] = next_token_idx[:, start:end]
+        scenario_outputs.append(scenario_output)
+
+    return scenario_outputs
+
+
+def _build_scenario_result(
     *,
     input_file: Path,
     output_dir: Path,
-    model: SMART,
-    token_processor: TokenProcessor,
-    sample_tokens: bool,
+    smart_data: Any,
+    agent_data: Any,
+    last_pos: torch.Tensor | np.ndarray,
+    rollout_output: dict[str, torch.Tensor],
     rollouts_per_scenario: int,
     save_prediction: bool,
     run_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     scenario_id = input_file.stem
-    print(f"Running inference on: {scenario_id}")
-
-    with input_file.open("rb") as file:
-        smart_data = pickle.load(file)
-
-    data_sample = HeteroData(smart_data) if isinstance(smart_data, dict) else smart_data
-    data_sample = token_processor.preprocess(data_sample)
-
-    agent_data = smart_data["agent"]
-    last_observed_idx = model.num_historical_steps - 1
-    last_pos = agent_data["position"][:, last_observed_idx]
-    rollout_output = _run_rollouts(
-        model,
-        data_sample,
-        rollouts_per_scenario=rollouts_per_scenario,
-        sample_tokens=sample_tokens,
-        last_pos=last_pos,
-    )
-
     pred_traj = rollout_output["pred_traj"]
     pred_head = rollout_output["pred_head"]
     pred_valid_mask = rollout_output["pred_valid_mask"]
@@ -613,6 +838,50 @@ def run_scenario_inference(
         "pred_valid_mask": pred_valid_mask[0].detach().cpu(),
         "smart_output_path": smart_output_path,
     }
+
+
+def run_scenario_inference(
+    *,
+    input_file: Path,
+    output_dir: Path,
+    model: SMART,
+    token_processor: TokenProcessor,
+    sample_tokens: bool,
+    rollouts_per_scenario: int,
+    save_prediction: bool,
+    run_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    scenario_id = input_file.stem
+    print(f"Running inference on: {scenario_id}")
+
+    with input_file.open("rb") as file:
+        smart_data = pickle.load(file)
+
+    data_sample = HeteroData(smart_data) if isinstance(smart_data, dict) else smart_data
+    data_sample = token_processor.preprocess(data_sample)
+
+    agent_data = smart_data["agent"]
+    last_observed_idx = model.num_historical_steps - 1
+    last_pos = agent_data["position"][:, last_observed_idx]
+    rollout_output = _run_rollouts(
+        model,
+        data_sample,
+        rollouts_per_scenario=rollouts_per_scenario,
+        sample_tokens=sample_tokens,
+        last_pos=last_pos,
+    )
+
+    return _build_scenario_result(
+        input_file=input_file,
+        output_dir=output_dir,
+        smart_data=smart_data,
+        agent_data=agent_data,
+        last_pos=last_pos,
+        rollout_output=rollout_output,
+        rollouts_per_scenario=rollouts_per_scenario,
+        save_prediction=save_prediction,
+        run_metadata=run_metadata,
+    )
 
 
 def save_smart_prediction(
@@ -829,10 +1098,12 @@ def run_inference_pipeline(
     device: str,
     sample_tokens: bool,
     rollouts_per_scenario: int,
+    batch_size: int,
     format_av2: bool,
     batch_visualization_limit: Optional[int],
 ) -> list[dict[str, Any]]:
     rollouts_per_scenario = _validate_rollouts_per_scenario(rollouts_per_scenario)
+    batch_size = _validate_batch_size(batch_size)
     targets = resolve_inference_targets(input_path)
     output_path = Path(output_dir).expanduser()
     raw_path = Path(raw_data_folder).expanduser()
@@ -850,6 +1121,8 @@ def run_inference_pipeline(
     )
     checkpoint = Path(checkpoint_path).expanduser()
     model_config = model.model_config
+    target_chunks = _target_chunks(targets, batch_size)
+    effective_batch_sizes = [len(target_chunk) for _, target_chunk in target_chunks]
     run_id = _make_inference_run_id()
     batch_output_path = output_path / f"batch_predictions_{run_id}.npz"
     run_metadata = {
@@ -868,8 +1141,13 @@ def run_inference_pipeline(
             "resolved_device": str(resolved_device),
             "sample_tokens": sample_tokens,
             "rollouts_per_scenario": rollouts_per_scenario,
+            "batch_size": batch_size,
             "format_av2": format_av2,
             "batch_visualization_limit": batch_visualization_limit,
+        },
+        "batch_inference": {
+            "requested_batch_size": batch_size,
+            "effective_batch_sizes": effective_batch_sizes,
         },
         "runtime": {
             "python": sys.version,
@@ -880,6 +1158,7 @@ def run_inference_pipeline(
     }
 
     print(f"Running SMART inference on {len(targets)} scenario(s)")
+    print(f"Scenario batch size: {batch_size}")
     print(f"Saving collected batch predictions to: {batch_output_path}")
     results = []
     visualized_count = 0
@@ -895,70 +1174,101 @@ def run_inference_pipeline(
         mode="w",
         compression=zipfile.ZIP_DEFLATED,
     ) as batch_archive:
-        for index, target in enumerate(targets, start=1):
-            print(f"\n[{index}/{len(targets)}] {target.stem}")
-            scenario_key = f"scenario_{index - 1:06d}"
-            should_visualize = visualize and (
-                batch_visualization_limit is None
-                or visualized_count < batch_visualization_limit
+        for chunk_start, target_chunk in target_chunks:
+            chunk_end = chunk_start + len(target_chunk)
+            print(
+                f"\nBatch {chunk_start // batch_size + 1}: "
+                f"scenario(s) {chunk_start + 1}-{chunk_end}/{len(targets)}"
             )
-            result = run_scenario_inference(
-                input_file=target,
-                output_dir=output_path,
-                model=model,
-                token_processor=token_processor,
-                sample_tokens=sample_tokens,
+
+            prepared_scenarios = []
+            pending_visualized_count = visualized_count
+            for offset, target in enumerate(target_chunk):
+                index = chunk_start + offset + 1
+                print(f"\n[{index}/{len(targets)}] {target.stem}")
+                should_visualize = visualize and (
+                    batch_visualization_limit is None
+                    or pending_visualized_count < batch_visualization_limit
+                )
+                if should_visualize:
+                    pending_visualized_count += 1
+
+                prepared = _prepare_scenario_for_batch(
+                    input_file=target,
+                    model=model,
+                    token_processor=token_processor,
+                )
+                prepared["scenario_key"] = f"scenario_{index - 1:06d}"
+                prepared["should_visualize"] = should_visualize
+                prepared_scenarios.append(prepared)
+
+            rollout_outputs = _run_batched_rollouts(
+                model,
+                prepared_scenarios,
                 rollouts_per_scenario=rollouts_per_scenario,
-                save_prediction=should_visualize,
-                run_metadata=run_metadata,
-            )
-            prediction_data = result.pop("prediction_data")
-            _write_batch_scenario_npz(
-                batch_archive,
-                scenario_key,
-                prediction_data,
+                sample_tokens=sample_tokens,
             )
 
-            scenario_ids.append(result["scenario_id"])
-            scenario_keys.append(scenario_key)
-            all_num_agents.append(int(prediction_data["num_agents"]))
-            all_num_timesteps.append(int(prediction_data["num_timesteps"]))
-            all_rollouts_per_scenario.append(
-                int(prediction_data["rollouts_per_scenario"])
-            )
-            results.append(result)
-
-            pred_scenario = None
-            if should_visualize:
-                pred_scenario = prediction_to_argoverse(
-                    result["smart_data"],
-                    result["pred_traj"],
-                    result["pred_head"],
-                    result["pred_valid_mask"],
+            for prepared, rollout_output in zip(prepared_scenarios, rollout_outputs):
+                print(f"\nFinished inference on: {prepared['scenario_id']}")
+                result = _build_scenario_result(
+                    input_file=prepared["input_file"],
+                    output_dir=output_path,
+                    smart_data=prepared["smart_data"],
+                    agent_data=prepared["agent_data"],
+                    last_pos=prepared["last_pos"],
+                    rollout_output=rollout_output,
+                    rollouts_per_scenario=rollouts_per_scenario,
+                    save_prediction=prepared["should_visualize"],
+                    run_metadata=run_metadata,
+                )
+                prediction_data = result.pop("prediction_data")
+                _write_batch_scenario_npz(
+                    batch_archive,
+                    prepared["scenario_key"],
+                    prediction_data,
                 )
 
-            scenario_output_dir = output_path / result["scenario_id"]
-            if format_av2 and should_visualize:
-                save_av2_prediction(
-                    scenario_output_dir=scenario_output_dir,
-                    scenario_id=result["scenario_id"],
-                    pred_scenario=pred_scenario,
+                scenario_ids.append(result["scenario_id"])
+                scenario_keys.append(prepared["scenario_key"])
+                all_num_agents.append(int(prediction_data["num_agents"]))
+                all_num_timesteps.append(int(prediction_data["num_timesteps"]))
+                all_rollouts_per_scenario.append(
+                    int(prediction_data["rollouts_per_scenario"])
                 )
+                results.append(result)
 
-            if should_visualize:
-                save_pipeline_visualizations(
-                    scenario_id=result["scenario_id"],
-                    raw_data_folder=raw_path,
-                    scenario_output_dir=scenario_output_dir,
-                    pred_scenario=pred_scenario,
-                )
-                visualized_scenario_ids.append(result["scenario_id"])
-                visualized_count += 1
-            elif visualize:
-                print(
-                    "Skipping GIF visualization for this scenario "
-                    f"(batch limit: {batch_visualization_limit})."
-                )
+                pred_scenario = None
+                if prepared["should_visualize"]:
+                    pred_scenario = prediction_to_argoverse(
+                        result["smart_data"],
+                        result["pred_traj"],
+                        result["pred_head"],
+                        result["pred_valid_mask"],
+                    )
+
+                scenario_output_dir = output_path / result["scenario_id"]
+                if format_av2 and prepared["should_visualize"]:
+                    save_av2_prediction(
+                        scenario_output_dir=scenario_output_dir,
+                        scenario_id=result["scenario_id"],
+                        pred_scenario=pred_scenario,
+                    )
+
+                if prepared["should_visualize"]:
+                    save_pipeline_visualizations(
+                        scenario_id=result["scenario_id"],
+                        raw_data_folder=raw_path,
+                        scenario_output_dir=scenario_output_dir,
+                        pred_scenario=pred_scenario,
+                    )
+                    visualized_scenario_ids.append(result["scenario_id"])
+                    visualized_count += 1
+                elif visualize:
+                    print(
+                        "Skipping GIF visualization for this scenario "
+                        f"(batch limit: {batch_visualization_limit})."
+                    )
 
         _write_batch_metadata_npz(
             batch_archive,
