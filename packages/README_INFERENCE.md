@@ -50,7 +50,9 @@ is currently used as a speed/coverage compromise for larger validation batches.
 
 Scenarios are batched for the model inference pass according to `--batch-size`.
 Per-scenario preprocessing and map-token matching still run per scenario, then
-the prepared graphs are collated for rollout inference.
+the prepared graphs are collated for rollout inference. When multiple scenario
+batches are processed, file loading and token preprocessing for the next batch
+are prefetched on CPU while the current batch runs.
 
 By default, `--sample-tokens` is enabled, so repeated rollouts can differ because
 tokens are sampled. If `--no-sample-tokens` is used, inference takes deterministic

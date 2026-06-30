@@ -3,6 +3,7 @@ import pickle
 import platform
 import sys
 import zipfile
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -481,20 +482,47 @@ def _normalise_ready_graph_for_batch(data_sample: HeteroData) -> HeteroData:
     return data_sample
 
 
-def _prepare_scenario_for_batch(
+def _load_and_preprocess_scenario_for_batch(
     *,
     input_file: Path,
-    model: SMART,
     token_processor: TokenProcessor,
 ) -> dict[str, Any]:
     scenario_id = input_file.stem
-    print(f"Preparing inference on: {scenario_id}")
 
     with input_file.open("rb") as file:
         smart_data = pickle.load(file)
 
     data_sample = HeteroData(smart_data) if isinstance(smart_data, dict) else smart_data
     data_sample = token_processor.preprocess(data_sample)
+
+    return {
+        "scenario_id": scenario_id,
+        "input_file": input_file,
+        "smart_data": smart_data,
+        "data_sample": data_sample,
+    }
+
+
+def _load_and_preprocess_chunk_for_batch(
+    *,
+    target_chunk: list[Path],
+    token_processor: TokenProcessor,
+) -> list[dict[str, Any]]:
+    return [
+        _load_and_preprocess_scenario_for_batch(
+            input_file=target,
+            token_processor=token_processor,
+        )
+        for target in target_chunk
+    ]
+
+
+def _finalise_scenario_for_batch(
+    *,
+    prepared_scenario: dict[str, Any],
+    model: SMART,
+) -> dict[str, Any]:
+    data_sample = prepared_scenario["data_sample"]
     data_sample = _move_sample_to_model_device(data_sample, model)
 
     with torch.inference_mode():
@@ -503,18 +531,35 @@ def _prepare_scenario_for_batch(
 
     data_sample = _normalise_ready_graph_for_batch(data_sample)
 
+    smart_data = prepared_scenario["smart_data"]
     agent_data = smart_data["agent"]
     last_observed_idx = model.num_historical_steps - 1
     last_pos = agent_data["position"][:, last_observed_idx]
 
     return {
-        "scenario_id": scenario_id,
-        "input_file": input_file,
-        "smart_data": smart_data,
+        **prepared_scenario,
         "agent_data": agent_data,
         "data_sample": data_sample,
         "last_pos": last_pos,
     }
+
+
+def _prepare_scenario_for_batch(
+    *,
+    input_file: Path,
+    model: SMART,
+    token_processor: TokenProcessor,
+) -> dict[str, Any]:
+    scenario_id = input_file.stem
+    print(f"Preparing inference on: {scenario_id}")
+    prepared_scenario = _load_and_preprocess_scenario_for_batch(
+        input_file=input_file,
+        token_processor=token_processor,
+    )
+    return _finalise_scenario_for_batch(
+        prepared_scenario=prepared_scenario,
+        model=model,
+    )
 
 
 def _run_rollouts(
@@ -1123,6 +1168,7 @@ def run_inference_pipeline(
     model_config = model.model_config
     target_chunks = _target_chunks(targets, batch_size)
     effective_batch_sizes = [len(target_chunk) for _, target_chunk in target_chunks]
+    prefetch_next_batch = len(target_chunks) > 1
     run_id = _make_inference_run_id()
     batch_output_path = output_path / f"batch_predictions_{run_id}.npz"
     run_metadata = {
@@ -1148,6 +1194,8 @@ def run_inference_pipeline(
         "batch_inference": {
             "requested_batch_size": batch_size,
             "effective_batch_sizes": effective_batch_sizes,
+            "prefetch_next_batch": prefetch_next_batch,
+            "prefetch_scope": "cpu_load_and_token_preprocess",
         },
         "runtime": {
             "python": sys.version,
@@ -1169,106 +1217,165 @@ def run_inference_pipeline(
     all_num_timesteps = []
     all_rollouts_per_scenario = []
 
+    def _submit_chunk_prefetch(
+        executor: ThreadPoolExecutor,
+        chunk_idx: int,
+    ) -> Future:
+        chunk_start, target_chunk = target_chunks[chunk_idx]
+        chunk_end = chunk_start + len(target_chunk)
+        print(
+            f"Prefetching CPU preprocessing for batch {chunk_idx + 1}: "
+            f"scenario(s) {chunk_start + 1}-{chunk_end}/{len(targets)}"
+        )
+        return executor.submit(
+            _load_and_preprocess_chunk_for_batch,
+            target_chunk=target_chunk,
+            token_processor=token_processor,
+        )
+
+    def _process_prefetched_chunk(
+        *,
+        chunk_idx: int,
+        chunk_start: int,
+        target_chunk: list[Path],
+        prefetched_scenarios: list[dict[str, Any]],
+    ) -> None:
+        nonlocal visualized_count
+
+        chunk_end = chunk_start + len(target_chunk)
+        print(
+            f"\nBatch {chunk_idx + 1}: "
+            f"scenario(s) {chunk_start + 1}-{chunk_end}/{len(targets)}"
+        )
+
+        prepared_scenarios = []
+        pending_visualized_count = visualized_count
+        for offset, prefetched in enumerate(prefetched_scenarios):
+            index = chunk_start + offset + 1
+            print(f"\n[{index}/{len(targets)}] {prefetched['scenario_id']}")
+            should_visualize = visualize and (
+                batch_visualization_limit is None
+                or pending_visualized_count < batch_visualization_limit
+            )
+            if should_visualize:
+                pending_visualized_count += 1
+
+            prepared = dict(prefetched)
+            prepared["scenario_key"] = f"scenario_{index - 1:06d}"
+            prepared["should_visualize"] = should_visualize
+            print(f"Preparing inference on: {prepared['scenario_id']}")
+            prepared_scenarios.append(
+                _finalise_scenario_for_batch(
+                    prepared_scenario=prepared,
+                    model=model,
+                )
+            )
+
+        rollout_outputs = _run_batched_rollouts(
+            model,
+            prepared_scenarios,
+            rollouts_per_scenario=rollouts_per_scenario,
+            sample_tokens=sample_tokens,
+        )
+
+        for prepared, rollout_output in zip(prepared_scenarios, rollout_outputs):
+            print(f"\nFinished inference on: {prepared['scenario_id']}")
+            result = _build_scenario_result(
+                input_file=prepared["input_file"],
+                output_dir=output_path,
+                smart_data=prepared["smart_data"],
+                agent_data=prepared["agent_data"],
+                last_pos=prepared["last_pos"],
+                rollout_output=rollout_output,
+                rollouts_per_scenario=rollouts_per_scenario,
+                save_prediction=prepared["should_visualize"],
+                run_metadata=run_metadata,
+            )
+            prediction_data = result.pop("prediction_data")
+            _write_batch_scenario_npz(
+                batch_archive,
+                prepared["scenario_key"],
+                prediction_data,
+            )
+
+            scenario_ids.append(result["scenario_id"])
+            scenario_keys.append(prepared["scenario_key"])
+            all_num_agents.append(int(prediction_data["num_agents"]))
+            all_num_timesteps.append(int(prediction_data["num_timesteps"]))
+            all_rollouts_per_scenario.append(
+                int(prediction_data["rollouts_per_scenario"])
+            )
+            results.append(result)
+
+            pred_scenario = None
+            if prepared["should_visualize"]:
+                pred_scenario = prediction_to_argoverse(
+                    result["smart_data"],
+                    result["pred_traj"],
+                    result["pred_head"],
+                    result["pred_valid_mask"],
+                )
+
+            scenario_output_dir = output_path / result["scenario_id"]
+            if format_av2 and prepared["should_visualize"]:
+                save_av2_prediction(
+                    scenario_output_dir=scenario_output_dir,
+                    scenario_id=result["scenario_id"],
+                    pred_scenario=pred_scenario,
+                )
+
+            if prepared["should_visualize"]:
+                save_pipeline_visualizations(
+                    scenario_id=result["scenario_id"],
+                    raw_data_folder=raw_path,
+                    scenario_output_dir=scenario_output_dir,
+                    pred_scenario=pred_scenario,
+                )
+                visualized_scenario_ids.append(result["scenario_id"])
+                visualized_count += 1
+            elif visualize:
+                print(
+                    "Skipping GIF visualization for this scenario "
+                    f"(batch limit: {batch_visualization_limit})."
+                )
+
     with zipfile.ZipFile(
         batch_output_path,
         mode="w",
         compression=zipfile.ZIP_DEFLATED,
     ) as batch_archive:
-        for chunk_start, target_chunk in target_chunks:
-            chunk_end = chunk_start + len(target_chunk)
-            print(
-                f"\nBatch {chunk_start // batch_size + 1}: "
-                f"scenario(s) {chunk_start + 1}-{chunk_end}/{len(targets)}"
-            )
-
-            prepared_scenarios = []
-            pending_visualized_count = visualized_count
-            for offset, target in enumerate(target_chunk):
-                index = chunk_start + offset + 1
-                print(f"\n[{index}/{len(targets)}] {target.stem}")
-                should_visualize = visualize and (
-                    batch_visualization_limit is None
-                    or pending_visualized_count < batch_visualization_limit
-                )
-                if should_visualize:
-                    pending_visualized_count += 1
-
-                prepared = _prepare_scenario_for_batch(
-                    input_file=target,
-                    model=model,
+        if prefetch_next_batch:
+            with ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="smart-infer-prefetch",
+            ) as prefetch_executor:
+                prefetch_future = _submit_chunk_prefetch(prefetch_executor, 0)
+                for chunk_idx, (chunk_start, target_chunk) in enumerate(target_chunks):
+                    prefetched_scenarios = prefetch_future.result()
+                    next_chunk_idx = chunk_idx + 1
+                    if next_chunk_idx < len(target_chunks):
+                        prefetch_future = _submit_chunk_prefetch(
+                            prefetch_executor,
+                            next_chunk_idx,
+                        )
+                    _process_prefetched_chunk(
+                        chunk_idx=chunk_idx,
+                        chunk_start=chunk_start,
+                        target_chunk=target_chunk,
+                        prefetched_scenarios=prefetched_scenarios,
+                    )
+        else:
+            for chunk_idx, (chunk_start, target_chunk) in enumerate(target_chunks):
+                prefetched_scenarios = _load_and_preprocess_chunk_for_batch(
+                    target_chunk=target_chunk,
                     token_processor=token_processor,
                 )
-                prepared["scenario_key"] = f"scenario_{index - 1:06d}"
-                prepared["should_visualize"] = should_visualize
-                prepared_scenarios.append(prepared)
-
-            rollout_outputs = _run_batched_rollouts(
-                model,
-                prepared_scenarios,
-                rollouts_per_scenario=rollouts_per_scenario,
-                sample_tokens=sample_tokens,
-            )
-
-            for prepared, rollout_output in zip(prepared_scenarios, rollout_outputs):
-                print(f"\nFinished inference on: {prepared['scenario_id']}")
-                result = _build_scenario_result(
-                    input_file=prepared["input_file"],
-                    output_dir=output_path,
-                    smart_data=prepared["smart_data"],
-                    agent_data=prepared["agent_data"],
-                    last_pos=prepared["last_pos"],
-                    rollout_output=rollout_output,
-                    rollouts_per_scenario=rollouts_per_scenario,
-                    save_prediction=prepared["should_visualize"],
-                    run_metadata=run_metadata,
+                _process_prefetched_chunk(
+                    chunk_idx=chunk_idx,
+                    chunk_start=chunk_start,
+                    target_chunk=target_chunk,
+                    prefetched_scenarios=prefetched_scenarios,
                 )
-                prediction_data = result.pop("prediction_data")
-                _write_batch_scenario_npz(
-                    batch_archive,
-                    prepared["scenario_key"],
-                    prediction_data,
-                )
-
-                scenario_ids.append(result["scenario_id"])
-                scenario_keys.append(prepared["scenario_key"])
-                all_num_agents.append(int(prediction_data["num_agents"]))
-                all_num_timesteps.append(int(prediction_data["num_timesteps"]))
-                all_rollouts_per_scenario.append(
-                    int(prediction_data["rollouts_per_scenario"])
-                )
-                results.append(result)
-
-                pred_scenario = None
-                if prepared["should_visualize"]:
-                    pred_scenario = prediction_to_argoverse(
-                        result["smart_data"],
-                        result["pred_traj"],
-                        result["pred_head"],
-                        result["pred_valid_mask"],
-                    )
-
-                scenario_output_dir = output_path / result["scenario_id"]
-                if format_av2 and prepared["should_visualize"]:
-                    save_av2_prediction(
-                        scenario_output_dir=scenario_output_dir,
-                        scenario_id=result["scenario_id"],
-                        pred_scenario=pred_scenario,
-                    )
-
-                if prepared["should_visualize"]:
-                    save_pipeline_visualizations(
-                        scenario_id=result["scenario_id"],
-                        raw_data_folder=raw_path,
-                        scenario_output_dir=scenario_output_dir,
-                        pred_scenario=pred_scenario,
-                    )
-                    visualized_scenario_ids.append(result["scenario_id"])
-                    visualized_count += 1
-                elif visualize:
-                    print(
-                        "Skipping GIF visualization for this scenario "
-                        f"(batch limit: {batch_visualization_limit})."
-                    )
 
         _write_batch_metadata_npz(
             batch_archive,
