@@ -1,0 +1,94 @@
+name: KiGRAS Setup + Train
+
+on:
+  pull_request:
+    paths:
+      - 'packages/kigras/**'
+      - 'packages/kigras_ha/**'
+      - 'trainers/kigras_ha_trainer.py'
+      - 'trainers/kigras_trainer.py'
+      - 'train.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/kigras_ci.yml'
+  workflow_dispatch:
+
+jobs:
+  setup-and-train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-suffix: "py3.11"
+
+      - name: Read Rust toolchain version
+        id: rust
+        run: echo "toolchain=$(grep -m1 '^channel' rust-toolchain.toml | tr -d ' \"' | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.toolchain }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/smart-preprocess
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libglib2.0-0
+
+      - name: Install Python workspace
+        run: uv sync --all-packages
+
+      - name: Download raw AV2 scenarios
+        run: |
+          uv run python packages/smart/scripts/setup_av2.py \
+            --dev \
+            --scenarios 8 \
+            --raw-dir av2_data/raw_av2 \
+            --skip-preprocess
+
+      - name: Preprocess with KiGRAS-HA kinematics
+        run: |
+          uv run python packages/kigras_ha/scripts/preprocess_kinematics.py \
+            --raw-dir av2_data/raw_av2 \
+            --output-dir av2_data/kigras_processed
+
+      - name: Train KiGRAS-HA for 3 epochs
+        run: |
+          uv run python train.py \
+            --model kigras_ha \
+            --no-wandb-logging \
+            --return-metrics metrics/kigras_ci.json \
+            -- \
+            training.trainer.max_epochs=3 \
+            training.trainer.accelerator=cpu \
+            training.dataloader.data_workers=0 \
+            resume.checkpoint_path=null
+
+      - name: Check KiGRAS loss decreases
+        run: |
+          python - <<'PY'
+          import json
+          import sys
+
+          with open("metrics/kigras_ci.json") as f:
+              metrics = json.load(f)
+
+          loss_decrease = metrics.get("loss_decrease")
+          print(json.dumps(metrics, indent=2))
+
+          if loss_decrease is None:
+              sys.exit("FAIL: loss_decrease was not recorded")
+          if loss_decrease <= 0:
+              sys.exit(f"FAIL: loss did not decrease; loss_decrease={loss_decrease}")
+          PY
