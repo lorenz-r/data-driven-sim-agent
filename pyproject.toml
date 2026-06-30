@@ -8,6 +8,7 @@ dependencies = [
     "kigras",
     "kigras_ha",
     "mypy>=2.1.0",
+    "optuna>=4.9.0",
     "numpy>=1.26.4",
     "ruff>=0.15.13",
 ]
