@@ -452,7 +452,9 @@ def _node_count(value: Any, fallback: torch.Tensor | None = None) -> int:
         return int(fallback.shape[0])
     if isinstance(value, torch.Tensor):
         if value.numel() != 1:
-            raise ValueError(f"Expected scalar num_nodes, got shape {tuple(value.shape)}")
+            raise ValueError(
+                f"Expected scalar num_nodes, got shape {tuple(value.shape)}"
+            )
         return int(value.item())
     return int(value)
 

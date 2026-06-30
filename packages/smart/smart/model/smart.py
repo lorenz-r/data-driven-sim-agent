@@ -520,9 +520,7 @@ class SMART(pl.LightningModule):
             1,
             traj_mask.shape[2],
             device=traj_mask.device,
-        ).repeat(
-            traj_mask.shape[0], traj_mask.shape[1], 1
-        )
+        ).repeat(traj_mask.shape[0], traj_mask.shape[1], 1)
         masked_pt_index = raw_pt_index.view(-1)[
             torch.randperm(raw_pt_index.numel(), device=traj_mask.device)[
                 : traj_mask.shape[0]
