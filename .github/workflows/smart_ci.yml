@@ -8,7 +8,7 @@ on:
       - 'packages/trajectory-data/**'
       - 'configs/**'
       - 'train.py'
-      - 'trainers/**'
+      - 'trainers/smart_trainer.py'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/smart_ci.yml'
