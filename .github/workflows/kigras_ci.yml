@@ -38,20 +38,6 @@ jobs:
           enable-cache: true
           cache-suffix: "py3.11"
 
-      - name: Read Rust toolchain version
-        id: rust
-        run: echo "toolchain=$(grep -m1 '^channel' rust-toolchain.toml | tr -d ' \"' | cut -d= -f2)" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rust.outputs.toolchain }}
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: packages/smart-preprocess
-
       - name: Install system dependencies
         run: |
           sudo apt-get update

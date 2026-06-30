@@ -21,9 +21,13 @@ dependencies = [
     "opencv-python",
     "trajectory-data",
     "smart",
+    "kbm",
 ]
 
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+kbm = { git = "https://github.com/winstxnhdw/KinematicBicycleModel" }

@@ -637,6 +637,11 @@ wheels = [
 ]
 
 [[package]]
+name = "kbm"
+version = "0.1.0"
+source = { git = "https://github.com/winstxnhdw/KinematicBicycleModel#33d941bb96cf08a20bb3c42cde6a2514611d7a7d" }
+
+[[package]]
 name = "kigras"
 version = "0.1.0"
 source = { editable = "packages/kigras" }
@@ -692,6 +697,7 @@ source = { editable = "packages/kigras_ha" }
 dependencies = [
     { name = "av2" },
     { name = "easydict" },
+    { name = "kbm" },
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "pandas" },
@@ -716,6 +722,7 @@ dependencies = [
 requires-dist = [
     { name = "av2" },
     { name = "easydict", specifier = ">=1.13,<2" },
+    { name = "kbm", git = "https://github.com/winstxnhdw/KinematicBicycleModel" },
     { name = "numpy", specifier = ">=1.26,<2" },
     { name = "opencv-python" },
     { name = "pandas", specifier = ">=2.2,<3" },
