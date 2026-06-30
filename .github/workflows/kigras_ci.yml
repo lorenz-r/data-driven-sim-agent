@@ -11,6 +11,17 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/kigras_ci.yml'
+
+  push:
+    paths:
+      - 'packages/kigras/**'
+      - 'packages/kigras_ha/**'
+      - 'trainers/kigras_ha_trainer.py'
+      - 'trainers/kigras_trainer.py'
+      - 'train.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/kigras_ci.yml'
   workflow_dispatch:
 
 jobs:
