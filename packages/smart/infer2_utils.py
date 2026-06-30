@@ -6,7 +6,7 @@ import zipfile
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Protocol
 from uuid import uuid4
 
 import easydict
@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from torch_geometric.data import Batch, HeteroData
 
-from smart.datasets.preprocess import TokenProcessor
+from smart.datasets.token_processor import build_token_processor
 from smart.model.smart import SMART
 from smart.utils.log import Logging
 from smart.utils.token_paths import (
@@ -22,6 +22,10 @@ from smart.utils.token_paths import (
     default_map_token_path,
     missing_token_error,
 )
+
+
+class TokenProcessorLike(Protocol):
+    def preprocess(self, data: Any) -> Any: ...
 
 
 def resolve_inference_targets(input_path: str | Path) -> list[Path]:
@@ -183,7 +187,7 @@ def load_model_and_processor(
     *,
     checkpoint_path: str | Path,
     device: str,
-) -> tuple[SMART, TokenProcessor, Any, torch.device]:
+) -> tuple[SMART, TokenProcessorLike, Any, torch.device]:
     resolved_device = resolve_inference_device(device)
     checkpoint = Path(checkpoint_path).expanduser()
     if not checkpoint.exists():
@@ -203,8 +207,10 @@ def load_model_and_processor(
     model.to(resolved_device)
     model.eval()
 
-    token_processor = TokenProcessor(
+    token_processor = build_token_processor(
         model_config.decoder.token_size,
+        backend="rust",
+        logger=logger,
         agent_token_path=model_config.agent_token_path,
         map_token_path=model_config.map_token_path,
     )
@@ -484,18 +490,29 @@ def _normalise_ready_graph_for_batch(data_sample: HeteroData) -> HeteroData:
     return data_sample
 
 
+def _preprocess_smart_data(
+    smart_data: Any,
+    token_processor: TokenProcessorLike,
+) -> HeteroData:
+    preprocess_input = smart_data
+    if isinstance(smart_data, HeteroData):
+        preprocess_input = smart_data.to_dict()
+
+    data_sample = token_processor.preprocess(preprocess_input)
+    return HeteroData(data_sample) if isinstance(data_sample, dict) else data_sample
+
+
 def _load_and_preprocess_scenario_for_batch(
     *,
     input_file: Path,
-    token_processor: TokenProcessor,
+    token_processor: TokenProcessorLike,
 ) -> dict[str, Any]:
     scenario_id = input_file.stem
 
     with input_file.open("rb") as file:
         smart_data = pickle.load(file)
 
-    data_sample = HeteroData(smart_data) if isinstance(smart_data, dict) else smart_data
-    data_sample = token_processor.preprocess(data_sample)
+    data_sample = _preprocess_smart_data(smart_data, token_processor)
 
     return {
         "scenario_id": scenario_id,
@@ -508,7 +525,7 @@ def _load_and_preprocess_scenario_for_batch(
 def _load_and_preprocess_chunk_for_batch(
     *,
     target_chunk: list[Path],
-    token_processor: TokenProcessor,
+    token_processor: TokenProcessorLike,
 ) -> list[dict[str, Any]]:
     return [
         _load_and_preprocess_scenario_for_batch(
@@ -550,7 +567,7 @@ def _prepare_scenario_for_batch(
     *,
     input_file: Path,
     model: SMART,
-    token_processor: TokenProcessor,
+    token_processor: TokenProcessorLike,
 ) -> dict[str, Any]:
     scenario_id = input_file.stem
     print(f"Preparing inference on: {scenario_id}")
@@ -892,7 +909,7 @@ def run_scenario_inference(
     input_file: Path,
     output_dir: Path,
     model: SMART,
-    token_processor: TokenProcessor,
+    token_processor: TokenProcessorLike,
     sample_tokens: bool,
     rollouts_per_scenario: int,
     save_prediction: bool,
@@ -904,8 +921,7 @@ def run_scenario_inference(
     with input_file.open("rb") as file:
         smart_data = pickle.load(file)
 
-    data_sample = HeteroData(smart_data) if isinstance(smart_data, dict) else smart_data
-    data_sample = token_processor.preprocess(data_sample)
+    data_sample = _preprocess_smart_data(smart_data, token_processor)
 
     agent_data = smart_data["agent"]
     last_observed_idx = model.num_historical_steps - 1
