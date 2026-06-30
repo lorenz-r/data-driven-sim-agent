@@ -25,8 +25,16 @@ class Kigras_HA_Trainer(BaseTrainer):
 
         print(OmegaConf.to_yaml(cfg))
 
-        # Preprocessing (NOTE: should be removed once this functionality is added to train.py)
-        process(cfg)
+        # Preprocessing: skip if output .npy files already exist (e.g. preprocessed externally)
+        proc_cfg = cfg.setup.preprocessing
+        outputs_exist = all(
+            (Path(proc_cfg.output[split]) / f"{split}_split.npy").exists()
+            for split in proc_cfg.output
+        )
+        if outputs_exist:
+            print("Preprocessed outputs already exist. Skipping preprocessing.")
+        if not outputs_exist:
+            process(cfg)
 
         return run_training(
             cfg,

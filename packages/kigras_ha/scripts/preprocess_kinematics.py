@@ -221,8 +221,56 @@ def test():
         print("It worked!")
 
 
+def cli_main():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Preprocess raw AV2 scenarios into KiGRAS-HA .npy format."
+    )
+    parser.add_argument(
+        "--raw-dir",
+        type=Path,
+        required=True,
+        help="Root directory containing train/ and val/ subdirs of raw AV2 parquets.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Root directory where train/ and val/ processed .npy files will be written.",
+    )
+    parser.add_argument(
+        "--kinematics-type",
+        default="ctra",
+        choices=["ctra", "kbm"],
+    )
+    parser.add_argument("--num-accel", type=int, default=63)
+    parser.add_argument("--num-steer", type=int, default=63)
+    parser.add_argument("--max-accel", type=float, default=5.0)
+    parser.add_argument("--max-yaw-rate", type=float, default=1.5)
+    parser.add_argument("--delta-time", type=float, default=0.1)
+    parser.add_argument("--max-iter", type=int, default=5)
+    args = parser.parse_args()
+
+    for split in ("train", "val"):
+        start = time.perf_counter()
+        run_preprocessing(
+            input_dir=args.raw_dir / split,
+            output_dir=args.output_dir / split,
+            kinematics_type=args.kinematics_type,
+            num_accel=args.num_accel,
+            num_steer=args.num_steer,
+            max_accel=args.max_accel,
+            max_yaw_rate=args.max_yaw_rate,
+            delta_time=args.delta_time,
+            max_iter=args.max_iter,
+        )
+        end = time.perf_counter()
+        print(f"Preprocessing {split} total time: {end - start:.2f} seconds")
+
+
 @hydra.main(config_path="../../../configs", config_name="config", version_base=None)
-def main(cfg: DictConfig) -> None:
+def hydra_main(cfg: DictConfig) -> None:
     model_cfg = cfg.model
     setup = cfg.setup_data
 
@@ -250,4 +298,4 @@ def main(cfg: DictConfig) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    cli_main()

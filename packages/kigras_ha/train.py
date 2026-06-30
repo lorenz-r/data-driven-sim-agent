@@ -1,3 +1,6 @@
+import json
+from typing import Optional
+
 from kigras.dataloader.datamodule import ArgoDataModule
 from kigras_ha.model.kigras_ha import KiGRAS_HA
 import pytorch_lightning as pl
@@ -8,6 +11,32 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import torch
 from pathlib import Path
+
+
+class _EpochLossTracker(pl.Callback):
+    """Records train_loss_epoch after each epoch to compute loss_decrease."""
+
+    def __init__(self):
+        self.epoch_losses: list[float] = []
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        loss = trainer.callback_metrics.get("train_loss_epoch")
+        if loss is not None:
+            self.epoch_losses.append(float(loss))
+
+    @property
+    def start_loss(self) -> Optional[float]:
+        return self.epoch_losses[0] if self.epoch_losses else None
+
+    @property
+    def end_loss(self) -> Optional[float]:
+        return self.epoch_losses[-1] if self.epoch_losses else None
+
+    @property
+    def loss_decrease(self) -> Optional[float]:
+        if self.start_loss is not None and self.end_loss is not None:
+            return self.start_loss - self.end_loss
+        return None
 
 
 def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -> dict:
@@ -77,6 +106,9 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
     checkpoint = ModelCheckpoint(**ckpt_cfg)
     callbacks.append(checkpoint)
 
+    loss_tracker = _EpochLossTracker()
+    callbacks.append(loss_tracker)
+
     if es_cfg.enabled:
         from pytorch_lightning.callbacks import EarlyStopping
 
@@ -126,7 +158,19 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
         ckpt_path = None
     trainer.fit(model, datamodule, ckpt_path=ckpt_path)
 
-    return {"end_loss": trainer.callback_metrics.get("val_loss", None)}
+    metrics = {
+        "start_loss": loss_tracker.start_loss,
+        "end_loss": loss_tracker.end_loss,
+        "loss_decrease": loss_tracker.loss_decrease,
+    }
+
+    if return_metrics_path:
+        out = Path(return_metrics_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with open(out, "w") as f:
+            json.dump(metrics, f, indent=2)
+
+    return metrics
 
 
 @hydra.main(config_path="../kigras/configs", config_name="config", version_base=None)
