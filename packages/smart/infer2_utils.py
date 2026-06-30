@@ -1226,14 +1226,14 @@ def run_inference_pipeline(
     print(f"Running SMART inference on {len(targets)} scenario(s)")
     print(f"Scenario batch size: {batch_size}")
     print(f"Saving collected batch predictions to: {batch_output_path}")
-    results = []
+    results: list[dict[str, Any]] = []
     visualized_count = 0
-    scenario_ids = []
-    scenario_keys = []
-    visualized_scenario_ids = []
-    all_num_agents = []
-    all_num_timesteps = []
-    all_rollouts_per_scenario = []
+    scenario_ids: list[str] = []
+    scenario_keys: list[str] = []
+    visualized_scenario_ids: list[str] = []
+    all_num_agents: list[int] = []
+    all_num_timesteps: list[int] = []
+    all_rollouts_per_scenario: list[int] = []
 
     def _submit_chunk_prefetch(
         executor: ThreadPoolExecutor,
