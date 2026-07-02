@@ -40,6 +40,7 @@ def run_preprocessing(
     output_dir: Path,
     kinematics_cfg: OmegaConf,
     split: str,
+    size: str = "",
 ):
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -164,7 +165,8 @@ def run_preprocessing(
         f"\nAverage processing time per scenario: {np.mean(processing_times):.4f} seconds"
     )
 
-    save_path = output_dir / f"{split}_split.npy"
+    prefix = f"{size}_" if size else ""
+    save_path = output_dir / f"{prefix}{split}_split.npy"
     np.save(save_path, preprocessed_data_list, allow_pickle=True)
     print(f"\nPreprocessing complete! Saved to {save_path}")
 
@@ -213,7 +215,7 @@ def test():
         print("It worked!")
 
 
-def process(cfg):
+def process(cfg, size: str = ""):
     proc_cfg = cfg.setup.preprocessing
     kin_cfg = cfg.model.kinematics
 
@@ -224,6 +226,7 @@ def process(cfg):
             output_dir=Path(proc_cfg.output[split]),
             kinematics_cfg=kin_cfg,
             split=split,
+            size=size,
         )
         end = time.perf_counter()
         print(f"Preprocessing {split} total time: {end - start:.2f} seconds")

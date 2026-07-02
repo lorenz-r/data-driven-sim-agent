@@ -15,9 +15,19 @@ class Kigras_HA_Trainer(BaseTrainer):
         print("Training with Kigras_HA_Trainer...")
 
         project_root = Path(__file__).resolve().parent.parent
+        self.name = self.__class__.__name__
+
+        download_size = self.config.get("data", {}).get("download_size", "")
+        prefix = f"{download_size}_" if download_size else ""
+
         overrides = list(self.config["model"].get("overrides", []))
         overrides.append(f"package_root='{project_root}'")
-        self.name = self.__class__.__name__
+        overrides.append(
+            f"training.dataloader.train_path='{project_root}/av2_data/kigras_processed/train/{prefix}train_split.npy'"
+        )
+        overrides.append(
+            f"training.dataloader.val_path='{project_root}/av2_data/kigras_processed/val/{prefix}val_split.npy'"
+        )
 
         config_dir = str(project_root / "packages" / "kigras" / "configs")
         with initialize_config_dir(config_dir=config_dir, version_base=None):
@@ -25,16 +35,18 @@ class Kigras_HA_Trainer(BaseTrainer):
 
         print(OmegaConf.to_yaml(cfg))
 
-        # Preprocessing: skip if output .npy files already exist (e.g. preprocessed externally)
+        # Skip preprocessing if the size-specific output file already exists
         proc_cfg = cfg.setup.preprocessing
         outputs_exist = all(
-            (Path(proc_cfg.output[split]) / f"{split}_split.npy").exists()
+            (Path(proc_cfg.output[split]) / f"{prefix}{split}_split.npy").exists()
             for split in proc_cfg.output
         )
         if outputs_exist:
-            print("Preprocessed outputs already exist. Skipping preprocessing.")
-        if not outputs_exist:
-            process(cfg)
+            print(
+                f"\nPreprocessed outputs for '{download_size or 'default'}' already exist. Skipping preprocessing.\n"
+            )
+        else:
+            process(cfg, size=download_size)
 
         return run_training(
             cfg,

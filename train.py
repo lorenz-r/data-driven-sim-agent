@@ -77,6 +77,24 @@ SIZE_DICT = {
 }
 
 
+def _parse_download_size(size: str) -> tuple[int, int]:
+    """Return (train_scenarios, val_scenarios) for the given size string.
+
+    Accepts named sizes from SIZE_DICT or a raw integer scenario count.
+    Numeric counts use an 80/20 train/val split.
+    """
+    if size in SIZE_DICT:
+        return SIZE_DICT[size]["train_size"], SIZE_DICT[size]["val_size"]
+    if size.isdigit():
+        n = int(size)
+        train_n = max(1, round(n * 0.8))
+        val_n = max(1, n - train_n)
+        return train_n, val_n
+    raise ValueError(
+        f"Unknown --download-size '{size}'. Use a named size {list(SIZE_DICT.keys())} or an integer."
+    )
+
+
 def download_av2_data(
     # Config commented out for now; will be useful later for specifying file paths for different models, etc.
     # config,
@@ -94,12 +112,13 @@ def download_av2_data(
     raw_dir.mkdir(parents=True, exist_ok=True)
 
     mode = "dev" if size != "full" else "full"
+    train_scenarios, val_scenarios = _parse_download_size(size)
 
     ensure_downloaded(
         out_dir=raw_dir,
         mode=mode,
-        train_scenarios=SIZE_DICT[size]["train_size"],
-        val_scenarios=SIZE_DICT[size]["val_size"],
+        train_scenarios=train_scenarios,
+        val_scenarios=val_scenarios,
     )
 
     return raw_dir
@@ -178,8 +197,7 @@ def parse_args():
         "--download-size",
         type=str,
         default="single",
-        choices=SIZE_DICT.keys(),
-        help="Size of AV2 data to download (if --download-first is set)",
+        help="Size of AV2 data to download: named size (single/small/medium/large/massive) or total scenario count (e.g. '8')",
     )
     parser.add_argument(
         "--process-smart",
@@ -373,6 +391,8 @@ def build_config(args=None) -> dict:
 
     if args.keep_profile_action_files:
         config["profiling"]["keep_action_files"] = True
+
+    config["data"]["download_size"] = args.download_size
 
     return config
 

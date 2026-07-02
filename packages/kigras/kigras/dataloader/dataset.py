@@ -253,6 +253,8 @@ class ArgoDataset(Dataset):
             if path:
                 if not path.exists():
                     raise ValueError(f"Invalid path: {path}")
+                elif path.suffix == ".npy":
+                    pass  # file path — no iterdir check needed
                 elif not any(path.iterdir()):
                     raise ValueError(f"Path empty: {path}")
 
@@ -268,6 +270,8 @@ class ArgoDataset(Dataset):
             self.num_files = len(self.filenames)
 
     def _load_preprocessed(self, processed_path: Path):
+        if processed_path.suffix == ".npy":
+            return np.load(processed_path, allow_pickle=True)
         return np.load(
             processed_path / f"{processed_path.name}_split.npy", allow_pickle=True
         )
