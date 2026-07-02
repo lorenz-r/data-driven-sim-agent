@@ -1,4 +1,5 @@
 import argparse
+import copy
 import json
 import subprocess
 import sys
@@ -103,6 +104,7 @@ def write_trial_summary(
     trial: Any,
     trial_dir: Path,
     min_ade: float,
+    trial_config_path: Path,
     checkpoint_path: Path,
     batch_prediction_path: Path,
     eval_metrics_path: Path,
@@ -113,6 +115,7 @@ def write_trial_summary(
         "value": min_ade,
         "params": dict(trial.params),
         "artifacts": {
+            "trial_config_path": str(trial_config_path),
             "checkpoint_path": str(checkpoint_path),
             "batch_prediction_path": str(batch_prediction_path),
             "eval_metrics_path": str(eval_metrics_path),
@@ -148,10 +151,40 @@ def write_study_summary(study: Any, output_path: Path) -> None:
         json.dump(summary, file, indent=2, sort_keys=True)
 
 
+def write_mtp_trial_config(
+    base_config: dict[str, Any],
+    trial_dir: Path,
+    *,
+    w2: float,
+    w3: float,
+    mtp_use_transformer_head: bool,
+) -> Path:
+    import yaml
+
+    trial_config = copy.deepcopy(base_config)
+    loss_config = trial_config.setdefault("smart", {}).setdefault("loss", {})
+    loss_config["mtp_enabled"] = True
+    loss_config["mtp_offsets"] = [1, 2, 3]
+    loss_config["mtp_loss_weights"] = [1.0, float(w2), float(w3)]
+    loss_config["mtp_use_transformer_head"] = bool(mtp_use_transformer_head)
+
+    trial_config_path = trial_dir / "config.yaml"
+    with trial_config_path.open("w", encoding="utf-8") as file:
+        yaml.safe_dump(trial_config, file, sort_keys=False)
+    return trial_config_path
+
+
 def run_trial(trial: Any, args: argparse.Namespace) -> float:
-    lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
-    dropout = trial.suggest_float("dropout", 0.0, 0.5)
-    weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
+    if args.fixed_optimizer_hparams:
+        lr = float(config_value(args.base_config, "optimization", "learning_rate"))
+        dropout = float(config_value(args.base_config, "model", "dropout"))
+        weight_decay = float(
+            config_value(args.base_config, "optimization", "weight_decay")
+        )
+    else:
+        lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
+        dropout = trial.suggest_float("dropout", 0.0, 0.5)
+        weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
 
     trial_dir = args.results_dir / f"trial_{trial.number:04d}"
     checkpoint_dir = trial_dir / "checkpoints"
@@ -160,11 +193,41 @@ def run_trial(trial: Any, args: argparse.Namespace) -> float:
     eval_metrics_path = trial_dir / "eval_metrics.json"
     trial_dir.mkdir(parents=True, exist_ok=True)
 
+    trial_config_path = args.config
+    if args.search_mtp_loss_weights:
+        w2 = trial.suggest_float(
+            "mtp_w2",
+            args.mtp_w2_range[0],
+            args.mtp_w2_range[1],
+            log=True,
+        )
+        w3 = trial.suggest_float(
+            "mtp_w3",
+            args.mtp_w3_range[0],
+            args.mtp_w3_range[1],
+            log=True,
+        )
+        if args.search_mtp_transformer_head:
+            mtp_use_transformer_head = trial.suggest_categorical(
+                "mtp_use_transformer_head",
+                [False, True],
+            )
+        else:
+            mtp_use_transformer_head = args.mtp_use_transformer_head
+
+        trial_config_path = write_mtp_trial_config(
+            args.base_config,
+            trial_dir,
+            w2=w2,
+            w3=w3,
+            mtp_use_transformer_head=mtp_use_transformer_head,
+        )
+
     train_cmd = [
         sys.executable,
         str(REPO_ROOT / "train.py"),
         "--config",
-        str(args.config),
+        str(trial_config_path),
         "--model",
         "smart",
         "--learning-rate",
@@ -250,10 +313,12 @@ def run_trial(trial: Any, args: argparse.Namespace) -> float:
     trial.set_user_attr("batch_prediction_path", str(batch_prediction_path))
     trial.set_user_attr("eval_metrics_path", str(eval_metrics_path))
     trial.set_user_attr("train_metrics_path", str(train_metrics_path))
+    trial.set_user_attr("trial_config_path", str(trial_config_path))
     write_trial_summary(
         trial=trial,
         trial_dir=trial_dir,
         min_ade=float(min_ade),
+        trial_config_path=trial_config_path,
         checkpoint_path=checkpoint_path,
         batch_prediction_path=batch_prediction_path,
         eval_metrics_path=eval_metrics_path,
@@ -296,6 +361,45 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--devices", type=int, default=None)
     parser.add_argument("--cpu", action="store_true", help="Force training on CPU.")
     parser.add_argument(
+        "--fixed-optimizer-hparams",
+        action="store_true",
+        help=(
+            "Keep learning rate, dropout, and weight decay from the config instead "
+            "of sampling them. Useful when isolating loss-weight effects."
+        ),
+    )
+    parser.add_argument(
+        "--search-mtp-loss-weights",
+        action="store_true",
+        help="Enable MTP and sample mtp_loss_weights as [1.0, mtp_w2, mtp_w3].",
+    )
+    parser.add_argument(
+        "--mtp-w2-range",
+        type=float,
+        nargs=2,
+        default=(0.01, 1.0),
+        metavar=("LOW", "HIGH"),
+        help="Log-scale search range for the offset-2 MTP loss weight.",
+    )
+    parser.add_argument(
+        "--mtp-w3-range",
+        type=float,
+        nargs=2,
+        default=(0.003, 1.0),
+        metavar=("LOW", "HIGH"),
+        help="Log-scale search range for the offset-3 MTP loss weight.",
+    )
+    parser.add_argument(
+        "--mtp-use-transformer-head",
+        action="store_true",
+        help="Use separate copied transformer head layers for auxiliary MTP heads.",
+    )
+    parser.add_argument(
+        "--search-mtp-transformer-head",
+        action="store_true",
+        help="Also sample whether auxiliary MTP heads use copied transformer layers.",
+    )
+    parser.add_argument(
         "--no-wandb-logging",
         action="store_true",
         help="Disable wandb logging for each training trial.",
@@ -331,6 +435,12 @@ def parse_args() -> argparse.Namespace:
         help="Number of rollout samples per scenario for minADE evaluation.",
     )
     parser.add_argument(
+        "--sample-tokens",
+        dest="sample_tokens",
+        action="store_true",
+        help="Sample rollout tokens during inference scoring.",
+    )
+    parser.add_argument(
         "--no-sample-tokens",
         dest="sample_tokens",
         action="store_false",
@@ -341,12 +451,21 @@ def parse_args() -> argparse.Namespace:
 
     if args.rollouts_per_scenario < 1:
         raise ValueError("--rollouts-per-scenario must be at least 1")
+    if args.search_mtp_loss_weights:
+        for name, value_range in (
+            ("--mtp-w2-range", args.mtp_w2_range),
+            ("--mtp-w3-range", args.mtp_w3_range),
+        ):
+            low, high = value_range
+            if low <= 0 or high <= 0 or low > high:
+                raise ValueError(f"{name} must be two positive values: LOW <= HIGH")
     if args.cpu:
         args.inference_device = "cpu"
 
     args.config = args.config.expanduser().resolve()
     args.results_dir = args.results_dir.expanduser().resolve()
     config = load_config(args.config)
+    args.base_config = config
     if args.inference_input is None:
         args.inference_input = args.val_path or config_value(
             config,
