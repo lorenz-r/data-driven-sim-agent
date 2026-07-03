@@ -1,0 +1,14 @@
+# Optimizer settings
+optimizer: "adamw"
+learning_rate: 0.001
+weight_decay: 0.0001
+beta1: 0.9
+beta2: 0.999
+epsilon: 1e-8
+momentum: 0.9
+scheduler: "cosine"
+scheduler_params:
+  step_size: 10
+  gamma: 0.1
+  eta_min: 1e-6
+  warmup_epochs: 0
