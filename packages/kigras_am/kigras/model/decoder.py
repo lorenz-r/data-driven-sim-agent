@@ -45,10 +45,15 @@ class ActionDecoder(nn.Module):
         d_model=64,
         nhead=4,
         num_layers=3,
+        ff_dim=256,
         dropout=0.1,
         num_action_bins=3969,
         max_len=60,
     ):
+        """Initialize the action decoder.
+
+        ff_dim controls the Transformer feed-forward width after attention.
+        """
         super().__init__()
 
         self.action_embedding = nn.Embedding(num_action_bins + 1, d_model)
@@ -57,6 +62,7 @@ class ActionDecoder(nn.Module):
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=d_model,
             nhead=nhead,
+            dim_feedforward=ff_dim,
             dropout=dropout,
             batch_first=True,
             norm_first=True,
@@ -72,8 +78,8 @@ class ActionDecoder(nn.Module):
     def forward(
         self,
         scene_tokens,
-        action_window=None,
-        action_window_valid=None,
+        prev_actions=None,
+        prev_actions_valid=None,
         scene_valid=None,
     ):
         """Decode action logits for sparse observer rows.
@@ -81,12 +87,11 @@ class ActionDecoder(nn.Module):
         Args:
             scene_tokens: [O_total, T, d_model]
                 Observer-centric scene representation from SparseSceneEncoder.
-            action_window: [O_total, T+1], optional
-                Shifted transition-token window. For T=60 this is transitions
-                48->49 through 108->109. The decoder uses window[:, :-1] as
-                previous-action inputs and leaves window[:, 1:] for the loss.
-            action_window_valid: [O_total, T+1], optional
-                True where action_window tokens are valid.
+            prev_actions: [O_total, T], optional
+                Previous-action inputs for each decoded step. For training with
+                T=60 this is transitions 48->49 through 107->108.
+            prev_actions_valid: [O_total, T], optional
+                True where prev_actions tokens are valid.
             scene_valid: [O_total, T], optional
                 True where the encoded observer state at each scene timestep is valid.
 
@@ -95,14 +100,24 @@ class ActionDecoder(nn.Module):
         """
         num_observers, T, _ = scene_tokens.shape
 
-        # --- Teacher forcing: build previous-action sequence ---
-        if action_window is not None:
-            prev = action_window[:, :-1]
-            prev_valid = (
-                prev >= 0
-                if action_window_valid is None
-                else action_window_valid[:, :-1]
-            )
+        if prev_actions is not None:
+            if prev_actions.shape != (num_observers, T):
+                raise ValueError(
+                    f"prev_actions must have shape {(num_observers, T)}, "
+                    f"got {tuple(prev_actions.shape)}"
+                )
+            prev = prev_actions.to(device=scene_tokens.device, dtype=torch.long)
+            if prev_actions_valid is None:
+                prev_valid = prev >= 0
+            else:
+                if prev_actions_valid.shape != prev_actions.shape:
+                    raise ValueError(
+                        "prev_actions_valid must have the same shape as prev_actions, "
+                        f"got {tuple(prev_actions_valid.shape)} and {tuple(prev_actions.shape)}"
+                    )
+                prev_valid = prev_actions_valid.to(
+                    device=scene_tokens.device, dtype=torch.bool
+                )
             prev = torch.where(
                 prev_valid,
                 prev.clamp(min=0),

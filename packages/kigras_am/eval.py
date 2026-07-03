@@ -2,16 +2,14 @@ from pathlib import Path
 from typing import Any
 
 import hydra
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
 from kigras.dataloader.dataset import ArgoDataset, OBS_LEN, collate_fn
+from kigras.kinematics.ctra import CTRAKinematics
 from kigras.model.kigras import KiGRAS
-from kigras.model.trajectory_decoder import CTRATrajectoryDecoder
-from kigras.utils.visualization import plot_trajectories
 
 
 def _to_device(data: Any, device: torch.device) -> Any:
@@ -25,66 +23,83 @@ def _to_device(data: Any, device: torch.device) -> Any:
 
 
 @torch.no_grad()
-def evaluate_scenario(model, batch, device, traj_decoder):
-    """Run sparse teacher-forced evaluation for one collated scenario batch.
-
-    This evaluates the current training-time path: the decoder receives the
-    observed previous action 48->49 and ground-truth previous future actions via
-    teacher forcing. Autoregressive rollout still needs a separate sparse rollout
-    implementation.
-    """
-    if batch["num_scenarios"] != 1:
-        raise ValueError("eval.py currently visualizes one scenario at a time.")
-
+def evaluate_batch(model, batch, device, kinematic_model) -> dict:
     batch = _to_device(batch, device)
     model.eval()
 
-    logits, _ = model(batch)
-    pred_tokens = logits.argmax(dim=-1).cpu().numpy()  # [O, 60]
+    rollout = model.rollout(batch, kinematic_model)
+    pred_xy = rollout["xy"]
 
-    states = batch["agents"]["states"].cpu().numpy()
-    observer_agent_idx = batch["observers"]["agent_idx"].cpu().numpy()
+    observer_agent_idx = batch["observers"]["agent_idx"]
+    gt_future = batch["agents"]["states"][observer_agent_idx, OBS_LEN:, :2]
+    valid = batch["agents"]["states"][observer_agent_idx, OBS_LEN:, 6].bool()
+
+    errors = torch.linalg.norm(pred_xy - gt_future, dim=-1)
+    observer_ade = []
+    observer_fde = []
+    for row in range(errors.shape[0]):
+        row_valid = valid[row]
+        if row_valid.any():
+            row_errors = errors[row][row_valid]
+            observer_ade.append(float(row_errors.mean().item()))
+            observer_fde.append(float(row_errors[-1].item()))
+        else:
+            observer_ade.append(float("nan"))
+            observer_fde.append(float("nan"))
+
+    focal_ade = []
+    focal_fde = []
+    observer_batch_idx = batch["observers"]["batch_idx"].cpu().numpy()
     observer_local_idx = batch["observers"]["local_idx"].cpu().numpy()
-    track_ids = batch["metadata"]["track_ids"][0]
-    focal_id = batch["metadata"]["focal_track_id"][0]
-    observer_track_ids = [track_ids[int(local_idx)] for local_idx in observer_local_idx]
+    for obs_row, local_idx in enumerate(observer_local_idx):
+        scenario_idx = int(observer_batch_idx[obs_row])
+        track_ids = batch["metadata"]["track_ids"][scenario_idx]
+        focal_id = batch["metadata"]["focal_track_id"][scenario_idx]
+        if str(track_ids[int(local_idx)]) == str(focal_id):
+            focal_ade.append(observer_ade[obs_row])
+            focal_fde.append(observer_fde[obs_row])
 
-    all_pred_xy = []
-    all_gt_xy = []
-    all_valid = []
-    for obs_row, agent_idx in enumerate(observer_agent_idx):
-        agent_states = states[int(agent_idx)]
-        history = agent_states[:OBS_LEN]
-        future = agent_states[OBS_LEN:]
+    return {
+        "observer_ade": observer_ade,
+        "observer_fde": observer_fde,
+        "focal_ade": focal_ade,
+        "focal_fde": focal_fde,
+    }
 
-        pred_xy = traj_decoder.decode_to_global(pred_tokens[obs_row].tolist(), history)
-        gt_xy = future[:, :2].copy()
-        valid = future[:, 6].astype(bool)
-        gt_xy[~valid] = np.nan
 
-        all_pred_xy.append(pred_xy)
-        all_gt_xy.append(gt_xy)
-        all_valid.append(valid)
+def _finite_mean(values: list[float]) -> float:
+    values_arr = np.asarray(values, dtype=np.float64)
+    values_arr = values_arr[np.isfinite(values_arr)]
+    if values_arr.size == 0:
+        return float("nan")
+    return float(values_arr.mean())
 
-    focal_obs_idx = next(
-        (
-            idx
-            for idx, track_id in enumerate(observer_track_ids)
-            if str(track_id) == str(focal_id)
-        ),
-        None,
-    )
-    if focal_obs_idx is not None and all_valid[focal_obs_idx].any():
-        focal_valid = all_valid[focal_obs_idx]
-        focal_pred = all_pred_xy[focal_obs_idx][focal_valid]
-        focal_gt = all_gt_xy[focal_obs_idx][focal_valid]
-        step_errors = np.linalg.norm(focal_pred - focal_gt, axis=1)
-        ade = float(np.mean(step_errors))
-        fde = float(step_errors[-1])
-    else:
-        ade, fde = float("nan"), float("nan")
 
-    return all_pred_xy, all_gt_xy, observer_track_ids, ade, fde
+@torch.no_grad()
+def evaluate_loader(model, val_loader, device, kinematic_model) -> dict:
+    all_observer_ade = []
+    all_observer_fde = []
+    all_focal_ade = []
+    all_focal_fde = []
+    num_scenarios = 0
+
+    for batch in val_loader:
+        num_scenarios += int(batch["num_scenarios"])
+        batch_metrics = evaluate_batch(model, batch, device, kinematic_model)
+        all_observer_ade.extend(batch_metrics["observer_ade"])
+        all_observer_fde.extend(batch_metrics["observer_fde"])
+        all_focal_ade.extend(batch_metrics["focal_ade"])
+        all_focal_fde.extend(batch_metrics["focal_fde"])
+
+    return {
+        "num_scenarios": num_scenarios,
+        "num_observers": int(np.isfinite(np.asarray(all_observer_ade)).sum()),
+        "num_focal": int(np.isfinite(np.asarray(all_focal_ade)).sum()),
+        "observer_ade": _finite_mean(all_observer_ade),
+        "observer_fde": _finite_mean(all_observer_fde),
+        "focal_ade": _finite_mean(all_focal_ade),
+        "focal_fde": _finite_mean(all_focal_fde),
+    }
 
 
 @hydra.main(config_path="./configs", config_name="config", version_base=None)
@@ -108,7 +123,9 @@ def main(cfg: DictConfig) -> None:
     kin_cfg = cfg.model.kinematics
     if kin_cfg.name != "ctra":
         raise ValueError(f"Unsupported eval kinematics type: {kin_cfg.name}")
-    traj_decoder = CTRATrajectoryDecoder(**kin_cfg)
+    kinematic_model = CTRAKinematics(
+        **OmegaConf.to_container(kin_cfg, resolve=True)
+    )
 
     val_dataset = ArgoDataset(processed_path=Path(cfg.processed_val))
     val_loader = DataLoader(
@@ -118,21 +135,16 @@ def main(cfg: DictConfig) -> None:
         collate_fn=collate_fn,
     )
 
-    batch = next(iter(val_loader))
-    print("Running sparse teacher-forced evaluation...")
-    pred_trajs, gt_trajs, track_ids, ade, fde = evaluate_scenario(
-        model, batch, device, traj_decoder
-    )
+    print("Running closed-loop rollout evaluation...")
+    metrics = evaluate_loader(model, val_loader, device, kinematic_model)
 
-    print(f"Focal ADE: {ade:.2f}m")
-    print(f"Focal FDE: {fde:.2f}m")
-    _ = plot_trajectories(
-        gt_trajs,
-        pred_trajs,
-        agent_labels=[str(track_id) for track_id in track_ids],
-        title=f"Teacher-Forced KiGRAS Eval | Focal ADE: {ade:.2f}m FDE: {fde:.2f}m",
-    )
-    plt.show()
+    print(f"Scenarios: {metrics['num_scenarios']}")
+    print(f"Focal agents evaluated: {metrics['num_focal']}")
+    print(f"Observer agents evaluated: {metrics['num_observers']}")
+    print(f"Mean focal ADE: {metrics['focal_ade']:.2f}m")
+    print(f"Mean focal FDE: {metrics['focal_fde']:.2f}m")
+    print(f"Mean observer ADE: {metrics['observer_ade']:.2f}m")
+    print(f"Mean observer FDE: {metrics['observer_fde']:.2f}m")
 
 
 if __name__ == "__main__":

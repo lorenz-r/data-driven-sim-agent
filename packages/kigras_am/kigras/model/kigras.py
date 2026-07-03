@@ -4,7 +4,7 @@ import pytorch_lightning as pl
 
 # Import your separated modules
 from .scene_encoder import SparseSceneEncoder
-from .control_action_decoder import ActionDecoder
+from .decoder import ActionDecoder
 from ..dataloader.dataset import CURRENT_STEP, PRED_LEN
 from ..utils.train_utils import process_sparse_batch
 
@@ -18,6 +18,7 @@ class KiGRAS(pl.LightningModule):
         nhead=4,
         encoder_num_layers=3,
         decoder_num_layers=3,
+        decoder_ff_dim=256,
         dropout=0.1,
         lr=2e-4,
         weight_decay=1e-4,
@@ -38,6 +39,7 @@ class KiGRAS(pl.LightningModule):
             d_model=d_model,
             nhead=nhead,
             num_layers=decoder_num_layers,
+            ff_dim=decoder_ff_dim,
             dropout=dropout,
             num_action_bins=vocab_size,
         )
@@ -64,13 +66,15 @@ class KiGRAS(pl.LightningModule):
         action_window_valid = processed["action_valid"][
             :, CURRENT_STEP - 1 : CURRENT_STEP + PRED_LEN
         ]
-        processed["action_window"] = action_window
-        processed["action_window_valid"] = action_window_valid
+        processed["prev_actions"] = action_window[:, :-1]
+        processed["prev_actions_valid"] = action_window_valid[:, :-1]
+        processed["target_actions"] = action_window[:, 1:]
+        processed["target_actions_valid"] = action_window_valid[:, 1:]
 
         logits = self.decoder(
             scene_tokens,
-            action_window=action_window,
-            action_window_valid=action_window_valid,
+            prev_actions=processed["prev_actions"],
+            prev_actions_valid=processed["prev_actions_valid"],
             scene_valid=processed["observer_valid"],
         )
         return logits, processed
@@ -78,8 +82,8 @@ class KiGRAS(pl.LightningModule):
     def _shared_step(self, batch, batch_idx, prefix):
         logits, processed = self(batch)
 
-        targets = processed["action_window"][:, 1:]
-        target_valid = processed["action_window_valid"][:, 1:]
+        targets = processed["target_actions"]
+        target_valid = processed["target_actions_valid"]
         targets = targets.masked_fill(~target_valid, -1)
         loss = self.criterion(
             logits.reshape(-1, logits.size(-1)),
@@ -126,6 +130,92 @@ class KiGRAS(pl.LightningModule):
             },
         }
 
+    def _tokens_to_actions(self, tokens: torch.Tensor, kinematic_model) -> torch.Tensor:
+        num_yaw = int(kinematic_model.NUM_YAW)
+        accel_bins = kinematic_model.accel_bins.to(device=tokens.device)
+        yaw_rate_bins = kinematic_model.yaw_rate_bins.to(device=tokens.device)
+
+        accel_idx = tokens // num_yaw
+        yaw_idx = tokens % num_yaw
+        return torch.stack([accel_bins[accel_idx], yaw_rate_bins[yaw_idx]], dim=-1)
+
     @torch.no_grad()
-    def rollout_simulator(self, batch, ik_module, steps=60):
-        raise NotImplementedError("Sparse rollout is not implemented yet.")
+    def rollout(self, batch: dict, kinematic_model) -> dict:
+        self.eval()
+
+        rollout_batch = dict(batch)
+        rollout_batch["agents"] = dict(batch["agents"])
+        rollout_batch["agents"]["states"] = batch["agents"]["states"].clone()
+
+        observer_idx = batch["observers"]["agent_idx"]
+        prev_actions = batch["observers"]["action_tokens"][
+            :, CURRENT_STEP - 1 : CURRENT_STEP
+        ]
+        prev_actions_valid = batch["observers"]["action_valid"][
+            :, CURRENT_STEP - 1 : CURRENT_STEP
+        ]
+        scene_tokens = None
+        scene_valid = None
+        pred_tokens = []
+        pred_states = []
+
+        for t in range(CURRENT_STEP, CURRENT_STEP + PRED_LEN):
+            processed_t = process_sparse_batch(rollout_batch, start_t=t, horizon=1)
+            scene_t = self.encoder(processed_t)
+
+            if scene_tokens is None:
+                scene_tokens = scene_t
+                scene_valid = processed_t["observer_valid"]
+            else:
+                scene_tokens = torch.cat([scene_tokens, scene_t], dim=1)
+                scene_valid = torch.cat(
+                    [scene_valid, processed_t["observer_valid"]], dim=1
+                )
+
+            logits = self.decoder(
+                scene_tokens,
+                prev_actions=prev_actions,
+                prev_actions_valid=prev_actions_valid,
+                scene_valid=scene_valid,
+            )
+            pred_token = logits[:, -1].argmax(dim=-1)
+            pred_tokens.append(pred_token)
+
+            current_state = rollout_batch["agents"]["states"][observer_idx, t]
+            speed = torch.linalg.norm(current_state[:, 4:6], dim=-1)
+            kinematic_state = torch.stack(
+                [
+                    current_state[:, 0],
+                    current_state[:, 1],
+                    current_state[:, 2],
+                    current_state[:, 3],
+                    speed,
+                ],
+                dim=-1,
+            )
+            action = self._tokens_to_actions(pred_token, kinematic_model).unsqueeze(1)
+            next_kinematic_state = kinematic_model.forward(kinematic_state, action)[:, -1]
+
+            next_state = current_state.new_zeros(current_state.shape)
+            next_state[:, 0:4] = next_kinematic_state[:, 0:4]
+            next_state[:, 4] = next_kinematic_state[:, 4] * next_kinematic_state[:, 2]
+            next_state[:, 5] = next_kinematic_state[:, 4] * next_kinematic_state[:, 3]
+            next_state[:, 6] = current_state[:, 6]
+            rollout_batch["agents"]["states"][observer_idx, t + 1] = next_state
+            pred_states.append(next_state)
+
+            prev_actions = torch.cat([prev_actions, pred_token.unsqueeze(1)], dim=1)
+            prev_actions_valid = torch.cat(
+                [
+                    prev_actions_valid,
+                    torch.ones_like(pred_token, dtype=torch.bool).unsqueeze(1),
+                ],
+                dim=1,
+            )
+
+        states = torch.stack(pred_states, dim=1)
+        return {
+            "tokens": torch.stack(pred_tokens, dim=1),
+            "states": states,
+            "xy": states[..., :2],
+        }

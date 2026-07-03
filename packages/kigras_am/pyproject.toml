@@ -1,13 +1,11 @@
 [project]
-name = "kigras"
-version = "0.1.0"
+name = "kigras_am"
+version = "0.2.0"
 description = "Custom implementation of KiGRAS"
 dependencies = [
     "torch>=2.6.0,<2.7",
     "pytorch-lightning==2.4.0",
     "torchmetrics>=1.6.0,<2",
-    "torch-geometric==2.6.1",
-    "torch-cluster>=1.6.3,<1.7",
     "torch-scatter>=2.1.2,<2.2",
     "numpy>=1.26,<2",
     "pandas>=2.2,<3",

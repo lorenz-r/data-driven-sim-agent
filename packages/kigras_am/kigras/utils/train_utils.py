@@ -158,6 +158,8 @@ def normalize_map_context(
 
 def process_sparse_batch(
     batch: dict,
+    start_t: int = CURRENT_STEP,
+    horizon: int = PRED_LEN,
     position_scale: float = POSITION_SCALE,
     velocity_scale: float = VELOCITY_SCALE,
     map_direction_scale: float = MAP_DIRECTION_SCALE,
@@ -170,7 +172,12 @@ def process_sparse_batch(
     variable-size agent/map neighborhoods.
     """
     states = batch["agents"]["states"]
-    trajectories = states[:, CURRENT_STEP : CURRENT_STEP + PRED_LEN, :]
+    if start_t < 0 or horizon <= 0 or start_t + horizon > states.shape[1]:
+        raise ValueError(
+            f"Invalid sparse batch window: start_t={start_t}, horizon={horizon}, "
+            f"states.shape[1]={states.shape[1]}"
+        )
+    trajectories = states[:, start_t : start_t + horizon, :]
     agent_edges = batch["context_edges"]["agent_to_observer"]
     map_edges = batch["context_edges"]["map_to_observer"]
 

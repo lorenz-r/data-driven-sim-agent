@@ -12,3 +12,13 @@ defaults:
   - training/checkpointing: checkpoints_default
   - training/early_stopping: default_es_behaviour
   # - training/logging: wandb TODO
+
+infer:
+  scenario_index: 0
+  processed_dir: ${processed_val}
+  checkpoint: ${checkpoint_save_path}/last.ckpt
+  output: ${package_root}/outputs/kigras_infer.png
+  dpi: 320
+  random_model: false
+  device: auto
+  compare_to_label_rollout: false
