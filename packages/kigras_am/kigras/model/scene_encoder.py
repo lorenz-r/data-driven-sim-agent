@@ -43,7 +43,10 @@ class SparseSceneEncoder(nn.Module):
 
     Agent and map context remain edge-level until after local-frame encoding.
     Encoded edges are scatter-pooled into compact observer rows, avoiding padding
-    over heterogeneous numbers of agents/map nodes per scenario.
+    over heterogeneous numbers of agents/map nodes per scenario. 
+    
+    NOTE: This is not a transformer encoder in the strct sense, but rather an embedding network for the scene percept per timestep.
+    Temporal correlations and memory are handled by the decoder.
     """
 
     def __init__(
@@ -74,16 +77,6 @@ class SparseSceneEncoder(nn.Module):
         )
 
         self.layernorm = nn.LayerNorm(d_model)
-        temporal_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dropout=dropout,
-            batch_first=True,
-            norm_first=True,
-        )
-        self.temporal_encoder = nn.TransformerEncoder(
-            temporal_layer, num_layers=num_layers
-        )
 
     def forward(self, processed_batch: dict) -> torch.Tensor:
         """Return scene tokens with shape [O_total, T, d_model].
@@ -121,7 +114,6 @@ class SparseSceneEncoder(nn.Module):
             4. Scatter-mean map edges by observer:
                [E_map, T, d_model] -> [O_total, T, d_model].
             5. Fuse agent summary, map summary, and observer semantics.
-            6. Run a temporal Transformer over each observer's T-step sequence.
         """
         num_observers = processed_batch["num_observers"]
         horizon = processed_batch["horizon"]
@@ -177,5 +169,4 @@ class SparseSceneEncoder(nn.Module):
         scene_tokens = self.layernorm(agent_summary + map_summary + observer_semantics)
         # Zero out timesteps where the observer itself is invalid.
         scene_tokens = scene_tokens * processed_batch["observer_valid"].unsqueeze(-1)
-        # Temporal Transformer keeps shape [O_total, T, d_model].
-        return self.temporal_encoder(scene_tokens)
+        return scene_tokens
