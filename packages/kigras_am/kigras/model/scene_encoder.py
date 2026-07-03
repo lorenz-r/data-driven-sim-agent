@@ -43,8 +43,8 @@ class SparseSceneEncoder(nn.Module):
 
     Agent and map context remain edge-level until after local-frame encoding.
     Encoded edges are scatter-pooled into compact observer rows, avoiding padding
-    over heterogeneous numbers of agents/map nodes per scenario. 
-    
+    over heterogeneous numbers of agents/map nodes per scenario.
+
     NOTE: This is not a transformer encoder in the strct sense, but rather an embedding network for the scene percept per timestep.
     Temporal correlations and memory are handled by the decoder.
     """

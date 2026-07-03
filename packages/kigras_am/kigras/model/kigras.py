@@ -194,7 +194,9 @@ class KiGRAS(pl.LightningModule):
                 dim=-1,
             )
             action = self._tokens_to_actions(pred_token, kinematic_model).unsqueeze(1)
-            next_kinematic_state = kinematic_model.forward(kinematic_state, action)[:, -1]
+            next_kinematic_state = kinematic_model.forward(kinematic_state, action)[
+                :, -1
+            ]
 
             next_state = current_state.new_zeros(current_state.shape)
             next_state[:, 0:4] = next_kinematic_state[:, 0:4]

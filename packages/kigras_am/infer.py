@@ -22,7 +22,13 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from kigras.dataloader.dataset import ArgoDataset, CURRENT_STEP, OBS_LEN, PRED_LEN, collate_fn
+from kigras.dataloader.dataset import (
+    ArgoDataset,
+    CURRENT_STEP,
+    OBS_LEN,
+    PRED_LEN,
+    collate_fn,
+)
 from kigras.kinematics.ctra import CTRAKinematics
 from kigras.model.kigras import KiGRAS
 
@@ -83,7 +89,9 @@ def _build_kinematic_model(model: KiGRAS, kin_cfg: DictConfig) -> CTRAKinematics
         raise ValueError(f"Unsupported inference kinematics type: {kin_cfg.name}")
 
     kin_params = OmegaConf.to_container(kin_cfg, resolve=True)
-    configured_vocab = int(kin_params["num_accel_bins"]) * int(kin_params["num_yaw_bins"])
+    configured_vocab = int(kin_params["num_accel_bins"]) * int(
+        kin_params["num_yaw_bins"]
+    )
     model_vocab = int(model.hparams.get("vocab_size", configured_vocab))
     if configured_vocab != model_vocab:
         num_bins = _infer_num_action_bins(
@@ -103,7 +111,9 @@ def _build_kinematic_model(model: KiGRAS, kin_cfg: DictConfig) -> CTRAKinematics
     return CTRAKinematics(**kin_params)
 
 
-def _tokens_to_actions(tokens: torch.Tensor, kinematic_model: CTRAKinematics) -> torch.Tensor:
+def _tokens_to_actions(
+    tokens: torch.Tensor, kinematic_model: CTRAKinematics
+) -> torch.Tensor:
     num_yaw = int(kinematic_model.NUM_YAW)
     accel_bins = kinematic_model.accel_bins.to(device=tokens.device)
     yaw_rate_bins = kinematic_model.yaw_rate_bins.to(device=tokens.device)

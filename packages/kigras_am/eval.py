@@ -123,9 +123,7 @@ def main(cfg: DictConfig) -> None:
     kin_cfg = cfg.model.kinematics
     if kin_cfg.name != "ctra":
         raise ValueError(f"Unsupported eval kinematics type: {kin_cfg.name}")
-    kinematic_model = CTRAKinematics(
-        **OmegaConf.to_container(kin_cfg, resolve=True)
-    )
+    kinematic_model = CTRAKinematics(**OmegaConf.to_container(kin_cfg, resolve=True))
 
     val_dataset = ArgoDataset(processed_path=Path(cfg.processed_val))
     val_loader = DataLoader(
