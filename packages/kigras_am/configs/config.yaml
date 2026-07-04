@@ -11,7 +11,7 @@ defaults:
   - training/optimizer: optim_default
   - training/checkpointing: checkpoints_default
   - training/early_stopping: default_es_behaviour
-  # - training/logging: wandb TODO
+  - training/logging: wandb
 
 infer:
   scenario_index: 0

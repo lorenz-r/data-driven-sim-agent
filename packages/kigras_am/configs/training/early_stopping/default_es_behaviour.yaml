@@ -1,4 +1,4 @@
-enabled: false
+enabled: true
 monitor: "val_loss"
 mode: "min"
 patience: 5

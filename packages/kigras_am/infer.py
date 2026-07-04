@@ -223,8 +223,6 @@ def _plot_inference(
 
     fig, ax = plt.subplots(figsize=(18, 14))
     non_observer_label_added = False
-    observer_reference_label_added = False
-    inference_label_added = False
     non_observer_tracks_drawn = 0
     observer_reference_tracks_drawn = 0
 
@@ -252,6 +250,9 @@ def _plot_inference(
         track_id = observer_track_ids[obs_row]
         color = f"C{obs_row % 10}"
         is_focal = str(track_id) == str(focal_id)
+        observer_label = f"observer {obs_row} track {track_id}"
+        if is_focal:
+            observer_label += " (focal)"
 
         current = states[agent_idx, OBS_LEN - 1, :2]
         valid = reference_valid[obs_row]
@@ -265,19 +266,19 @@ def _plot_inference(
                 color=color,
                 linewidth=3.0 if is_focal else 2.2,
                 alpha=0.95,
-                label=reference_label if not observer_reference_label_added else None,
+                label=f"{observer_label} reference: {reference_label}",
                 zorder=3,
             )
-            observer_reference_label_added = True
             observer_reference_tracks_drawn += 1
 
         if not valid.any():
             continue
 
         pred_with_start = np.vstack([current[None, :], pred_xy[obs_row][valid]])
-        label = "observer inference" if not inference_label_added else None
-        if is_focal:
-            label = f"focal inference ADE={observer_ade[obs_row]:.2f} FDE={observer_fde[obs_row]:.2f}"
+        label = (
+            f"{observer_label} inference "
+            f"ADE={observer_ade[obs_row]:.2f}m FDE={observer_fde[obs_row]:.2f}m"
+        )
 
         pred_line = ax.plot(
             pred_with_start[:, 0],
@@ -292,7 +293,6 @@ def _plot_inference(
         pred_line.set_path_effects(
             [pe.Stroke(linewidth=5.0, foreground="white"), pe.Normal()]
         )
-        inference_label_added = True
 
         ax.scatter(
             current[0],
@@ -310,11 +310,12 @@ def _plot_inference(
     ax.set_title(title)
     ax.set_xlabel("global x (m)")
     ax.set_ylabel("global y (m)")
-    ax.legend(fontsize=9, loc="best", framealpha=0.9)
+    ax.legend(fontsize=8, loc="best", framealpha=0.9, ncol=2)
     fig.tight_layout()
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=dpi, bbox_inches="tight")
+    plt.show()
+    # fig.savefig(output, dpi=dpi, bbox_inches="tight")
     print(f"Non-observer GT tracks drawn: {non_observer_tracks_drawn}")
     print(f"Observer reference tracks drawn: {observer_reference_tracks_drawn}")
     print(f"Saved figure: {output}")

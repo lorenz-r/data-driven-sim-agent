@@ -1,1 +1,11 @@
-# TODO: add wandb-related stuff
+wandb:
+  enabled: true
+  project: kigras-am
+  entity: null
+  run_name: null
+  group: null
+  tags: []
+  notes: null
+  save_dir: ${package_root}/wandb
+  log_model: false
+  offline: false

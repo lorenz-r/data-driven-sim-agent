@@ -1,12 +1,42 @@
 from kigras.dataloader.datamodule import ArgoDataModule
 from kigras.model.kigras import KiGRAS
+from dotenv import load_dotenv
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.strategies import DDPStrategy
 from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
+import os
 import torch
 import hydra
+
+
+def _create_wandb_logger(cfg: DictConfig) -> WandbLogger | None:
+    logging_cfg = cfg.training.get("logging", {})
+    wandb_cfg = logging_cfg.get("wandb", {})
+    if not wandb_cfg.get("enabled", False):
+        return None
+
+    load_dotenv()
+
+    if wandb_cfg.get("offline", False):
+        os.environ["WANDB_MODE"] = "offline"
+
+    logger = WandbLogger(
+        project=wandb_cfg.project,
+        entity=wandb_cfg.entity,
+        name=wandb_cfg.run_name,
+        group=wandb_cfg.group,
+        tags=list(wandb_cfg.tags),
+        notes=wandb_cfg.notes,
+        save_dir=wandb_cfg.save_dir,
+        log_model=wandb_cfg.log_model,
+    )
+    logger.experiment.config.update(
+        OmegaConf.to_container(cfg, resolve=True), allow_val_change=True
+    )
+    return logger
 
 
 def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -> dict:
@@ -47,6 +77,8 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
 
     checkpoint = ModelCheckpoint(**ckpt_cfg)
     callbacks.append(checkpoint)
+    if wandb_logger is not None:
+        callbacks.append(LearningRateMonitor(logging_interval="step"))
 
     if es_cfg.enabled:
         from pytorch_lightning.callbacks import EarlyStopping
@@ -84,7 +116,16 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
 def main(cfg: DictConfig) -> None:
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
-    run_training(cfg)
+    wandb_logger = _create_wandb_logger(cfg)
+    status = "success"
+    try:
+        run_training(cfg, wandb_logger=wandb_logger)
+    except Exception:
+        status = "failed"
+        raise
+    finally:
+        if wandb_logger is not None:
+            wandb_logger.finalize(status)
 
 
 if __name__ == "__main__":
