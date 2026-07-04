@@ -8,11 +8,15 @@ def _scatter_mean(
     dim_size: int,
     weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Mean-pool edge features into compact observer rows.
+    """Mean-pool edge features into standardized observer buckets.
+
+    ``index`` is aligned with the first dimension of ``values``: ``index[e]`` is
+    the standardized destination observer row for edge row ``values[e]``. It is
+    not used to select rows from ``values``.
 
     Args:
         values: [E, T, d_model] encoded edge features.
-        index: [E] compact observer row for each edge, values in [0, O_total).
+        index: [E] standardized observer row for each edge, values in [0, O_total).
         dim_size: O_total.
         weights: optional [E, T] validity mask. Invalid edge/timestep pairs
             contribute zero and do not increase the denominator.
@@ -33,6 +37,7 @@ def _scatter_mean(
 
     out = values.new_zeros((dim_size, *values.shape[1:]))
     denom = values.new_zeros((dim_size, *values.shape[1:-1]))
+    # Sift edge rows into their standardized observer buckets: out[index[e]] += values[e].
     out.index_add_(0, index, weighted)
     denom.index_add_(0, index, counts)
     return out / denom.clamp_min(1.0).unsqueeze(-1)
@@ -42,7 +47,7 @@ class SparseSceneEncoder(nn.Module):
     """Encode sparse observer-local context into one token per observer timestep.
 
     Agent and map context remain edge-level until after local-frame encoding.
-    Encoded edges are scatter-pooled into compact observer rows, avoiding padding
+    Encoded edges are scatter-pooled into standardized observer rows, avoiding padding
     over heterogeneous numbers of agents/map nodes per scenario.
 
     NOTE: This is not a transformer encoder in the strct sense, but rather an embedding network for the scene percept per timestep.
@@ -57,11 +62,15 @@ class SparseSceneEncoder(nn.Module):
         dropout=0.1,
         num_semantic_classes=10,
         num_lane_types=3,
+        num_lane_mark_types=15,
     ):
         super().__init__()
 
         self.semantic_encoder = nn.Embedding(num_semantic_classes, d_model)
         self.lane_type_encoder = nn.Embedding(num_lane_types, d_model)
+        self.left_mark_encoder = nn.Embedding(num_lane_mark_types, d_model)
+        self.right_mark_encoder = nn.Embedding(num_lane_mark_types, d_model)
+        self.map_scalar_encoder = nn.Linear(2, d_model)
 
         self.agent_mlp = nn.Sequential(
             nn.Linear(6, d_model),
@@ -99,10 +108,14 @@ class SparseSceneEncoder(nn.Module):
                 map_context[..., 1, :] is local map-node direction.
                 process_sparse_batch can optionally keep map_context_raw in
                 physical units.
-            agent_observer_idx: [E_agent]
-                Compact observer row receiving each agent edge.
-            map_observer_idx: [E_map]
-                Compact observer row receiving each map edge.
+            agent_edge_obs_idx_standardized: [E_agent]
+                Standardized observer row receiving each agent edge.
+            map_edge_obs_idx_standardized: [E_map]
+                Standardized observer row receiving each map edge.
+            map_left_mark_type, map_right_mark_type: [E_map]
+                Lane-boundary mark types per map edge.
+            map_is_intersection, map_width: [E_map]
+                Intersection flag and normalized lane width per map edge.
 
         Flow:
             1. Encode each local agent edge independently:
@@ -130,11 +143,11 @@ class SparseSceneEncoder(nn.Module):
         agent_emb = agent_emb + self.semantic_encoder(
             processed_batch["agent_type_ids"]
         ).unsqueeze(1)
-        # Pool source-agent edges into their compact observer rows.
+        # Pool source-agent edges into their standardized observer rows.
         # agent_summary: [O_total, T, d_model]
         agent_summary = _scatter_mean(
             agent_emb,
-            processed_batch["agent_observer_idx"],
+            processed_batch["agent_edge_obs_idx_standardized"],
             dim_size=num_observers,
             weights=agent_valid,
         )
@@ -149,13 +162,37 @@ class SparseSceneEncoder(nn.Module):
         # Add lane-type semantics to every timestep on the map edge.
         # lane_type_encoder(map_lane_type): [E_map, d_model]
         map_emb = map_emb + self.lane_type_encoder(
-            processed_batch["map_lane_type"].clamp(min=0, max=2)
+            processed_batch["map_lane_type"].clamp(
+                min=0, max=self.lane_type_encoder.num_embeddings - 1
+            )
         ).unsqueeze(1)
-        # Pool map-node edges into their compact observer rows.
+        map_emb = map_emb + self.left_mark_encoder(
+            processed_batch["map_left_mark_type"].clamp(
+                min=0, max=self.left_mark_encoder.num_embeddings - 1
+            )
+        ).unsqueeze(1)
+        map_emb = map_emb + self.right_mark_encoder(
+            processed_batch["map_right_mark_type"].clamp(
+                min=0, max=self.right_mark_encoder.num_embeddings - 1
+            )
+        ).unsqueeze(1)
+        map_scalar_features = torch.stack(
+            [
+                processed_batch["map_width"].to(
+                    device=map_emb.device, dtype=map_emb.dtype
+                ),
+                processed_batch["map_is_intersection"].to(
+                    device=map_emb.device, dtype=map_emb.dtype
+                ),
+            ],
+            dim=-1,
+        )
+        map_emb = map_emb + self.map_scalar_encoder(map_scalar_features).unsqueeze(1)
+        # Pool map-node edges into their standardized observer rows.
         # map_summary: [O_total, T, d_model]
         map_summary = _scatter_mean(
             map_emb,
-            processed_batch["map_observer_idx"],
+            processed_batch["map_edge_obs_idx_standardized"],
             dim_size=num_observers,
             weights=processed_batch["map_valid"],
         )

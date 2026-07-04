@@ -5,6 +5,7 @@ from kigras.dataloader.dataset import CURRENT_STEP, PRED_LEN
 POSITION_SCALE = 100.0
 VELOCITY_SCALE = 30.0
 MAP_DIRECTION_SCALE = 10.0
+LANE_WIDTH_SCALE = 10.0
 
 
 def transform_batch_sparse(
@@ -104,12 +105,16 @@ def transform_batch_sparse(
     return local_agent_features, local_map_features
 
 
-def _compact_observer_indices(
+def _standardize_observer_indices(
     observer_global_idx: torch.Tensor,
     edge_observer_global_idx: torch.Tensor,
     num_agents: int,
 ) -> torch.Tensor:
-    """Map global observer agent indices to compact rows [0, O_total)."""
+    """Replace global observer ids on edge rows with standardized observer rows.
+
+    Example: observer_global_idx=[4, 10], edge_observer_global_idx=[10, 4, 10]
+    returns [1, 0, 1].
+    """
     lookup = torch.full(
         (num_agents,),
         -1,
@@ -119,10 +124,10 @@ def _compact_observer_indices(
     lookup[observer_global_idx] = torch.arange(
         observer_global_idx.numel(), device=observer_global_idx.device
     )
-    compact_idx = lookup[edge_observer_global_idx]
-    if torch.any(compact_idx < 0):
+    standardized_idx = lookup[edge_observer_global_idx]
+    if torch.any(standardized_idx < 0):
         raise ValueError("Context edge points to an agent that is not an observer.")
-    return compact_idx
+    return standardized_idx
 
 
 def normalize_agent_context(
@@ -163,12 +168,12 @@ def process_sparse_batch(
     position_scale: float = POSITION_SCALE,
     velocity_scale: float = VELOCITY_SCALE,
     map_direction_scale: float = MAP_DIRECTION_SCALE,
-    keep_raw_context: bool = False,
+    lane_width_scale: float = LANE_WIDTH_SCALE,
 ) -> dict:
     """Build observer-local sparse context tensors from a collated KiGRAS batch.
 
     The returned tensors keep context at edge level. Model code can encode each
-    edge independently and scatter-pool by compact observer rows without padding
+    edge independently and scatter-pool by standardized observer rows without padding
     variable-size agent/map neighborhoods.
     """
     states = batch["agents"]["states"]
@@ -188,8 +193,6 @@ def process_sparse_batch(
         agent_to_observer_edges=agent_edges,
         map_to_observer_edges=map_edges,
     )
-    local_agent_context_raw = local_agent_context.clone() if keep_raw_context else None
-    local_map_context_raw = local_map_context.clone() if keep_raw_context else None
 
     local_agent_context = normalize_agent_context(
         local_agent_context,
@@ -203,37 +206,60 @@ def process_sparse_batch(
     )
 
     observer_idx = batch["observers"]["agent_idx"]
-    agent_observer_idx = _compact_observer_indices(
+    agent_edge_obs_idx_standardized = _standardize_observer_indices(
         observer_idx, agent_edges[1], states.shape[0]
     )
-    map_observer_idx = _compact_observer_indices(
+    map_edge_obs_idx_standardized = _standardize_observer_indices(
         observer_idx, map_edges[1], states.shape[0]
     )
 
     processed = {
-        "agent_context": local_agent_context,
-        "map_context": local_map_context,
-        "agent_observer_idx": agent_observer_idx,
-        "map_observer_idx": map_observer_idx,
-        "agent_type_ids": batch["agents"]["type_ids"][agent_edges[0]],
-        "map_lane_type": batch["graph"]["lane_type"][map_edges[0]],
-        "map_valid": trajectories[map_edges[1], :, 6].bool(),
-        "observer_idx": observer_idx,
-        "observer_type_ids": batch["agents"]["type_ids"][observer_idx],
-        "observer_valid": trajectories[observer_idx, :, 6].bool(),
-        "action_tokens": batch["observers"]["action_tokens"],
-        "action_valid": batch["observers"]["action_valid"],
-        "num_observers": observer_idx.numel(),
-        "horizon": trajectories.shape[1],
-        "normalization": {
+        "agent_context": local_agent_context,  # [E_agent, T, 7], source agents in observer frames.
+        "map_context": local_map_context,  # [E_map, T, 2, 2], map pos/dir in observer frames.
+        "agent_edge_obs_idx_standardized": agent_edge_obs_idx_standardized,  # [E_agent], observer row per agent edge.
+        "map_edge_obs_idx_standardized": map_edge_obs_idx_standardized,  # [E_map], observer row per map edge.
+        "agent_type_ids": batch["agents"]["type_ids"][
+            agent_edges[0]
+        ],  # [E_agent], source-agent class per edge.
+        "map_lane_type": batch["graph"]["lane_type"][
+            map_edges[0]
+        ],  # [E_map], lane type per map edge.
+        "map_left_mark_type": batch["graph"]["left_mark_type"][
+            map_edges[0]
+        ],  # [E_map], left boundary mark per map edge.
+        "map_right_mark_type": batch["graph"]["right_mark_type"][
+            map_edges[0]
+        ],  # [E_map], right boundary mark per map edge.
+        "map_is_intersection": batch["graph"]["is_intersection"][
+            map_edges[0]
+        ],  # [E_map], intersection flag per map edge.
+        "map_width": batch["graph"]["width"][map_edges[0]].div(
+            lane_width_scale
+        ),  # [E_map], lane width per map edge.
+        "map_valid": trajectories[
+            map_edges[1], :, 6
+        ].bool(),  # [E_map, T], observer validity per map edge.
+        "observer_idx": observer_idx,  # [O_total], global agent id per observer row.
+        "observer_type_ids": batch["agents"]["type_ids"][
+            observer_idx
+        ],  # [O_total], observer class.
+        "observer_valid": trajectories[
+            observer_idx, :, 6
+        ].bool(),  # [O_total, T], observer validity.
+        "action_tokens": batch["observers"][
+            "action_tokens"
+        ],  # [O_total, ...], target action tokens.
+        "action_valid": batch["observers"][
+            "action_valid"
+        ],  # [O_total, ...], action-token mask.
+        "num_observers": observer_idx.numel(),  # Scalar, number of standardized observer rows.
+        "horizon": trajectories.shape[1],  # Scalar, timesteps in this training window.
+        "normalization": {  # Feature scaling factors used above.
             "position_scale": position_scale,
             "velocity_scale": velocity_scale,
             "map_direction_scale": map_direction_scale,
+            "lane_width_scale": lane_width_scale,
         },
     }
-
-    if keep_raw_context:
-        processed["agent_context_raw"] = local_agent_context_raw
-        processed["map_context_raw"] = local_map_context_raw
 
     return processed
