@@ -359,6 +359,11 @@ def run_training(
     if "hidden_dim" in config["model"]:
         smart_config.Model.hidden_dim = config["model"]["hidden_dim"]
 
+    if "num_agent_layers" in config["model"]:
+        smart_config.Model.decoder.num_agent_layers = config["model"][
+            "num_agent_layers"
+        ]
+
     # =========================================================
     # Predictor
     # =========================================================

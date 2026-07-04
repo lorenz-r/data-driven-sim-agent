@@ -156,6 +156,7 @@ model:
   pretrained: false
 
   dropout: 0.1
+  num_agent_layers: 6
 
 # ------------------------------------------------------------
 # SMART-specific Configuration
