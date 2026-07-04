@@ -136,7 +136,13 @@ to:
 [x, y, cos_heading, sin_heading, speed]
 ```
 
-`CTRAKinematics.solve(...)` recovers continuous actions for every transition:
+`CTRAKinematics.solve(...)` recovers continuous actions for the model-relevant state window:
+
+```text
+states 48..109 -> actions 48->49, 49->50, ..., 108->109
+```
+
+Each action has layout:
 
 ```text
 [acceleration, yaw_rate]
@@ -163,6 +169,8 @@ agents.action_tokens: [N, 109]
 ```
 
 Invalid transitions are stored as `-1`. A transition is valid only when both endpoint states are valid.
+
+Only action-token indices `48..108` are populated by preprocessing. Other indices remain `-1`. Token `48` is kept because training uses it as the previous-action context for the first predicted action; tokens `49..108` are the supervised prediction targets.
 
 The preprocessing output is a numpy file named after the split directory:
 

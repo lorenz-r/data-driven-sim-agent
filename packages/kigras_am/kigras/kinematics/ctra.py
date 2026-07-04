@@ -63,6 +63,31 @@ class CTRAKinematics:
         self.accel_bins = torch.linspace(-max_accel, max_accel, num_accel_bins)
         self.yaw_rate_bins = torch.linspace(-max_yaw_rate, max_yaw_rate, num_yaw_bins)
 
+    def __repr__(self) -> str:
+        accel_resolution = (
+            (2.0 * self.max_accel) / (self.NUM_ACCEL - 1) if self.NUM_ACCEL > 1 else 0.0
+        )
+        yaw_rate_resolution = (
+            (2.0 * self.max_yaw_rate) / (self.NUM_YAW - 1) if self.NUM_YAW > 1 else 0.0
+        )
+        return (
+            f"{self.__class__.__name__}(\n"
+            f"  integration:\n"
+            f"    delta_time: {self.dt}\n"
+            f"  inverse_solve:\n"
+            f"    max_iter: {self.max_iter}\n"
+            f"    loss: {self.loss_type}\n"
+            f"  action_grid:\n"
+            f"    num_accel_bins: {self.NUM_ACCEL}\n"
+            f"    num_yaw_bins: {self.NUM_YAW}\n"
+            f"    num_tokens: {self.NUM_TOKENS}\n"
+            f"    max_accel: {self.max_accel}\n"
+            f"    max_yaw_rate: {self.max_yaw_rate}\n"
+            f"    accel_resolution: {accel_resolution:.6g}\n"
+            f"    yaw_rate_resolution: {yaw_rate_resolution:.6g}\n"
+            ")"
+        )
+
     # FORWARD KINEMATICS
     def forward(self, init_state: Tensor, actions: Tensor) -> Tensor:
         """

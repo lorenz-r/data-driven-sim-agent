@@ -235,9 +235,10 @@ def collate_fn(batch: List[dict]) -> dict:
         batch_idx: [V_total]
             Scenario index for each flattened agent.
         action_tokens: [V_total, 109], optional
-            Full inverse-kinematics transition labels from preprocessing.
-            action_tokens[:, t] is the transition t -> t+1. Invalid
-            transitions are set to -1.
+            Inverse-kinematics transition labels from preprocessing.
+            action_tokens[:, t] is the transition t -> t+1. Current
+            preprocessing populates indices 48..108 and leaves all other or
+            invalid transitions as -1.
 
     graph:
         position: [M_total, 2]
@@ -444,7 +445,7 @@ def collate_fn(batch: List[dict]) -> dict:
         "batch_idx": torch.cat(agent_batch_idx, dim=0),  # [V_total]
     }
     if has_actions:
-        agents_out["action_tokens"] = torch.cat(agent_actions, dim=0)  # [V_total, 60]
+        agents_out["action_tokens"] = torch.cat(agent_actions, dim=0)  # [V_total, 109]
 
     observer_idx = (
         torch.cat(observer_agent_idx, dim=0)

@@ -7,8 +7,9 @@
 #     "agent_dimensions": [N, 3],
 #     "track_ids": list[int],
 #     "track_categories": [N],
-#     "action_tokens": [N, 109],  # transitions 0->1 ... 108->109
-#                                  # -1 where the transition is invalid
+#     "action_tokens": [N, 109],  # transition t -> t+1 at index t
+#                                  # only indices 48..108 are populated
+#                                  # all other/invalid transitions are -1
 #   },
 #   "graph": {"position": [M, 2], "direction_vector": [M, 2], ...},
 #   "focal_track_id": int,
@@ -25,7 +26,7 @@ from omegaconf import DictConfig, OmegaConf
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # Import your dataloader and KBM components
-from kigras.dataloader.dataset import ArgoDataset
+from kigras.dataloader.dataset import ArgoDataset, CURRENT_STEP, PRED_LEN
 
 # from kbm import KinematicBicycleModel
 # from kigras.kinematics.inverse_kinematics import InverseKinematicModule
@@ -71,48 +72,88 @@ def run_preprocessing(
         data = raw_dataset[i]
 
         states = data["agents"]["states"]  # Shape: (N, 110, 7)
-        # track_ids = data["agents"]["track_ids"]
-        # agent_action_tokens = np.full((N, 60), -1, dtype=np.int64)
-
         if kinematics_cfg.name == "ctra":
-            speed = np.hypot(states[..., 4], states[..., 5])
-            full_obs = np.stack(
-                [
-                    states[..., 0],
-                    states[..., 1],
-                    states[..., 2],
-                    states[..., 3],
-                    speed,
-                ],
-                axis=-1,
-            )  # Shape: (N, 110, 5)
+            # The model consumes action_tokens[:, 48:109]. Token 48 is the
+            # previous-action context for the first predicted action, and tokens
+            # 49..108 are the targets for transitions 49->50 through 108->109.
+            action_start = CURRENT_STEP - 1
+            action_stop = CURRENT_STEP + PRED_LEN
+            token_ids = np.full((states.shape[0], states.shape[1] - 1), -1, np.int64)
+            graded_agent_idx = np.where(
+                (data["agents"]["track_categories"] == 2)
+                | (data["agents"]["track_categories"] == 3)
+            )[0]
 
-            # Construct valid masks
-            full_mask = states[..., 6] > 0  # Shape: (N, 110)
-            action_valid = full_mask[:, :-1] & full_mask[:, 1:]  # Shape: (N, 109)
+            for agent_idx in graded_agent_idx:
+                state_window = states[
+                    agent_idx : agent_idx + 1, action_start : action_stop + 1
+                ]
 
-            # Convert to torch tensors and feed into kinematics solver
-            full_obs_t = torch.from_numpy(full_obs).float()
-            full_mask_t = torch.from_numpy(full_mask).bool()
+                speed = np.hypot(state_window[..., 4], state_window[..., 5])
+                obs_window = np.stack(
+                    [
+                        state_window[..., 0],
+                        state_window[..., 1],
+                        state_window[..., 2],
+                        state_window[..., 3],
+                        speed,
+                    ],
+                    axis=-1,
+                )  # Shape: (1, 62, 5), states 48..109
 
-            actions = kinematics.solve(
-                full_obs_t, quantize=True, valid_mask=full_mask_t
-            )
+                window_mask = state_window[..., 6] > 0  # Shape: (1, 62)
+                action_valid = window_mask[:, :-1] & window_mask[:, 1:]  # (1, 61)
 
-            # from kigras.utils.visualization import plot_trajectories
+                obs_window_t = torch.from_numpy(obs_window).float()
+                window_mask_t = torch.from_numpy(window_mask).bool()
+                actions = kinematics.solve(
+                    obs_window_t, quantize=True, valid_mask=window_mask_t
+                )
+
+                window_token_ids = (
+                    kinematics.actions_to_token_ids(actions).numpy().astype(np.int64)
+                )
+                window_token_ids[~action_valid] = -1
+                token_ids[agent_idx, action_start:action_stop] = window_token_ids[0]
+
+            # # ------------- TRAJ RECONSTRUCTION QUALITY TESTING ----------------------------------------
             # import matplotlib.pyplot as plt
-            # fig = plot_trajectories(
-            #     gt_trajs=[full_obs_t[..., :2]],
-            #     pred_trajs=[rollout_xy],
-            #     info_lines=[f"kinematics: {type(kinematics).__name__}", f"dt={kinematics.dt}"],
-            # )
+            # print(kinematics)
+            # for agent_idx in graded_agent_idx:
+            #     state_window = states[agent_idx : agent_idx + 1, action_start : action_stop + 1]
+            #     speed = np.hypot(state_window[..., 4], state_window[..., 5])
+            #     obs_window = np.stack(
+            #         [
+            #             state_window[..., 0],
+            #             state_window[..., 1],
+            #             state_window[..., 2],
+            #             state_window[..., 3],
+            #             speed,
+            #         ],
+            #         axis=-1,
+            #     )
+            #     valid = state_window[0, :, 6] > 0
+            #     obs_window_t = torch.from_numpy(obs_window).float()
+            #     actions = kinematics.solve(
+            #         obs_window_t,
+            #         quantize=True,
+            #         valid_mask=torch.from_numpy(valid[None]).bool(),
+            #     )
+            #     rec = kinematics.forward(obs_window_t[:, 0, :], actions)[0].detach().numpy()
+            #     gt_xy = obs_window[0, :, :2]
+            #     plt.plot(gt_xy[valid, 0], gt_xy[valid, 1], label=f"GT {agent_idx}")
+            #     plt.plot(
+            #         rec[valid, 0],
+            #         rec[valid, 1],
+            #         "--",
+            #         label=f"rec {agent_idx}",
+            #     )
+            # plt.axis("equal")
+            # plt.legend()
             # plt.show()
             # quit()
+            # # ------------------------------------------------------------------------------------------
 
-            token_ids = (
-                kinematics.actions_to_token_ids(actions).numpy().astype(np.int64)
-            )
-            token_ids[~action_valid] = -1
             data["agents"]["action_tokens"] = token_ids  # (N, 109)
 
         # # TODO: Adjust this to process mutiple agents as well
