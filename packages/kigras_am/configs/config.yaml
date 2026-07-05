@@ -8,7 +8,9 @@ defaults:
   - setup/preprocessing: kigras_default
   - training/trainer: trainer_default
   - training/dataloader: dataloader_default
-  - training/optimizer: optim_default
+  - training/reproducibility: default
+  - training/optimizer: adamw
+  - training/scheduler: onecycle
   - training/checkpointing: checkpoints_default
   - training/early_stopping: default_es_behaviour
   - training/logging: wandb

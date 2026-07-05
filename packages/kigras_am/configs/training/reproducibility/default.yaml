@@ -1,0 +1,5 @@
+seed: 42
+seed_workers: true
+benchmark: false
+save_resolved_config: true
+resolved_config_filename: kigras_resolved_config.yaml

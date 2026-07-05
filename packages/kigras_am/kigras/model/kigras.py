@@ -1,12 +1,25 @@
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
+from typing import Any
 
 # Import your separated modules
 from .scene_encoder import SparseSceneEncoder
 from .decoder import ActionDecoder
 from ..dataloader.dataset import CURRENT_STEP, PRED_LEN
 from ..utils.train_utils import process_sparse_batch
+
+
+OPTIMIZER_REGISTRY: dict[str, Any] = {
+    "adam": torch.optim.Adam,
+    "adamw": torch.optim.AdamW,
+    "sgd": torch.optim.SGD,
+}
+
+SCHEDULER_REGISTRY: dict[str, Any] = {
+    "onecycle": torch.optim.lr_scheduler.OneCycleLR,
+    "cosine": torch.optim.lr_scheduler.CosineAnnealingLR,
+}
 
 
 class KiGRAS(pl.LightningModule):
@@ -20,12 +33,38 @@ class KiGRAS(pl.LightningModule):
         decoder_num_layers=3,
         decoder_ff_dim=256,
         dropout=0.1,
-        lr=2e-4,
-        weight_decay=1e-4,
+        optimizer_config: dict[str, Any] | None = None,
+        scheduler_config: dict[str, Any] | None = None,
+        lr: float | None = None,
+        weight_decay: float | None = None,
     ):
         vocab_size = vocab_size
 
         super().__init__()
+        if optimizer_config is None:
+            optimizer_config = {
+                "name": "adamw",
+                "params": {
+                    "lr": 2e-4 if lr is None else lr,
+                    "weight_decay": 1e-4 if weight_decay is None else weight_decay,
+                    "betas": [0.9, 0.999],
+                    "eps": 1e-8,
+                },
+            }
+        if scheduler_config is None:
+            scheduler_config = {
+                "name": "onecycle",
+                "interval": "step",
+                "frequency": 1,
+                "params": {
+                    "max_lr": optimizer_config["params"]["lr"],
+                    "pct_start": 0.3,
+                    "anneal_strategy": "cos",
+                },
+            }
+
+        self.optimizer_config = optimizer_config
+        self.scheduler_config = scheduler_config
         self.save_hyperparameters()
 
         self.encoder = SparseSceneEncoder(
@@ -107,27 +146,67 @@ class KiGRAS(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         return self._shared_step(batch, batch_idx, "val")
 
-    def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
-            self.parameters(),
-            lr=self.hparams.lr,
-            weight_decay=self.hparams.weight_decay,
-        )
+    def _configure_optimizer(self) -> torch.optim.Optimizer:
+        cfg = dict(self.optimizer_config)
+        name = str(cfg.pop("name")).lower()
+        params = dict(cfg.pop("params", {}))
+        if cfg:
+            raise ValueError(f"Unexpected optimizer config keys: {sorted(cfg)}")
 
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer,
-            max_lr=self.hparams.lr,
-            total_steps=self.trainer.estimated_stepping_batches,
-            pct_start=0.3,
-            anneal_strategy="cos",
-        )
+        optimizer_cls = OPTIMIZER_REGISTRY.get(name)
+        if optimizer_cls is None:
+            supported = ", ".join(sorted(OPTIMIZER_REGISTRY))
+            raise ValueError(f"Unsupported optimizer '{name}'. Supported: {supported}")
+        return optimizer_cls(self.parameters(), **params)
+
+    def _configure_scheduler(self, optimizer: torch.optim.Optimizer) -> dict | None:
+        cfg = dict(self.scheduler_config)
+        name = str(cfg.pop("name", "none")).lower()
+        interval = str(cfg.pop("interval", "epoch"))
+        frequency = int(cfg.pop("frequency", 1))
+        monitor = cfg.pop("monitor", None)
+        params = dict(cfg.pop("params", {}))
+        if cfg:
+            raise ValueError(f"Unexpected scheduler config keys: {sorted(cfg)}")
+
+        if name == "none":
+            return None
+
+        scheduler_cls = SCHEDULER_REGISTRY.get(name)
+        if scheduler_cls is None:
+            supported = ", ".join(["none", *sorted(SCHEDULER_REGISTRY)])
+            raise ValueError(f"Unsupported scheduler '{name}'. Supported: {supported}")
+
+        if name == "onecycle":
+            params.setdefault("total_steps", self.trainer.estimated_stepping_batches)
+        elif name == "cosine":
+            params.setdefault(
+                "T_max",
+                (
+                    self.trainer.estimated_stepping_batches
+                    if interval == "step"
+                    else self.trainer.max_epochs
+                ),
+            )
+
+        scheduler_config = {
+            "scheduler": scheduler_cls(optimizer, **params),
+            "interval": interval,
+            "frequency": frequency,
+        }
+        if monitor is not None:
+            scheduler_config["monitor"] = monitor
+        return scheduler_config
+
+    def configure_optimizers(self):
+        optimizer = self._configure_optimizer()
+        scheduler = self._configure_scheduler(optimizer)
+        if scheduler is None:
+            return optimizer
 
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "interval": "step",
-            },
+            "lr_scheduler": scheduler,
         }
 
     def _tokens_to_actions(self, tokens: torch.Tensor, kinematic_model) -> torch.Tensor:
