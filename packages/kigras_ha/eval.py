@@ -142,24 +142,35 @@ def main(cfg: DictConfig) -> None:
         print(f"No checkpoint at {ckpt_path}, starting fresh model")
         model = KiGRAS_HA().to(device)
 
+    # The decoder must invert tokens on exactly the grid the model was trained
+    # with, so source the bin counts and grid_power from the model's own CTRA
+    # instance (grid_power is restored from the checkpoint hyperparameters)
+    # rather than from a possibly-stale eval config.
     kin_type = cfg.kigras.get("kinematics_type", "kbm")
-    num_accel = cfg.kigras.get("num_accel_bins", 63)
-    num_steer = cfg.kigras.get("num_steer_bins", 63)
-    grid_power = cfg.kigras.get("grid_power", 1.0)
+    num_accel = model._ctra.NUM_ACCEL
+    num_steer = model._ctra.NUM_YAW
+    grid_power = model._ctra.grid_power
+    print(
+        f"Decoding {kin_type} tokens with {num_accel}x{num_steer} bins, "
+        f"grid_power={grid_power}"
+    )
     if kin_type == "ctra":
         traj_decoder = CTRATrajectoryDecoder(
             num_accel=num_accel,
             num_steer=num_steer,
-            max_accel=cfg.kigras.get("max_accel", 5.0),
-            max_yaw_rate=cfg.kigras.get("max_yaw_rate", 1.5),
+            max_accel=model._ctra.max_accel,
+            max_yaw_rate=model._ctra.max_yaw_rate,
             grid_power=grid_power,
         )
     else:
         traj_decoder = AV2TrajectoryDecoder(
-            num_accel=num_accel, num_steer=num_steer, grid_power=grid_power
+            num_accel=num_accel,
+            num_steer=num_steer,
+            grid_power=grid_power,
         )
 
     val_path = cfg["data"].get("val_path")
+    print("HALLO", val_path)
     if val_path is None:
         processed_root = Path("data") / f"{cfg.model.model_name}_processed"
         val_path = str(processed_root / "val" / "val_split.npy")
