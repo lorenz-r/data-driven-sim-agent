@@ -35,6 +35,17 @@ from kigras.dataloader.dataset import ArgoDataset
 # from kigras.kinematics.inverse_kinematics import InverseKinematicModule
 
 
+def split_filename(split: str, size: str = "", grid_power: float = 1.0) -> str:
+    """Name of a preprocessed split file, tagged with the action-bin warp.
+
+    The ``_p<grid_power>`` suffix (e.g. ``train_split_p1.0.npy``) makes the
+    action-bin warp explicit so runs with different ``grid_power`` never share a
+    file and training only ever loads tokens produced with the same ``p``.
+    """
+    prefix = f"{size}_" if size else ""
+    return f"{prefix}{split}_split_p{float(grid_power)}.npy"
+
+
 def run_preprocessing(
     input_dir: Path,
     output_dir: Path,
@@ -165,8 +176,8 @@ def run_preprocessing(
         f"\nAverage processing time per scenario: {np.mean(processing_times):.4f} seconds"
     )
 
-    prefix = f"{size}_" if size else ""
-    save_path = output_dir / f"{prefix}{split}_split.npy"
+    grid_power = kinematics_cfg.get("grid_power", 1.0)
+    save_path = output_dir / split_filename(split, size=size, grid_power=grid_power)
     np.save(save_path, preprocessed_data_list, allow_pickle=True)
     print(f"\nPreprocessing complete! Saved to {save_path}")
 

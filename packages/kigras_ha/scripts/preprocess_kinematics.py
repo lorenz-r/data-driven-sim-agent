@@ -177,7 +177,9 @@ def run_preprocessing(
         f"\nAverage processing time per scenario: {np.mean(processing_times):.4f} seconds"
     )
 
-    save_path = output_dir / f"{output_dir.name}_split.npy"
+    # The _p<grid_power> suffix records the action-bin warp so runs with a
+    # different p never collide and are never silently mixed at train time.
+    save_path = output_dir / f"{output_dir.name}_split_p{float(grid_power)}.npy"
     np.save(save_path, preprocessed_data_list, allow_pickle=True)
     print(f"\nPreprocessing complete! Saved to {save_path}")
 
