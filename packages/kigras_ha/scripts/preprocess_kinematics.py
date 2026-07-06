@@ -24,9 +24,13 @@ def run_preprocessing(
     max_accel=5.0,
     max_yaw_rate=1.5,
     max_iter=5,
+    grid_power=1.0,
 ):
 
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Saved tokens carry no metadata, so log the grid warp for reproducibility
+    print(f"Using grid_power={grid_power}")
 
     if kinematics_type == "ctra":
         import torch
@@ -39,13 +43,14 @@ def run_preprocessing(
             num_yaw=num_steer,
             max_accel=max_accel,
             max_yaw_rate=max_yaw_rate,
+            grid_power=grid_power,
         )
     elif kinematics_type == "kbm":
         kbm = KinematicBicycleModel(
             wheelbase=wheelbase, max_steer=max_steer, delta_time=delta_time
         )
         kinematics = InverseKinematicModule(
-            kbm, num_accel=num_accel, num_steer=num_steer
+            kbm, num_accel=num_accel, num_steer=num_steer, grid_power=grid_power
         )
     else:
         raise ValueError(f"Unsupported kinematics type: {kinematics_type}")
@@ -250,6 +255,12 @@ def cli_main():
     parser.add_argument("--max-yaw-rate", type=float, default=1.5)
     parser.add_argument("--delta-time", type=float, default=0.1)
     parser.add_argument("--max-iter", type=int, default=5)
+    parser.add_argument(
+        "--grid-power",
+        type=float,
+        default=1.0,
+        help="Exponent p for power-warped action bins; 1.0 = uniform (legacy).",
+    )
     args = parser.parse_args()
 
     for split in ("train", "val"):
@@ -264,6 +275,7 @@ def cli_main():
             max_yaw_rate=args.max_yaw_rate,
             delta_time=args.delta_time,
             max_iter=args.max_iter,
+            grid_power=args.grid_power,
         )
         end = time.perf_counter()
         print(f"Preprocessing {split} total time: {end - start:.2f} seconds")
@@ -292,6 +304,7 @@ def hydra_main(cfg: DictConfig) -> None:
             max_accel=model_cfg.get("max_accel", 5.0),
             max_yaw_rate=model_cfg.get("max_yaw_rate", 1.5),
             max_iter=model_cfg.get("max_iter", 5),
+            grid_power=model_cfg.get("grid_power", 1.0),
         )
         end = time.perf_counter()
         print(f"Preprocessing {split} total time: {end - start:.2f} seconds")

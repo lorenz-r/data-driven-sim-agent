@@ -22,6 +22,7 @@ class KiGRAS_HA(pl.LightningModule):
         gradient_checkpointing=False,
         max_agents: int = 10,
         require_complete_history: bool = False,
+        grid_power: float = 1.0,
     ):
         if vocab_size is None:
             vocab_size = num_accel_bins * num_steer_bins
@@ -54,7 +55,11 @@ class KiGRAS_HA(pl.LightningModule):
         # Used to compute action tokens on-the-fly when the dataset was not
         # preprocessed.  max_iter=0 means analytic-only (no L-BFGS) for speed.
         self._ctra = CTRAKinematics(
-            dt=0.1, max_iter=0, num_accel=num_accel_bins, num_yaw=num_steer_bins
+            dt=0.1,
+            max_iter=0,
+            num_accel=num_accel_bins,
+            num_yaw=num_steer_bins,
+            grid_power=grid_power,
         )
 
     # ------------------------------------------------------------------

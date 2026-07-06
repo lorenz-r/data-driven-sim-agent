@@ -2,6 +2,8 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 
+from .grids import power_spaced_bins
+
 
 class CTRAKinematics:
     """Unified CTRA (Constant Turn Rate and Acceleration) Model.
@@ -47,6 +49,7 @@ class CTRAKinematics:
         num_yaw_bins: int = 63,
         max_accel: float = 5.0,
         max_yaw_rate: float = 1.5,
+        grid_power: float = 1.0,
     ):
         self.dt = delta_time
         self.max_iter = max_iter
@@ -58,10 +61,11 @@ class CTRAKinematics:
         self.NUM_TOKENS = num_accel_bins * num_yaw_bins
         self.max_accel = max_accel
         self.max_yaw_rate = max_yaw_rate
+        self.grid_power = grid_power
 
-        # Action grids
-        self.accel_bins = torch.linspace(-max_accel, max_accel, num_accel_bins)
-        self.yaw_rate_bins = torch.linspace(-max_yaw_rate, max_yaw_rate, num_yaw_bins)
+        # Action grids (grid_power > 1 concentrates bins near 0; 1.0 = uniform)
+        self.accel_bins = power_spaced_bins(max_accel, num_accel_bins, grid_power)
+        self.yaw_rate_bins = power_spaced_bins(max_yaw_rate, num_yaw_bins, grid_power)
 
     # FORWARD KINEMATICS
     def forward(self, init_state: Tensor, actions: Tensor) -> Tensor:

@@ -1,18 +1,27 @@
 import numpy as np
 
+from .grids import power_spaced_bins_np
+
 
 class InverseKinematicModule:
     """Translates continuous trajectory states into discrete action tokens."""
 
-    def __init__(self, kbm_instance, num_accel: int = 63, num_steer: int = 63):
+    def __init__(
+        self,
+        kbm_instance,
+        num_accel: int = 63,
+        num_steer: int = 63,
+        grid_power: float = 1.0,
+    ):
         self.kbm = kbm_instance
         self.num_accel = num_accel
         self.num_steer = num_steer
         self.stationary_idx = (num_accel * num_steer) // 2
 
         # Action grid (e.g. 63x63 = 3,969 total bins)
-        self.accel_bins = np.linspace(-5.0, 5.0, num_accel)
-        self.steer_bins = np.linspace(-0.785, 0.785, num_steer)
+        # Ranges must stay in sync with AV2TrajectoryDecoder
+        self.accel_bins = power_spaced_bins_np(5.0, num_accel, grid_power)
+        self.steer_bins = power_spaced_bins_np(0.785, num_steer, grid_power)
 
     def solve_actions(self, trajectory_states):
         actions = []

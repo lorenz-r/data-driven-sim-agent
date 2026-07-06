@@ -3,10 +3,17 @@ import numpy as np
 from kbm import KinematicBicycleModel
 
 from ..kinematics.ctra import CTRAKinematics
+from ..kinematics.grids import power_spaced_bins_np
 
 
 class AV2TrajectoryDecoder:
-    def __init__(self, kbm_instance=None, num_accel: int = 63, num_steer: int = 63):
+    def __init__(
+        self,
+        kbm_instance=None,
+        num_accel: int = 63,
+        num_steer: int = 63,
+        grid_power: float = 1.0,
+    ):
         # Use AV2 delta_time of 0.1
         self.kbm = kbm_instance or KinematicBicycleModel(
             wheelbase=2.5, max_steer=0.785, delta_time=0.1
@@ -15,9 +22,9 @@ class AV2TrajectoryDecoder:
         self.num_steer = num_steer
         self.stationary_idx = (num_accel * num_steer) // 2
 
-        # Recreate the exact bins from preprocessing
-        self.accel_bins = np.linspace(-5.0, 5.0, num_accel)
-        self.steer_bins = np.linspace(-0.785, 0.785, num_steer)
+        # Recreate the exact bins from preprocessing (InverseKinematicModule)
+        self.accel_bins = power_spaced_bins_np(5.0, num_accel, grid_power)
+        self.steer_bins = power_spaced_bins_np(0.785, num_steer, grid_power)
 
     def _token_to_action(self, token_idx):
         """Translates a single token index back into physical controls."""
@@ -88,6 +95,7 @@ class CTRATrajectoryDecoder:
         num_steer: int = 63,
         max_accel: float = 5.0,
         max_yaw_rate: float = 1.5,
+        grid_power: float = 1.0,
     ):
         self.num_accel = num_accel
         self.num_steer = num_steer
@@ -98,10 +106,12 @@ class CTRATrajectoryDecoder:
             num_yaw=num_steer,
             max_accel=max_accel,
             max_yaw_rate=max_yaw_rate,
+            grid_power=grid_power,
         )
 
-        self.accel_bins = np.linspace(-max_accel, max_accel, num_accel)
-        self.yaw_rate_bins = np.linspace(-max_yaw_rate, max_yaw_rate, num_steer)
+        # Share the kinematics grids so encode and decode cannot drift apart
+        self.accel_bins = self.ctra.accel_bins.numpy()
+        self.yaw_rate_bins = self.ctra.yaw_rate_bins.numpy()
 
     def decode_to_global(self, predicted_tokens, focal_history):
         current_step = focal_history[49]

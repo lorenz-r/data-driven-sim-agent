@@ -145,15 +145,19 @@ def main(cfg: DictConfig) -> None:
     kin_type = cfg.kigras.get("kinematics_type", "kbm")
     num_accel = cfg.kigras.get("num_accel_bins", 63)
     num_steer = cfg.kigras.get("num_steer_bins", 63)
+    grid_power = cfg.kigras.get("grid_power", 1.0)
     if kin_type == "ctra":
         traj_decoder = CTRATrajectoryDecoder(
             num_accel=num_accel,
             num_steer=num_steer,
             max_accel=cfg.kigras.get("max_accel", 5.0),
             max_yaw_rate=cfg.kigras.get("max_yaw_rate", 1.5),
+            grid_power=grid_power,
         )
     else:
-        traj_decoder = AV2TrajectoryDecoder(num_accel=num_accel, num_steer=num_steer)
+        traj_decoder = AV2TrajectoryDecoder(
+            num_accel=num_accel, num_steer=num_steer, grid_power=grid_power
+        )
 
     val_path = cfg["data"].get("val_path")
     if val_path is None:

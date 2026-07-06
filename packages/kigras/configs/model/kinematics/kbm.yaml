@@ -5,3 +5,4 @@ max_steer: 0.785      # max steering angle (rad)
 delta_time: 0.1       # timestep (s)
 num_steer: ${model.architecture.num_action_bins}
 num_accel: ${model.architecture.num_action_bins}
+grid_power: 1.0       # bin-warp exponent; 1.0 = uniform grid, >1 = finer bins near 0

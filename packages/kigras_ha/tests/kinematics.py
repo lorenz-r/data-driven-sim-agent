@@ -2,7 +2,8 @@
 
 import torch
 
-from kigras_ha.kinematics import CTRAKinematics, bounding_box
+from kigras_ha.kinematics import CTRAKinematics
+from kigras_ha.utils import bounding_box
 
 
 # =======================================================================

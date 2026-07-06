@@ -79,6 +79,7 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
     # ------------------------------------------------------------------
     # Model
     # ------------------------------------------------------------------
+    kin_cfg = cfg.model.get("kinematics", None)
     model = KiGRAS_HA(
         lr=optim_cfg["learning_rate"],
         weight_decay=optim_cfg["weight_decay"],
@@ -87,6 +88,7 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
         gradient_checkpointing=model_cfg.get("gradient_checkpointing", False),
         max_agents=model_cfg.get("max_agents", 10),
         require_complete_history=model_cfg.get("require_complete_history", False),
+        grid_power=kin_cfg.get("grid_power", 1.0) if kin_cfg is not None else 1.0,
     )
 
     # ------------------------------------------------------------------
