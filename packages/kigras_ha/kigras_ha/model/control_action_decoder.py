@@ -51,7 +51,7 @@ class ActionDecoder(nn.Module):
             dim_feedforward=d_model,  # matches paper's ~0.7M param budget
             batch_first=True,
             norm_first=True,
-            dropout=0.1,
+            dropout=0.0,  # Change back to 0.1
         )
         self.causal_transformer = nn.TransformerEncoder(
             decoder_layer, num_layers=num_layers

@@ -86,9 +86,10 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
         num_accel_bins=model_cfg.get("num_action_bins", 63),
         num_steer_bins=model_cfg.get("num_action_bins", 63),
         gradient_checkpointing=model_cfg.get("gradient_checkpointing", False),
-        max_agents=model_cfg.get("max_agents", 10),
+        max_agents=model_cfg.get("max_agents", 0),
         require_complete_history=model_cfg.get("require_complete_history", False),
         grid_power=kin_cfg.get("grid_power", 1.0) if kin_cfg is not None else 1.0,
+        k_neighbors=model_cfg.get("k_neighbors", 16),
     )
 
     # ------------------------------------------------------------------

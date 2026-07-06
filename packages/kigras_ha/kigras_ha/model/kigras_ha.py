@@ -6,7 +6,11 @@ from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 from .scene_encoder import InteractiveSceneEncoder
 from .control_action_decoder import ActionDecoder
-from ..utils.train_utils import transform_batch, filter_agents
+from ..utils.train_utils import (
+    transform_batch,
+    filter_agents,
+    frame_invariant_features,
+)
 from ..kinematics.ctra import CTRAKinematics
 
 
@@ -23,6 +27,7 @@ class KiGRAS_HA(pl.LightningModule):
         max_agents: int = 0,
         require_complete_history: bool = False,
         grid_power: float = 1.0,
+        k_neighbors: int = 16,
     ):
         if vocab_size is None:
             vocab_size = num_accel_bins * num_steer_bins
@@ -52,6 +57,9 @@ class KiGRAS_HA(pl.LightningModule):
         self.max_agents = max_agents
         self.require_complete_history = require_complete_history
 
+        # Sparse interaction: each observer pools only its k nearest neighbours
+        self.k_neighbors = k_neighbors
+
         # Used to compute action tokens on-the-fly when the dataset was not
         # preprocessed.  max_iter=0 means analytic-only (no L-BFGS) for speed.
         self._ctra = CTRAKinematics(
@@ -70,20 +78,23 @@ class KiGRAS_HA(pl.LightningModule):
         semantics,
         local_map_pos,
         local_map_dir,
-        own_states,
+        history_embedding,
         neighbor_states,
         prev_actions,
+        padding_mask=None,
     ):
         """
         Encodes ONE timestep's scene into per-agent tokens.
 
         Args:
-            semantics:       (B, N)
-            local_map_pos:   (B, N, M, 2)
-            local_map_dir:   (B, N, M, 2)
-            own_states:      (B, N, T, 7)  — ego history in each agent's own frame
-            neighbor_states: (B, N, N, 7)  — current state of all agents per observer
-            prev_actions:    (B, N) long   — previous action token, or SOS
+            semantics:         (B, N)
+            local_map_pos:     (B, N, M, 2)
+            local_map_dir:     (B, N, M, 2)
+            history_embedding: (B, N, d_model) — causal GRU readout for this step
+                               (see encoder.encode_history)
+            neighbor_states:   (B, N, k, 7)  — k nearest agents per observer
+            prev_actions:      (B, N) long   — previous action token, or SOS
+            padding_mask:      (B, N) bool   — True for invalid/padded agents
         Returns:
             (B, N, d_model) — interaction-aware scene token per agent
         """
@@ -91,9 +102,10 @@ class KiGRAS_HA(pl.LightningModule):
             semantics,
             local_map_pos,
             local_map_dir,
-            own_states,
+            history_embedding,
             neighbor_states,
             prev_actions,
+            padding_mask=padding_mask,
         )
 
     # ------------------------------------------------------------------
@@ -103,15 +115,18 @@ class KiGRAS_HA(pl.LightningModule):
         """
         Autoregressive Sequence Training with Teacher Forcing.
 
+        The history GRU runs ONCE over the full 110-step ground-truth
+        trajectory (frame-invariant per-step features).  Because the GRU is a
+        causal left-to-right recurrence, its hidden output at frame 49+t
+        conditions only on frames <= 49+t — exactly the teacher-forcing
+        window the old per-step re-encoding provided, at 1/60th of the cost.
+
         For each future timestep t in [0, 60):
-          1. Encode the 50-step history window ending at t  →  scene token
-          2. Augment each token with the GROUND-TRUTH action from t-1 (U-embedding)
+          1. Take the GRU readout at frame 49+t  +  cheap per-step context
+             (map, k nearest neighbours, GROUND-TRUTH action from t-1)
         Stack all 60 scene tokens  →  (B, N, 60, d_model)
         Run causal decoder          →  (B, N, 60, 3969) logits
         Cross-entropy loss against ground-truth action tokens.
-
-        Memory note: the encoder runs one timestep at a time so that the
-        GRU's internal batch is (B × N²) not (B × 60 × N²).
         """
         # =====================================================================
         # 1. Unpack and pad the variable-length batch
@@ -191,50 +206,75 @@ class KiGRAS_HA(pl.LightningModule):
         )  # (B, N, 60)
 
         # =====================================================================
-        # 3. Encode each of the 60 future timesteps independently
+        # 3a. Encode ALL histories in ONE causal GRU pass
         #
-        #    We loop rather than fold time into the batch so the GRU sees
-        #    (B × N²) sequences at a time instead of (B × 60 × N²).
+        #     The readout at frame 49+t conditions only on frames <= 49+t
+        #     (left-to-right recurrence), so this replaces the 60 sliding-
+        #     window re-encodes without leaking future information.
+        # =====================================================================
+        feats = frame_invariant_features(full_trajectories)  # (B, N, 110, F)
+
+        if self.gradient_checkpointing and self.training:
+            hist_outputs = grad_checkpoint(
+                lambda f: self.encoder.encode_history(f)[0],
+                feats,
+                use_reentrant=False,
+            )
+        else:
+            hist_outputs, _ = self.encoder.encode_history(feats)  # (B, N, 110, d)
+
+        # Readout for future step t is the hidden state after frame 49+t
+        hist_readouts = hist_outputs[:, :, 49:109, :]  # (B, N, 60, d)
+
+        # =====================================================================
+        # 3b. Cheap per-step fusion + interaction for each future timestep
         # =====================================================================
         scene_tokens = []
         valid_flags = []
 
         for t in range(60):
-            window = full_trajectories[:, :, t : t + 50, :]  # (B, N, 50, 7)
+            present = full_trajectories[:, :, t + 49, :]  # (B, N, 7)
             prev_act_t = prev_actions_seq[:, :, t]  # (B, N)
+            e_h_t = hist_readouts[:, :, t, :]  # (B, N, d)
 
             if self.gradient_checkpointing and self.training:
                 # Recompute the transform+encode on the backward pass instead of
                 # caching all 60 sets of activations simultaneously.
-                def _encode(w, gp, gd, sem, pa):
-                    own, nbr, lmp, lmd = transform_batch(w, gp, gd)
-                    return self.encoder(sem, lmp, lmd, own, nbr, pa)
+                def _encode(p, gp, gd, sem, eh, pa):
+                    nbr, lmp, lmd, pad = transform_batch(
+                        p, gp, gd, k_neighbors=self.k_neighbors
+                    )
+                    return self.encoder(sem, lmp, lmd, eh, nbr, pa, padding_mask=pad)
 
                 token = grad_checkpoint(
                     _encode,
-                    window,
+                    present,
                     graph_pos,
                     graph_dir,
                     semantics,
+                    e_h_t,
                     prev_act_t,
                     use_reentrant=False,
                 )
             else:
-                own_states, neighbor_states, local_map_pos, local_map_dir = (
-                    transform_batch(window, graph_pos, graph_dir)
+                neighbor_states, local_map_pos, local_map_dir, padding_mask = (
+                    transform_batch(
+                        present, graph_pos, graph_dir, k_neighbors=self.k_neighbors
+                    )
                 )
                 token = self.encoder(
                     semantics,
                     local_map_pos,
                     local_map_dir,
-                    own_states,
+                    e_h_t,
                     neighbor_states,
                     prev_act_t,
+                    padding_mask=padding_mask,
                 )  # (B, N, d_model)
 
             scene_tokens.append(token)
-            # Agent is valid at this step if the LAST frame of its window is valid
-            valid_flags.append(window[:, :, -1, 6].bool())  # (B, N)
+            # Agent is valid at this step if it exists at the present frame
+            valid_flags.append(present[:, :, 6].bool())  # (B, N)
 
         # (B, N, 60, d_model)
         scene_token_seq = torch.stack(scene_tokens, dim=2)
@@ -335,12 +375,19 @@ class KiGRAS_HA(pl.LightningModule):
         """
         Autoregressive physical simulator.
 
+        The GRU hidden state is warmed up ONCE on the observed history and then
+        carried across rollout steps — each new predicted frame is folded in
+        with a single GRU step instead of re-encoding the whole 50-frame
+        window (O(1) history encoding per step).
+
         At each step:
-          1. Encode the current 50-step history into a scene token, using the
-             model's own previous prediction as the U-embedding.
+          1. Fuse the carried history embedding with the current scene context
+             into a scene token, using the model's own previous prediction as
+             the U-embedding.
           2. Append the token to the growing sequence and run the causal decoder
              over the full sequence — the last position gives the current action.
-          3. Decode the chosen token into physical deltas and advance the world.
+          3. Decode the chosen token into physical deltas, advance the world,
+             and update the GRU hidden state with the new frame.
 
         The causal decoder is re-run over the full (growing) sequence at each
         step, which is correct but O(T²). For long horizons, KV-caching can be
@@ -358,26 +405,34 @@ class KiGRAS_HA(pl.LightningModule):
             (B, N), self.start_token_idx, dtype=torch.long, device=self.device
         )
 
+        # Warm up the causal GRU on the observed history — done exactly once
+        hist_feats = frame_invariant_features(trajectories)  # (B, N, 50, F)
+        hist_outputs, gru_state = self.encoder.encode_history(hist_feats)
+        history_embedding = hist_outputs[:, :, -1, :]  # (B, N, d_model)
+
         scene_token_history = []
         predictions = []
 
         for _ in range(steps):
             # ----------------------------------------------------------------
-            # A. Encode the current scene (sliding 50-step window)
+            # A. Fuse the carried history embedding with current scene context
             # ----------------------------------------------------------------
-            current_history = trajectories[:, :, -50:, :]
+            present = trajectories[:, :, -1, :]  # (B, N, 7)
 
-            own_states, neighbor_states, local_map_pos, local_map_dir = transform_batch(
-                current_history, graph_pos, graph_dir
+            neighbor_states, local_map_pos, local_map_dir, padding_mask = (
+                transform_batch(
+                    present, graph_pos, graph_dir, k_neighbors=self.k_neighbors
+                )
             )
 
             scene_token = self.encoder(
                 semantics,
                 local_map_pos,
                 local_map_dir,
-                own_states,
+                history_embedding,
                 neighbor_states,
                 prev_action_tokens,
+                padding_mask=padding_mask,
             )  # (B, N, d_model)
             scene_token_history.append(scene_token)
 
@@ -424,6 +479,17 @@ class KiGRAS_HA(pl.LightningModule):
             )  # (B, N, 7)
 
             trajectories = torch.cat([trajectories, new_state.unsqueeze(2)], dim=2)
+
+            # ----------------------------------------------------------------
+            # D. Fold the new frame into the carried GRU state (single step).
+            #    The last two frames give the (t-1, t) pair the per-step
+            #    features need; only the newest step is fed to the GRU.
+            # ----------------------------------------------------------------
+            step_feats = frame_invariant_features(trajectories[:, :, -2:, :])
+            step_outputs, gru_state = self.encoder.encode_history(
+                step_feats[:, :, -1:, :], gru_state
+            )
+            history_embedding = step_outputs[:, :, -1, :]  # (B, N, d_model)
 
         predicted_tokens = torch.stack(predictions, dim=-1)  # (B, N, 60)
         predicted_paths = trajectories[:, :, 50:, :]  # (B, N, 60, 7)

@@ -81,103 +81,156 @@ def filter_agents(
     return traj_out, sem_out, act_out
 
 
-def transform_batch(
-    trajectories: torch.Tensor,
-    graph_position: torch.Tensor,
-    graph_direction: torch.Tensor,
-    max_map_segs: int = 64,
-) -> tuple:
-    """Transforms the scenario into each agent's local frame.
+def frame_invariant_features(trajectories: torch.Tensor) -> torch.Tensor:
+    """Per-step kinematic features that are invariant to the global frame.
 
-    Returns two separate agent tensors instead of the monolithic (B, N, N, T, 7)
-    that caused N²×T memory explosions:
+    Unlike the old present-frame ``own_states`` (whose values changed with the
+    window-end anchor), each step t is described relative to its OWN body frame
+    and its predecessor.  This makes a single causal GRU pass over the full
+    trajectory equivalent to re-encoding a sliding window at every readout
+    time — the key enabler for encoding the history once instead of 60 times.
 
-      own_states      — each agent's FULL history in its OWN present frame (B, N, T, 7)
-      neighbor_states — CURRENT state of every agent in every observer's frame (B, N, N, 7)
+    Features per step (F = 7):
+        0  d_long   — displacement since t-1 along the body axis at t
+        1  d_lat    — displacement since t-1 perpendicular to the body axis
+        2  dyaw_cos — cos of the heading change since t-1
+        3  dyaw_sin — sin of the heading change since t-1
+        4  speed    — |v| at t
+        5  accel    — speed_t - speed_{t-1}
+        6  valid    — original valid flag
 
-    Splitting along the temporal axis is the key optimisation:
-    the GRU only needs the per-agent history (N sequences), while the interaction
-    transformer gets the current relative positions of all neighbours (N² scalars,
-    no time dimension).
+    All delta features (0-3, 5) are zeroed at t=0 and wherever either frame of
+    the (t-1, t) pair is invalid; speed is zeroed for invalid frames.  Note
+    that dyaw_cos is 1 for a valid pair with no rotation, so 0 is a
+    distinguishable "unknown" marker.
 
     Args:
-        trajectories:    (B, N, T, 7)  — [x, y, cos_h, sin_h, vx, vy, valid]
-        graph_position:  (B, M, 2)
-        graph_direction: (B, M, 2)
-
+        trajectories: (B, N, T, 7) — [x, y, cos_h, sin_h, vx, vy, valid]
     Returns:
-        own_states:      (B, N, T, 7)  — ego history in each agent's own present frame
-        neighbor_states: (B, N, N, 7)  — present-frame snapshot of all agents per observer
-        local_map_pos:   (B, N, M, 2)
-        local_map_dir:   (B, N, M, 2)
+        (B, N, T, 7) feature tensor
     """
-    B, N, T, _ = trajectories.shape
+    x = trajectories[..., 0]
+    y = trajectories[..., 1]
+    c = trajectories[..., 2]
+    s = trajectories[..., 3]
+    vx = trajectories[..., 4]
+    vy = trajectories[..., 5]
+    valid = trajectories[..., 6]
 
-    # Each agent's present pose — shared anchor for all transforms below.
-    # Shape (B, N) scalars; we unsqueeze as needed per computation.
-    px = trajectories[:, :, -1, 0]  # (B, N)
-    py = trajectories[:, :, -1, 1]
-    pc = trajectories[:, :, -1, 2]
-    ps = trajectories[:, :, -1, 3]
+    speed = torch.hypot(vx, vy) * valid  # (B, N, T)
 
-    # =========================================================================
-    # 1. Own-history states  (B, N, T, 7)
-    #
-    #    Agent i's full T-step trajectory expressed in i's OWN present frame.
-    #    No N² cross-product — one transform per agent.
-    # =========================================================================
-    # Broadcast shape: (B, N, 1) against (B, N, T)
-    px1 = px.unsqueeze(-1)  # (B, N, 1)
-    py1 = py.unsqueeze(-1)
-    pc1 = pc.unsqueeze(-1)
-    ps1 = ps.unsqueeze(-1)
+    zero = torch.zeros_like(x[..., :1])
 
-    traj_x = trajectories[:, :, :, 0]  # (B, N, T)
-    traj_y = trajectories[:, :, :, 1]
-    traj_c = trajectories[:, :, :, 2]
-    traj_s = trajectories[:, :, :, 3]
-    traj_vx = trajectories[:, :, :, 4]
-    traj_vy = trajectories[:, :, :, 5]
-    traj_v = trajectories[:, :, :, 6]
+    dx = torch.cat([zero, x[..., 1:] - x[..., :-1]], dim=-1)  # (B, N, T)
+    dy = torch.cat([zero, y[..., 1:] - y[..., :-1]], dim=-1)
 
-    dx = traj_x - px1
-    dy = traj_y - py1
+    # Rotate the step displacement into the body frame at t
+    d_long = dx * c + dy * s
+    d_lat = -dx * s + dy * c
 
-    own_states = torch.stack(
+    # Heading change t-1 → t as (cos, sin) of the delta angle
+    c_prev = torch.cat([zero, c[..., :-1]], dim=-1)
+    s_prev = torch.cat([zero, s[..., :-1]], dim=-1)
+    dyaw_cos = c * c_prev + s * s_prev
+    dyaw_sin = s * c_prev - c * s_prev
+
+    speed_prev = torch.cat([zero, speed[..., :-1]], dim=-1)
+    accel = speed - speed_prev
+
+    # Delta features need BOTH frames of the pair; t=0 has no predecessor
+    # (the zero-padded c_prev/s_prev handle it implicitly via valid_prev=0)
+    valid_prev = torch.cat([zero, valid[..., :-1]], dim=-1)
+    pair_valid = valid * valid_prev  # (B, N, T)
+
+    return torch.stack(
         [
-            dx * pc1 + dy * ps1,  # local_x
-            -dx * ps1 + dy * pc1,  # local_y
-            traj_c * pc1 + traj_s * ps1,  # local_cos
-            traj_s * pc1 - traj_c * ps1,  # local_sin
-            traj_vx * pc1 + traj_vy * ps1,  # local_vx
-            -traj_vx * ps1 + traj_vy * pc1,  # local_vy
-            traj_v,  # valid (unchanged)
+            d_long * pair_valid,
+            d_lat * pair_valid,
+            dyaw_cos * pair_valid,
+            dyaw_sin * pair_valid,
+            speed,
+            accel * pair_valid,
+            valid,
         ],
         dim=-1,
     )  # (B, N, T, 7)
 
+
+def transform_batch(
+    present_state: torch.Tensor,
+    graph_position: torch.Tensor,
+    graph_direction: torch.Tensor,
+    k_neighbors: int = 16,
+    max_map_segs: int = 64,
+) -> tuple:
+    """Transforms the CURRENT scene snapshot into each agent's local frame.
+
+    The temporal part of the encoding (agent histories) is handled separately
+    by ``frame_invariant_features`` + one causal GRU pass, so this function
+    only needs the present state of every agent — not a trajectory window.
+
+    Neighbours are sparsified to the k nearest valid agents per observer, so
+    memory is O(B·N·k) instead of O(B·N²).
+
+    Args:
+        present_state:   (B, N, 7)  — [x, y, cos_h, sin_h, vx, vy, valid] at "now"
+        graph_position:  (B, M, 2)
+        graph_direction: (B, M, 2)
+        k_neighbors:     number of nearest valid agents kept per observer
+        max_map_segs:    cap on map segments per agent (nearest-K filtering)
+
+    Returns:
+        neighbor_states: (B, N, k, 7) — nearest neighbours in each observer's frame
+        local_map_pos:   (B, N, K, 2)
+        local_map_dir:   (B, N, K, 2)
+        padding_mask:    (B, N) bool — True for agents invalid at the present
+                         step; feed as src_key_padding_mask to the interaction
+                         transformer so padded agents are not attended to.
+    """
+    B, N, _ = present_state.shape
+
+    px = present_state[..., 0]  # (B, N)
+    py = present_state[..., 1]
+    pc = present_state[..., 2]
+    ps = present_state[..., 3]
+    pvalid = present_state[..., 6]
+
     # =========================================================================
-    # 2. Neighbour present-frame snapshot  (B, N, N, 7)
+    # 1. k-nearest-neighbour selection  (B, N, k)
     #
-    #    Current state of every target j in observer i's frame.
-    #    No temporal dimension — cheap N² computation over 7 scalars.
+    #    Pairwise distances are (B, N, N) scalars — cheap.  Invalid targets get
+    #    infinite distance so topk skips them (mirrors filter_agents).
     # =========================================================================
-    # Observer shapes: (B, N, 1) for broadcasting against target dim N
+    k = min(k_neighbors, N)
+
+    ddx_all = px.unsqueeze(1) - px.unsqueeze(2)  # (B, N_obs, N_tgt)
+    ddy_all = py.unsqueeze(1) - py.unsqueeze(2)
+    dist_sq = ddx_all**2 + ddy_all**2  # (B, N, N)
+    dist_sq = dist_sq.masked_fill(~pvalid.bool().unsqueeze(1), float("inf"))
+
+    _, knn_idx = dist_sq.topk(k, dim=-1, largest=False)  # (B, N, k)
+
+    # Gather the k nearest target states per observer — (B, N, k, 7)
+    gather_idx = knn_idx.unsqueeze(-1).expand(-1, -1, -1, 7)
+    targets = present_state.unsqueeze(1).expand(B, N, N, 7).gather(2, gather_idx)
+
+    # =========================================================================
+    # 2. Neighbour states in each observer's frame  (B, N, k, 7)
+    # =========================================================================
     obs_x = px.unsqueeze(2)  # (B, N, 1)
     obs_y = py.unsqueeze(2)
     obs_c = pc.unsqueeze(2)
     obs_s = ps.unsqueeze(2)
 
-    # Target shapes at present (t=-1): (B, 1, N)
-    tgt_x = trajectories[:, :, -1, 0].unsqueeze(1)  # (B, 1, N)
-    tgt_y = trajectories[:, :, -1, 1].unsqueeze(1)
-    tgt_c = trajectories[:, :, -1, 2].unsqueeze(1)
-    tgt_s = trajectories[:, :, -1, 3].unsqueeze(1)
-    tgt_vx = trajectories[:, :, -1, 4].unsqueeze(1)
-    tgt_vy = trajectories[:, :, -1, 5].unsqueeze(1)
-    tgt_v = trajectories[:, :, -1, 6].unsqueeze(1).expand(B, N, N)
+    tgt_x = targets[..., 0]  # (B, N, k)
+    tgt_y = targets[..., 1]
+    tgt_c = targets[..., 2]
+    tgt_s = targets[..., 3]
+    tgt_vx = targets[..., 4]
+    tgt_vy = targets[..., 5]
+    tgt_v = targets[..., 6]
 
-    ddx = tgt_x - obs_x  # (B, N, N)
+    ddx = tgt_x - obs_x  # (B, N, k)
     ddy = tgt_y - obs_y
 
     neighbor_states = torch.stack(
@@ -191,26 +244,25 @@ def transform_batch(
             tgt_v,  # valid
         ],
         dim=-1,
-    )  # (B, N, N, 7)
+    )  # (B, N, k, 7)
+
+    # Zero out slots that fell back to invalid targets (fewer than k valid
+    # agents in the scene) so they cannot dominate the max-pool.
+    neighbor_states = neighbor_states * tgt_v.unsqueeze(-1)
 
     # =========================================================================
     # 3. Lane graph in each agent's present frame  (B, N, M, 2)
     # =========================================================================
-    obs_x_m = px.unsqueeze(2)  # (B, N, 1)
-    obs_y_m = py.unsqueeze(2)
-    obs_c_m = pc.unsqueeze(2)
-    obs_s_m = ps.unsqueeze(2)
-
     mx = graph_position[:, :, 0].unsqueeze(1)  # (B, 1, M)
     my = graph_position[:, :, 1].unsqueeze(1)
 
-    dmx = mx - obs_x_m  # (B, N, M)
-    dmy = my - obs_y_m
+    dmx = mx - obs_x  # (B, N, M)
+    dmy = my - obs_y
 
     local_map_pos = torch.stack(
         [
-            dmx * obs_c_m + dmy * obs_s_m,
-            -dmx * obs_s_m + dmy * obs_c_m,
+            dmx * obs_c + dmy * obs_s,
+            -dmx * obs_s + dmy * obs_c,
         ],
         dim=-1,
     )  # (B, N, M, 2)
@@ -220,8 +272,8 @@ def transform_batch(
 
     local_map_dir = torch.stack(
         [
-            dx_dir * obs_c_m + dy_dir * obs_s_m,
-            -dx_dir * obs_s_m + dy_dir * obs_c_m,
+            dx_dir * obs_c + dy_dir * obs_s,
+            -dx_dir * obs_s + dy_dir * obs_c,
         ],
         dim=-1,
     )  # (B, N, M, 2)
@@ -235,10 +287,21 @@ def transform_batch(
     # =========================================================================
     M_actual = local_map_pos.shape[2]
     if M_actual > max_map_segs:
-        dist_sq = (local_map_pos**2).sum(dim=-1)  # (B, N, M) — squared dist
-        _, topk = dist_sq.topk(max_map_segs, dim=-1, largest=False)  # (B, N, K)
+        map_dist_sq = (local_map_pos**2).sum(dim=-1)  # (B, N, M) — squared dist
+        _, topk = map_dist_sq.topk(max_map_segs, dim=-1, largest=False)  # (B, N, K)
         idx = topk.unsqueeze(-1).expand(-1, -1, -1, 2)  # (B, N, K, 2)
         local_map_pos = local_map_pos.gather(2, idx)  # (B, N, K, 2)
         local_map_dir = local_map_dir.gather(2, idx)  # (B, N, K, 2)
 
-    return own_states, neighbor_states, local_map_pos, local_map_dir
+    # =========================================================================
+    # 5. Interaction padding mask  (B, N)
+    #
+    #    True = do not attend to this agent.  Scenes where NO agent is valid
+    #    would make every attention row empty (NaN), so those rows fall back
+    #    to unmasked — their loss is masked downstream anyway.
+    # =========================================================================
+    padding_mask = ~pvalid.bool()  # (B, N)
+    all_invalid = padding_mask.all(dim=-1, keepdim=True)  # (B, 1)
+    padding_mask = padding_mask & ~all_invalid
+
+    return neighbor_states, local_map_pos, local_map_dir, padding_mask

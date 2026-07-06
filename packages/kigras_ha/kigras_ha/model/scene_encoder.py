@@ -6,20 +6,29 @@ class FactorizedSceneEncoder(nn.Module):
     """
     Per-agent physics encoder — NO inter-agent interaction yet.
 
-    Uses two complementary encoders to replace the old N²×T GRU:
+    The temporal and per-step parts are split so the expensive GRU runs ONCE
+    per trajectory instead of once per readout window:
 
-      history_gru    — each agent's own 50-step trajectory in its own frame
-                       GRU batch: (B*N, T, 7) instead of the old (B*N², T, 7)
+      encode_history — causal GRU over frame-invariant per-step features
+                       (see utils.train_utils.frame_invariant_features).
+                       Because the recurrence is left-to-right, the hidden
+                       output at step t encodes exactly the frames <= t, so a
+                       single pass over the full ground-truth trajectory
+                       yields the teacher-forcing readout for EVERY future
+                       step.  At rollout time the hidden state is carried and
+                       updated one frame at a time.
 
-      neighbor_mlp   — current (t=-1) relative state of all N agents seen by
-                       each observer, then max-pooled.  No temporal dimension,
-                       so this is cheap: just (B*N², 7) through an MLP.
+      forward        — cheap per-step fusion: semantics + map + k nearest
+                       neighbours + previous action + the precomputed history
+                       embedding for that step.
 
     The interaction transformer in InteractiveSceneEncoder then handles
     joint multi-agent reasoning after this per-agent encoding.
     """
 
-    def __init__(self, d_model=64, num_semantic_classes=10, vocab_size=3969):
+    def __init__(
+        self, d_model=64, num_semantic_classes=10, vocab_size=3969, feat_dim=7
+    ):
         super().__init__()
 
         self.semantic_encoder = nn.Embedding(num_semantic_classes, d_model)
@@ -31,10 +40,12 @@ class FactorizedSceneEncoder(nn.Module):
             nn.Linear(d_model, d_model),
         )
 
-        # Encodes each agent's OWN history — batch size is B*N, not B*N²
-        self.history_gru = nn.GRU(input_size=7, hidden_size=d_model, batch_first=True)
+        # Causal recurrence over frame-invariant per-step features
+        self.history_gru = nn.GRU(
+            input_size=feat_dim, hidden_size=d_model, batch_first=True
+        )
 
-        # Encodes the CURRENT relative state of every neighbour (no time axis)
+        # Encodes the CURRENT relative state of the k nearest neighbours
         self.neighbor_mlp = nn.Sequential(
             nn.Linear(7, d_model),
             nn.LayerNorm(d_model),
@@ -47,28 +58,44 @@ class FactorizedSceneEncoder(nn.Module):
 
         self.fusion_norm = nn.LayerNorm(d_model)
 
+    def encode_history(self, feats, h0=None):
+        """Run the causal GRU over per-step features.
+
+        Args:
+            feats: (B, N, T, F) — frame-invariant features (T can be 1 when
+                   stepping incrementally during rollout)
+            h0:    (1, B*N, d_model) optional carried hidden state
+        Returns:
+            outputs: (B, N, T, d_model) — hidden state after EVERY step;
+                     outputs[:, :, t] conditions only on frames <= t
+            h_n:     (1, B*N, d_model) — final hidden state, feed back as h0
+                     for incremental rollout updates
+        """
+        B, N, T, F = feats.shape
+        outputs, h_n = self.history_gru(feats.view(B * N, T, F), h0)
+        return outputs.view(B, N, T, -1), h_n
+
     def forward(
         self,
         semantics,
         local_map_pos,
         local_map_dir,
-        own_states,
+        history_embedding,
         neighbor_states,
         prev_actions,
     ):
         """
         Args:
-            semantics:       (B, N)
-            local_map_pos:   (B, N, M, 2)
-            local_map_dir:   (B, N, M, 2)
-            own_states:      (B, N, T, 7)  — ego history in agent's own frame
-            neighbor_states: (B, N, N, 7)  — present-frame snapshot of all agents
-            prev_actions:    (B, N) long   — previous action token (SOS at t=0)
+            semantics:         (B, N)
+            local_map_pos:     (B, N, M, 2)
+            local_map_dir:     (B, N, M, 2)
+            history_embedding: (B, N, d_model) — GRU readout for this step,
+                               from encode_history
+            neighbor_states:   (B, N, k, 7) — k nearest agents, observer frame
+            prev_actions:      (B, N) long   — previous action token (SOS at t=0)
         Returns:
             (B, N, d_model) — one token per agent, not yet interacted
         """
-        B, N, T, _ = own_states.shape
-
         # 1. Semantic embedding
         e_s = self.semantic_encoder(semantics)  # (B, N, d_model)
 
@@ -76,12 +103,11 @@ class FactorizedSceneEncoder(nn.Module):
         map_vectors = torch.cat([local_map_pos, local_map_pos + local_map_dir], dim=-1)
         e_m, _ = self.map_encoder(map_vectors).max(dim=2)  # (B, N, d_model)
 
-        # 3. Own history — GRU over N sequences (not N²)
-        _, h_n = self.history_gru(own_states.view(B * N, T, 7))
-        e_h = h_n.squeeze(0).view(B, N, -1)  # (B, N, d_model)
+        # 3. Own history — precomputed causal GRU readout
+        e_h = history_embedding  # (B, N, d_model)
 
-        # 4. Neighbour snapshot — MLP over N² current states, max-pool over neighbours
-        n_feats = self.neighbor_mlp(neighbor_states)  # (B, N, N, d_model)
+        # 4. Neighbour snapshot — MLP over k current states, max-pool over neighbours
+        n_feats = self.neighbor_mlp(neighbor_states)  # (B, N, k, d_model)
         e_n, _ = n_feats.max(dim=2)  # (B, N, d_model)
 
         # 5. U-embedding — previous action token
@@ -99,13 +125,16 @@ class InteractiveSceneEncoder(nn.Module):
     negotiation and joint intent.  This is what makes the prediction joint.
     """
 
-    def __init__(self, d_model=64, num_semantic_classes=10, vocab_size=3969):
+    def __init__(
+        self, d_model=64, num_semantic_classes=10, vocab_size=3969, feat_dim=7
+    ):
         super().__init__()
 
         self.individual_encoder = FactorizedSceneEncoder(
             d_model=d_model,
             num_semantic_classes=num_semantic_classes,
             vocab_size=vocab_size,
+            feat_dim=feat_dim,
         )
 
         interaction_layer = nn.TransformerEncoderLayer(
@@ -114,27 +143,43 @@ class InteractiveSceneEncoder(nn.Module):
             dim_feedforward=d_model,
             batch_first=True,
             norm_first=True,
-            dropout=0.1,
+            dropout=0.0,  # TODO: Change back to 0.1
         )
         self.interaction_transformer = nn.TransformerEncoder(
             interaction_layer, num_layers=3
         )
+
+    def encode_history(self, feats, h0=None):
+        """Delegates to FactorizedSceneEncoder.encode_history."""
+        return self.individual_encoder.encode_history(feats, h0)
 
     def forward(
         self,
         semantics,
         local_map_pos,
         local_map_dir,
-        own_states,
+        history_embedding,
         neighbor_states,
         prev_actions,
+        padding_mask=None,
     ):
+        """
+        Args:
+            (see FactorizedSceneEncoder.forward)
+            padding_mask: (B, N) bool — True for invalid/padded agents; they
+                          are excluded as attention KEYS so real agents never
+                          attend to padding.
+        Returns:
+            (B, N, d_model)
+        """
         individual_tokens = self.individual_encoder(
             semantics,
             local_map_pos,
             local_map_dir,
-            own_states,
+            history_embedding,
             neighbor_states,
             prev_actions,
         )
-        return self.interaction_transformer(individual_tokens)  # (B, N, d_model)
+        return self.interaction_transformer(
+            individual_tokens, src_key_padding_mask=padding_mask
+        )  # (B, N, d_model)

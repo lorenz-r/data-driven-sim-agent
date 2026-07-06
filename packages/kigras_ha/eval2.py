@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 from kigras_ha.dataloader.dataset import ArgoDataset, collate_fn
 from kigras_ha.kinematics.ctra import CTRAKinematics
 from kigras_ha.model.kigras_ha import KiGRAS_HA
-from kigras_ha.utils.train_utils import transform_batch
+from kigras_ha.utils.train_utils import transform_batch, frame_invariant_features
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -66,11 +66,21 @@ def rollout(
         pred_xy: list[np.ndarray] = []
         step_tokens: list[np.ndarray] = []
 
-        for step in range(60):
-            window = traj[:, :, -50:, :]  # (1, N, 50, 7) sliding window
+        # Warm up the causal GRU on the observed history (once per sample);
+        # the hidden state is then carried and updated frame by frame.
+        hist_feats = frame_invariant_features(traj)  # (1, N, 50, F)
+        hist_outputs, gru_state = model.encoder.encode_history(hist_feats)
+        hist_emb = hist_outputs[:, :, -1, :]  # (1, N, d)
 
-            own, nbr, lmp, lmd = transform_batch(window, graph_pos, graph_dir)
-            token = model.encoder(semantics, lmp, lmd, own, nbr, prev_actions)
+        for step in range(60):
+            present = traj[:, :, -1, :]  # (1, N, 7)
+
+            nbr, lmp, lmd, pad = transform_batch(
+                present, graph_pos, graph_dir, k_neighbors=model.k_neighbors
+            )
+            token = model.encoder(
+                semantics, lmp, lmd, hist_emb, nbr, prev_actions, padding_mask=pad
+            )
             scene_tokens.append(token)
 
             # Causal decode over the growing token sequence
@@ -123,6 +133,13 @@ def rollout(
 
             traj = torch.cat([traj, new_row], dim=2)
             pred_xy.append(next_state[0, :, :2].cpu().numpy())  # (N, 2)
+
+            # Fold the new frame into the carried GRU state (single step)
+            step_feats = frame_invariant_features(traj[:, :, -2:, :])
+            step_out, gru_state = model.encoder.encode_history(
+                step_feats[:, :, -1:, :], gru_state
+            )
+            hist_emb = step_out[:, :, -1, :]  # (1, N, d)
 
         # list of 60×(N,2) → (N, 60, 2)
         all_paths.append(np.stack(pred_xy, axis=0).transpose(1, 0, 2))

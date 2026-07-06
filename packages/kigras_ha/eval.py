@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 
 from kigras_ha.dataloader.dataset import ArgoDataset, collate_fn
 from kigras_ha.model.kigras_ha import KiGRAS_HA
-from kigras_ha.utils.train_utils import transform_batch
+from kigras_ha.utils.train_utils import transform_batch, frame_invariant_features
 from kigras_ha.model.trajectory_decoder import (
     AV2TrajectoryDecoder,
     CTRATrajectoryDecoder,
@@ -17,11 +17,12 @@ from kigras_ha.model.trajectory_decoder import (
 
 @torch.no_grad()
 def evaluate_scenario(model, batch, device, traj_decoder):
-    """Autoregressive rollout for all agents using the current transform_batch API.
+    """Autoregressive rollout for all agents using the stateful encoder API.
 
-    transform_batch now returns (own_states, neighbor_states, local_map_pos,
-    local_map_dir) and must be called once per step with a 50-step window.
-    The encoder also requires prev_actions for the U-embedding.
+    The GRU history embedding is computed once on the observed history and the
+    scene context (transform_batch on the present state) is likewise static —
+    this script never advances the world, so only prev_actions changes per
+    step via the U-embedding.
     """
     model.eval()
 
@@ -50,6 +51,15 @@ def evaluate_scenario(model, batch, device, traj_decoder):
     # across steps via the U-embedding.
     window = history.unsqueeze(0)  # (1, N, 50, 7)
 
+    # Static per-rollout context: GRU warm-up + present-frame scene transform
+    hist_feats = frame_invariant_features(window)  # (1, N, 50, F)
+    hist_outputs, _ = model.encoder.encode_history(hist_feats)
+    hist_emb = hist_outputs[:, :, -1, :]  # (1, N, d)
+
+    nbr, lmp, lmd, pad = transform_batch(
+        window[:, :, -1, :], gpos_b, gdir_b, k_neighbors=model.k_neighbors
+    )
+
     prev_actions = torch.full(
         (1, N), model.start_token_idx, dtype=torch.long, device=device
     )
@@ -57,9 +67,9 @@ def evaluate_scenario(model, batch, device, traj_decoder):
     predicted_tokens = torch.zeros(N, 60, dtype=torch.long, device=device)
 
     for step in range(60):
-        own, nbr, lmp, lmd = transform_batch(window, gpos_b, gdir_b)
-
-        token = model.encoder(sem_b, lmp, lmd, own, nbr, prev_actions)  # (1, N, d)
+        token = model.encoder(
+            sem_b, lmp, lmd, hist_emb, nbr, prev_actions, padding_mask=pad
+        )  # (1, N, d)
         scene_tokens.append(token)
 
         seq = torch.stack(scene_tokens, dim=2)  # (1, N, step+1, d)
