@@ -90,6 +90,7 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
         require_complete_history=model_cfg.get("require_complete_history", False),
         grid_power=kin_cfg.get("grid_power", 1.0) if kin_cfg is not None else 1.0,
         k_neighbors=model_cfg.get("k_neighbors", 16),
+        fusion_chunk_size=model_cfg.get("fusion_chunk_size", 15),
     )
 
     # ------------------------------------------------------------------

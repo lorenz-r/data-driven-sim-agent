@@ -28,6 +28,7 @@ class KiGRAS_HA(pl.LightningModule):
         require_complete_history: bool = False,
         grid_power: float = 1.0,
         k_neighbors: int = 16,
+        fusion_chunk_size: int = 15,
     ):
         if vocab_size is None:
             vocab_size = num_accel_bins * num_steer_bins
@@ -59,6 +60,14 @@ class KiGRAS_HA(pl.LightningModule):
 
         # Sparse interaction: each observer pools only its k nearest neighbours
         self.k_neighbors = k_neighbors
+
+        # Teacher forcing has no sequential dependency in the encoder, so the
+        # 60 per-step fusions are batched (time folded into the batch dim) in
+        # chunks of this size — one big kernel launch per chunk instead of 60
+        # small ones.  Larger = faster but higher peak memory; 0 = all 60 at
+        # once.  Combined with gradient_checkpointing, each chunk is one
+        # checkpoint block.
+        self.fusion_chunk_size = fusion_chunk_size
 
         # Used to compute action tokens on-the-fly when the dataset was not
         # preprocessed.  max_iter=0 means analytic-only (no L-BFGS) for speed.
@@ -107,6 +116,60 @@ class KiGRAS_HA(pl.LightningModule):
             prev_actions,
             padding_mask=padding_mask,
         )
+
+    # ------------------------------------------------------------------
+    # Time-vectorized per-step fusion (teacher forcing only)
+    # ------------------------------------------------------------------
+    def _fuse_chunk(
+        self,
+        presents,
+        graph_pos,
+        graph_dir,
+        semantics,
+        hist_embeddings,
+        prev_actions,
+    ):
+        """Fuse+interact C timesteps at once by folding time into the batch.
+
+        Under teacher forcing all inputs (ground-truth poses, neighbour sets,
+        previous actions, GRU readouts) are known upfront, so the C fusion
+        passes are independent and can run as one (B·C)-batch forward instead
+        of C sequential ones.  The interaction transformer still attends only
+        over the N agents WITHIN each timestep — identical math to the loop.
+
+        Args:
+            presents:        (B, C, N, 7) — ground-truth state at each step
+            graph_pos:       (B, M, 2)
+            graph_dir:       (B, M, 2)
+            semantics:       (B, N)
+            hist_embeddings: (B, C, N, d) — GRU readouts for these steps
+            prev_actions:    (B, C, N) long
+        Returns:
+            (B, C, N, d) scene tokens
+        """
+        B, C, N, _ = presents.shape
+        M = graph_pos.shape[1]
+
+        p = presents.reshape(B * C, N, 7)
+        gp = graph_pos.unsqueeze(1).expand(-1, C, -1, -1).reshape(B * C, M, 2)
+        gd = graph_dir.unsqueeze(1).expand(-1, C, -1, -1).reshape(B * C, M, 2)
+        sem = semantics.unsqueeze(1).expand(-1, C, -1).reshape(B * C, N)
+        eh = hist_embeddings.reshape(B * C, N, -1)
+        pa = prev_actions.reshape(B * C, N)
+
+        neighbor_states, local_map_pos, local_map_dir, padding_mask = transform_batch(
+            p, gp, gd, k_neighbors=self.k_neighbors
+        )
+        tokens = self.encoder(
+            sem,
+            local_map_pos,
+            local_map_dir,
+            eh,
+            neighbor_states,
+            pa,
+            padding_mask=padding_mask,
+        )  # (B*C, N, d)
+        return tokens.view(B, C, N, -1)
 
     # ------------------------------------------------------------------
     # Training / validation step
@@ -227,59 +290,53 @@ class KiGRAS_HA(pl.LightningModule):
         hist_readouts = hist_outputs[:, :, 49:109, :]  # (B, N, 60, d)
 
         # =====================================================================
-        # 3b. Cheap per-step fusion + interaction for each future timestep
+        # 3b. Time-vectorized fusion + interaction over the 60 future steps
+        #
+        #     No sequential dependency exists here under teacher forcing, so
+        #     time is folded into the batch dimension and processed in chunks
+        #     of fusion_chunk_size (memory/speed trade-off).  With gradient
+        #     checkpointing each chunk is one recompute block.
         # =====================================================================
-        scene_tokens = []
-        valid_flags = []
+        # Time-major views: (B, 60, N, ...)
+        presents_all = full_trajectories[:, :, 49:109, :].transpose(1, 2)  # (B,60,N,7)
+        hist_emb_all = hist_readouts.transpose(1, 2)  # (B, 60, N, d)
+        prev_acts_all = prev_actions_seq.transpose(1, 2)  # (B, 60, N)
 
-        for t in range(60):
-            present = full_trajectories[:, :, t + 49, :]  # (B, N, 7)
-            prev_act_t = prev_actions_seq[:, :, t]  # (B, N)
-            e_h_t = hist_readouts[:, :, t, :]  # (B, N, d)
+        chunk_size = self.fusion_chunk_size if self.fusion_chunk_size > 0 else 60
+
+        scene_chunks = []
+        for start in range(0, 60, chunk_size):
+            sl = slice(start, min(start + chunk_size, 60))
 
             if self.gradient_checkpointing and self.training:
-                # Recompute the transform+encode on the backward pass instead of
-                # caching all 60 sets of activations simultaneously.
-                def _encode(p, gp, gd, sem, eh, pa):
-                    nbr, lmp, lmd, pad = transform_batch(
-                        p, gp, gd, k_neighbors=self.k_neighbors
-                    )
-                    return self.encoder(sem, lmp, lmd, eh, nbr, pa, padding_mask=pad)
-
-                token = grad_checkpoint(
-                    _encode,
-                    present,
+                # Recompute the transform+encode on the backward pass instead
+                # of caching every chunk's activations simultaneously.
+                token_chunk = grad_checkpoint(
+                    self._fuse_chunk,
+                    presents_all[:, sl],
                     graph_pos,
                     graph_dir,
                     semantics,
-                    e_h_t,
-                    prev_act_t,
+                    hist_emb_all[:, sl],
+                    prev_acts_all[:, sl],
                     use_reentrant=False,
                 )
             else:
-                neighbor_states, local_map_pos, local_map_dir, padding_mask = (
-                    transform_batch(
-                        present, graph_pos, graph_dir, k_neighbors=self.k_neighbors
-                    )
-                )
-                token = self.encoder(
+                token_chunk = self._fuse_chunk(
+                    presents_all[:, sl],
+                    graph_pos,
+                    graph_dir,
                     semantics,
-                    local_map_pos,
-                    local_map_dir,
-                    e_h_t,
-                    neighbor_states,
-                    prev_act_t,
-                    padding_mask=padding_mask,
-                )  # (B, N, d_model)
+                    hist_emb_all[:, sl],
+                    prev_acts_all[:, sl],
+                )  # (B, C, N, d)
 
-            scene_tokens.append(token)
-            # Agent is valid at this step if it exists at the present frame
-            valid_flags.append(present[:, :, 6].bool())  # (B, N)
+            scene_chunks.append(token_chunk)
 
-        # (B, N, 60, d_model)
-        scene_token_seq = torch.stack(scene_tokens, dim=2)
-        # (B, N, 60)
-        valid_mask = torch.stack(valid_flags, dim=2)
+        # (B, N, 60, d_model) — contiguous for the decoder's .view()
+        scene_token_seq = torch.cat(scene_chunks, dim=1).transpose(1, 2).contiguous()
+        # Agent is valid at step t if it exists at the present frame — (B, N, 60)
+        valid_mask = full_trajectories[:, :, 49:109, 6].bool()
 
         # =====================================================================
         # 4. Causal decode over all 60 steps in one pass
