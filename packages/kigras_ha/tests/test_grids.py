@@ -107,6 +107,4 @@ class TestGridAgreementAcrossEncodeDecode:
     def test_ctra_decoder_reads_kinematics_bins(self, power):
         decoder = CTRATrajectoryDecoder(grid_power=power)
         assert np.array_equal(decoder.accel_bins, decoder.ctra.accel_bins.numpy())
-        assert np.array_equal(
-            decoder.yaw_rate_bins, decoder.ctra.yaw_rate_bins.numpy()
-        )
+        assert np.array_equal(decoder.yaw_rate_bins, decoder.ctra.yaw_rate_bins.numpy())

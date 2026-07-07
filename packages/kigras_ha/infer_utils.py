@@ -278,8 +278,12 @@ def scene_min_ade_fde(
             per_agent_ade.append(result[0])
             per_agent_fde.append(result[1])
     return {
-        "mean_min_ade": float(np.mean(per_agent_ade)) if per_agent_ade else float("nan"),
-        "mean_min_fde": float(np.mean(per_agent_fde)) if per_agent_fde else float("nan"),
+        "mean_min_ade": float(np.mean(per_agent_ade))
+        if per_agent_ade
+        else float("nan"),
+        "mean_min_fde": float(np.mean(per_agent_fde))
+        if per_agent_fde
+        else float("nan"),
         "num_scored_agents": len(per_agent_ade),
         "per_agent_min_ade": np.asarray(per_agent_ade, dtype=np.float32),
         "per_agent_min_fde": np.asarray(per_agent_fde, dtype=np.float32),
@@ -342,7 +346,9 @@ def save_visualization(
         ax.plot(gt_xy[:, 0], gt_xy[:, 1], "-", color=c, alpha=alpha, linewidth=1.5)
 
         first_valid = int(np.where(valid)[0][0])
-        ax.scatter(gt_xy[first_valid, 0], gt_xy[first_valid, 1], color=c, s=20, zorder=5)
+        ax.scatter(
+            gt_xy[first_valid, 0], gt_xy[first_valid, 1], color=c, s=20, zorder=5
+        )
         ax.text(
             gt_xy[first_valid, 0],
             gt_xy[first_valid, 1],
@@ -611,7 +617,9 @@ def run_inference_pipeline(
     }
 
     print(f"Running KiGRAS_HA inference on {len(indices)} scenario(s)")
-    print(f"Device: {resolved_device}  |  samples: {num_samples}  temperature: {temperature}")
+    print(
+        f"Device: {resolved_device}  |  samples: {num_samples}  temperature: {temperature}"
+    )
     print(f"Binning: {num_accel}x{num_yaw} bins  |  grid_power: {grid_power}")
 
     results: list[dict[str, Any]] = []
@@ -638,7 +646,9 @@ def run_inference_pipeline(
             f"minFDE@{num_samples}: {scene['mean_min_fde']:.3f} m   "
             f"(over {scene['num_scored_agents']} agent(s) with ground truth)"
         )
-        print(f"Focal minADE@{num_samples}: {focal_ade:.3f} m   minFDE@{num_samples}: {focal_fde:.3f} m")
+        print(
+            f"Focal minADE@{num_samples}: {focal_ade:.3f} m   minFDE@{num_samples}: {focal_fde:.3f} m"
+        )
 
         # Best sample (per focal agent) used for the single-scenario AV2 export.
         gt_future = scenario_result["gt_future"]
@@ -665,9 +675,9 @@ def run_inference_pipeline(
                 {
                     "scenario_id": scenario_id,
                     "inference_metadata_json": np.asarray(
-                        json.dumps(
-                            {**run_metadata, "scenario_id": scenario_id}
-                        ).encode("utf-8")
+                        json.dumps({**run_metadata, "scenario_id": scenario_id}).encode(
+                            "utf-8"
+                        )
                     ),
                     # KiGRAS-native extras (ignored by the SMART evaluator).
                     "pred_states": rollout_output["pred_states"],
@@ -768,8 +778,12 @@ def _write_summary(
         float(np.average(scene_fdes, weights=scene_weights)) if total_agents else None
     )
 
-    focal_ades = [r["focal_min_ade"] for r in results if np.isfinite(r["focal_min_ade"])]
-    focal_fdes = [r["focal_min_fde"] for r in results if np.isfinite(r["focal_min_fde"])]
+    focal_ades = [
+        r["focal_min_ade"] for r in results if np.isfinite(r["focal_min_ade"])
+    ]
+    focal_fdes = [
+        r["focal_min_fde"] for r in results if np.isfinite(r["focal_min_fde"])
+    ]
 
     summary = {
         **run_metadata,
