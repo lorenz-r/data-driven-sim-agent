@@ -83,8 +83,8 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
     model = KiGRAS_HA(
         lr=optim_cfg["learning_rate"],
         weight_decay=optim_cfg["weight_decay"],
-        num_accel_bins=model_cfg.get("num_accel_bins", 63),
-        num_steer_bins=model_cfg.get("num_steer_bins", 63),
+        num_accel_bins=model_cfg.get("num_action_bins", 63),
+        num_steer_bins=model_cfg.get("num_action_bins", 63),
         gradient_checkpointing=model_cfg.get("gradient_checkpointing", False),
         max_agents=model_cfg.get("max_agents", 10),
         require_complete_history=model_cfg.get("require_complete_history", False),

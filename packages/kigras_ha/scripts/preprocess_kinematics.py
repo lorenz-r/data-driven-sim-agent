@@ -12,6 +12,21 @@ from kbm import KinematicBicycleModel
 from kigras_ha.kinematics.inverse_kinematics import InverseKinematicModule
 
 
+def split_filename(
+    split: str, size: str = "", grid_power: float = 1.0, num_bins: int | None = None
+) -> str:
+    """Name of a preprocessed split file, tagged with the action grid.
+
+    The ``_b<num_bins>`` and ``_p<grid_power>`` suffixes (e.g.
+    ``train_split_b127_p1.0.npy``) make the per-axis bin count and the bin warp
+    explicit, so runs with a different grid never share a file and training only
+    ever loads tokens produced on the same grid the model decodes with.
+    """
+    prefix = f"{size}_" if size else ""
+    bins = f"_b{int(num_bins)}" if num_bins is not None else ""
+    return f"{prefix}{split}_split{bins}_p{float(grid_power)}.npy"
+
+
 def run_preprocessing(
     input_dir="data/raw/train",
     output_dir="data/kigras_processed",
@@ -25,6 +40,7 @@ def run_preprocessing(
     max_yaw_rate=1.5,
     max_iter=5,
     grid_power=1.0,
+    size="",
 ):
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -104,9 +120,27 @@ def run_preprocessing(
             full_obs_t = torch.from_numpy(full_obs).float()
             full_mask_t = torch.from_numpy(full_mask).bool()
 
-            actions = kinematics.solve(
-                full_obs_t, quantize=True, valid_mask=full_mask_t
-            )
+            # Solve each agent independently.  A single batched L-BFGS over all
+            # agents shares one global line-search step and curvature history, so
+            # agents with large residuals dominate and every agent is pulled
+            # toward the batch-mean behaviour.  Looping per agent recovers each
+            # agent's own actions (matches Areg's kigras_am fix).
+            token_ids = np.full((N, 60), -1, dtype=np.int64)
+            for agent_idx in range(N):
+                if not full_mask[agent_idx, 0]:
+                    continue  # agent absent at t=49 -> leave its tokens as -1
+                # A transition is real only if BOTH endpoints are valid.
+                action_valid = full_mask[agent_idx, :-1] & full_mask[agent_idx, 1:]
+                if not action_valid.any():
+                    continue
+                actions = kinematics.solve(
+                    full_obs_t[agent_idx : agent_idx + 1],
+                    quantize=True,
+                    valid_mask=full_mask_t[agent_idx : agent_idx + 1],
+                )
+                agent_tokens = kinematics.actions_to_token_ids(actions).numpy()[0]
+                agent_tokens[~action_valid] = -1
+                token_ids[agent_idx] = agent_tokens
 
             # from kigras_ha.utils.plot_rollout import plot_kinematic_rollout
             # import matplotlib.pyplot as plt
@@ -119,7 +153,6 @@ def run_preprocessing(
             # plt.show()
             # quit()
 
-            token_ids = kinematics.actions_to_token_ids(actions).numpy()
             data["agents"]["action_tokens"] = token_ids  # (N, 60)
             data["labels"] = token_ids[track_ids.index(data["focal_track_id"])]  # (60,)
 
@@ -179,7 +212,9 @@ def run_preprocessing(
 
     # The _p<grid_power> suffix records the action-bin warp so runs with a
     # different p never collide and are never silently mixed at train time.
-    save_path = output_dir / f"{output_dir.name}_split_p{float(grid_power)}.npy"
+    save_path = output_dir / split_filename(
+        output_dir.name, size=size, grid_power=grid_power, num_bins=num_accel
+    )
     np.save(save_path, preprocessed_data_list, allow_pickle=True)
     print(f"\nPreprocessing complete! Saved to {save_path}")
 
@@ -226,6 +261,36 @@ def test():
         print("The loaded data does not match the original data!")
     else:
         print("It worked!")
+
+
+def process(cfg, size: str = ""):
+    """Preprocess every split declared in ``cfg.setup.preprocessing`` using the
+    KiGRAS-HA kinematics/dataset, driven by the composed Hydra config.
+
+    Mirrors ``kigras.scripts.preprocess_kinematics.process`` so trainers can
+    swap the import, but resolves the action grid from ``cfg.model.kinematics``
+    and delegates to this package's ``run_preprocessing`` (kbm support, labels).
+    """
+    proc_cfg = cfg.setup.preprocessing
+    kin_cfg = cfg.model.kinematics
+
+    for split in proc_cfg.input.keys():
+        start = time.perf_counter()
+        run_preprocessing(
+            input_dir=Path(proc_cfg.input[split]),
+            output_dir=Path(proc_cfg.output[split]),
+            kinematics_type=kin_cfg.get("name", "ctra"),
+            num_accel=kin_cfg.get("num_accel_bins", 63),
+            num_steer=kin_cfg.get("num_yaw_bins", 63),
+            max_accel=kin_cfg.get("max_accel", 5.0),
+            max_yaw_rate=kin_cfg.get("max_yaw_rate", 1.5),
+            delta_time=kin_cfg.get("delta_time", 0.1),
+            max_iter=kin_cfg.get("max_iter", 5),
+            grid_power=kin_cfg.get("grid_power", 1.0),
+            size=size,
+        )
+        end = time.perf_counter()
+        print(f"Preprocessing {split} total time: {end - start:.2f} seconds")
 
 
 def cli_main():

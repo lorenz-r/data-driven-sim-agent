@@ -20,7 +20,7 @@ class KiGRAS_HA(pl.LightningModule):
         lr=2e-4,
         weight_decay=1e-4,
         gradient_checkpointing=False,
-        max_agents: int = 10,
+        max_agents: int = 0,
         require_complete_history: bool = False,
         grid_power: float = 1.0,
     ):

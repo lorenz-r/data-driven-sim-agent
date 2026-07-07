@@ -2,7 +2,7 @@ from hydra import initialize_config_dir, compose
 from omegaconf import OmegaConf
 from trainers.base_trainer import BaseTrainer
 from packages.kigras_ha.train import run_training
-from packages.kigras.scripts.preprocess_kinematics import process, split_filename
+from packages.kigras_ha.scripts.preprocess_kinematics import process, split_filename
 from pathlib import Path
 
 
@@ -26,12 +26,18 @@ class Kigras_HA_Trainer(BaseTrainer):
         with initialize_config_dir(config_dir=config_dir, version_base=None):
             cfg = compose(config_name="config", overrides=overrides)
 
-        # The split filename encodes the action-bin warp (grid_power), so the
-        # dataloader paths and the "already preprocessed?" check must be built
-        # after composing the config — that is when grid_power is known.
+        # The split filename encodes the full action grid (bin count + warp), so
+        # the dataloader paths and the "already preprocessed?" check must be built
+        # after composing the config — that is when they are known. Keying on
+        # num_bins prevents silently reusing a cache from a different bin count.
         grid_power = cfg.model.kinematics.get("grid_power", 1.0)
-        train_name = split_filename("train", size=download_size, grid_power=grid_power)
-        val_name = split_filename("val", size=download_size, grid_power=grid_power)
+        num_bins = cfg.model.kinematics.get("num_accel_bins", None)
+        train_name = split_filename(
+            "train", size=download_size, grid_power=grid_power, num_bins=num_bins
+        )
+        val_name = split_filename(
+            "val", size=download_size, grid_power=grid_power, num_bins=num_bins
+        )
 
         OmegaConf.set_struct(cfg, False)
         cfg.training.dataloader.train_path = (
@@ -48,7 +54,12 @@ class Kigras_HA_Trainer(BaseTrainer):
         outputs_exist = all(
             (
                 Path(proc_cfg.output[split])
-                / split_filename(split, size=download_size, grid_power=grid_power)
+                / split_filename(
+                    split,
+                    size=download_size,
+                    grid_power=grid_power,
+                    num_bins=num_bins,
+                )
             ).exists()
             for split in proc_cfg.output
         )
