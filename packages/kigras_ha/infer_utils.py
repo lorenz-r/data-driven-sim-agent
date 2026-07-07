@@ -668,7 +668,9 @@ def run_inference_pipeline(
         if format_npz:
             agent_type_ids = _to_numpy(data["agents"]["agent_type_ids"])
             # SMART evaluate_rollout_npz.py schema (pred_traj/pred_head/... etc.).
-            prediction_data = build_smart_eval_arrays(
+            # Widened to Any: below we add heterogeneous scalar/string metadata
+            # (scenario_id, focal_track_id, best_sample, ...) alongside the arrays.
+            prediction_data: dict[str, Any] = build_smart_eval_arrays(
                 rollout_output["pred_states"], gt_future, agent_type_ids
             )
             prediction_data.update(
