@@ -294,7 +294,6 @@ def _download_dev_split(
     etag, content_length = _head(url)
 
     print(f"  ETag={etag}  total size={content_length / 1e9:.1f} GB")
-
     print(
         f"Streaming {split_name} TAR members until {n_scenarios} complete scenarios are found ..."
     )
