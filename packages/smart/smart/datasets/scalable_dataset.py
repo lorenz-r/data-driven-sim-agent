@@ -1,6 +1,6 @@
 import os
 import pickle
-from pathlib import Path#-#
+from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union
 from torch_geometric.data import Dataset
 from smart.utils.log import Logging
@@ -16,26 +16,26 @@ from smart.utils.token_paths import (
 
 
 def distance(point1, point2):
-    return np.sqrt((point2[0] - point1[0]) ** 2 + (point2[1] - point1[1]) ** 2)#-#
+    return np.sqrt((point2[0] - point1[0]) ** 2 + (point2[1] - point1[1]) ** 2)
 
 
 class MultiDataset(Dataset):
-    def __init__(#-#
-        self,#-#
-        root: str,#-#
-        split: str,#-#
-        raw_dir: Optional[List[str]] = None,#-#
-        processed_dir: Optional[List[str]] = None,#-#
-        transform: Optional[Callable] = None,#-#
-        dim: int = 3,#-#
-        num_historical_steps: int = 50,#-#
-        num_future_steps: int = 60,#-#
-        predict_unseen_agents: bool = False,#-#
-        vector_repr: bool = True,#-#
-        cluster: bool = False,#-#
-        processor=None,#-#
-        use_intention=False,#-#
-        token_size=512,#-#
+    def __init__(
+        self,
+        root: str,
+        split: str,
+        raw_dir: Optional[List[str]] = None,
+        processed_dir: Optional[List[str]] = None,
+        transform: Optional[Callable] = None,
+        dim: int = 3,
+        num_historical_steps: int = 50,
+        num_future_steps: int = 60,
+        predict_unseen_agents: bool = False,
+        vector_repr: bool = True,
+        cluster: bool = False,
+        processor=None,
+        use_intention=False,
+        token_size=512,
         agent_token_path=None,
         map_token_path=None,
         build_agent_tokens_if_missing=False,
@@ -43,32 +43,32 @@ class MultiDataset(Dataset):
         agent_token_build_seed=42,
         agent_token_build_kdisks_max_attempts=1_000_000,
         token_processor_backend: str = "rust",
-    ) -> None:#-#
-        self.logger = Logging().log(level="DEBUG")#-#
+    ) -> None:
+        self.logger = Logging().log(level="DEBUG")
         self.root = root
         self.well_done = [0]
-        if split not in ("train", "val", "test"):#-#
-            raise ValueError(f"{split} is not a valid split")#-#
+        if split not in ("train", "val", "test"):
+            raise ValueError(f"{split} is not a valid split")
         self.split = split
-        self.training = split == "train"#-#
+        self.training = split == "train"
         self.logger.debug("Starting loading dataset")
         self._raw_file_names = []
         self._raw_paths = []
         self._raw_file_dataset = []
         if raw_dir is not None:
-            # Accept a single str/Path as well as a list.#-#
-            if isinstance(raw_dir, (str, Path)):#-#
-                raw_dir = [raw_dir]#-#
+            # Accept a single str/Path as well as a list.
+            if isinstance(raw_dir, (str, Path)):
+                raw_dir = [raw_dir]
             self._raw_dir = raw_dir
-            for raw_path in self._raw_dir:#-#
-                p = Path(raw_path).expanduser().resolve()#-#
+            for raw_path in self._raw_dir:
+                p = Path(raw_path).expanduser().resolve()
                 file_list = sorted(f for f in os.listdir(p) if f.endswith(".pkl"))
                 self._raw_file_names.extend(file_list)
-                self._raw_paths.extend([str(p / f) for f in file_list])#-#
-                self._raw_file_dataset.extend(["waymo"] * len(file_list))#-#
+                self._raw_paths.extend([str(p / f) for f in file_list])
+                self._raw_file_dataset.extend(["waymo"] * len(file_list))
         if self.root is not None:
             split_datainfo = os.path.join(root, "split_datainfo.pkl")
-            with open(split_datainfo, "rb+") as f:#-#
+            with open(split_datainfo, "rb+") as f:
                 split_datainfo = pickle.load(f)
             if split == "test":
                 split = "val"
@@ -104,14 +104,14 @@ class MultiDataset(Dataset):
         if not self.map_token_path.exists():
             raise missing_token_error(self.map_token_path, "Map")
 
-        self._num_samples = (#-#
-            len(self._processed_file_names) - 1#-#
-            if processed_dir is not None#-#
-            else len(self._raw_file_names)#-#
-        )#-#
-        self.logger.debug(#-#
-            "The number of {} dataset is ".format(split) + str(self._num_samples)#-#
-        )#-#
+        self._num_samples = (
+            len(self._processed_file_names) - 1
+            if processed_dir is not None
+            else len(self._raw_file_names)
+        )
+        self.logger.debug(
+            "The number of {} dataset is ".format(split) + str(self._num_samples)
+        )
         self.token_processor = build_token_processor(
             token_size,
             backend=token_processor_backend,
@@ -120,12 +120,12 @@ class MultiDataset(Dataset):
             agent_token_path=str(self.agent_token_path),
             map_token_path=str(self.map_token_path),
         )
-        super(MultiDataset, self).__init__(#-#
-            root=root, transform=transform, pre_transform=None, pre_filter=None#-#
-        )#-#
+        super(MultiDataset, self).__init__(
+            root=root, transform=transform, pre_transform=None, pre_filter=None
+        )
 
     @property
-    def raw_dir(self) -> List[str]:#-#
+    def raw_dir(self) -> List[str]:
         return self._raw_dir
 
     @property
@@ -147,7 +147,7 @@ class MultiDataset(Dataset):
         pass
 
     def get(self, idx: int):
-        with open(self.raw_paths[idx], "rb") as handle:#-#
+        with open(self.raw_paths[idx], "rb") as handle:
             data = pickle.load(handle)
 
         data = self.token_processor.preprocess(data)

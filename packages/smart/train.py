@@ -1,13 +1,13 @@
 from argparse import ArgumentParser
-from pathlib import Path#-#
+from pathlib import Path
 from typing import Optional
 import json
-import os#-#
+import os
 import pytorch_lightning as pl
-from dotenv import load_dotenv#-#
+from dotenv import load_dotenv
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger#-#
+from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.strategies import DDPStrategy
 from smart.utils.config import load_config_act
 from smart.datamodules import MultiDataModule
@@ -34,17 +34,17 @@ class EpochLossTracker(pl.Callback):
     and total decrease without any additional bookkeeping.
     """
 
-    def __init__(self, loss_key: str = "train_loss"):#-#
+    def __init__(self, loss_key: str = "train_loss"):
         self.loss_key = loss_key
         self.epoch_losses: list = []
 
-    def on_train_epoch_end(#-#
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule#-#
-    ) -> None:#-#
+    def on_train_epoch_end(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ) -> None:
         val = trainer.callback_metrics.get(self.loss_key)
         if val is not None:
             try:
-                loss = float(val.item()) if hasattr(val, "item") else float(val)#-#
+                loss = float(val.item()) if hasattr(val, "item") else float(val)
                 self.epoch_losses.append(loss)
             except Exception:
                 pass
@@ -120,7 +120,7 @@ def validate_dataset(datamodule, remove_bad_files=False):
             except Exception as e:
                 logger.error(f"[INVALID] split={split_name} idx={idx} path={path}")
                 logger.exception(e)
-#-#
+
                 bad_files.append(path)
 
                 if remove_bad_files:
@@ -565,55 +565,55 @@ def run_training(
     return metrics
 
 
-if __name__ == "__main__":#-#
+if __name__ == "__main__":
     parser = ArgumentParser()
     Predictor_hash = {"smart": SMART}
-    parser.add_argument(#-#
-        "--config",#-#
-        type=str,#-#
-        default=str(_SCRIPT_DIR / "configs/train/train_overfitting.yaml"),#-#
-    )#-#
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=str(_SCRIPT_DIR / "configs/train/train_overfitting.yaml"),
+    )
 
     # Add arguments to override config values from the command line. This is helpful for top-level hyperparameter search scripts that want to sweep over a few parameters without needing to create a separate config file for each run.
-    parser.add_argument("--lr", type=float, default=None)#-#
-    parser.add_argument("--dropout", type=float, default=None)#-#
-    parser.add_argument("--hidden_dim", type=int, default=None)#-#
-#-#
-    parser.add_argument("--pretrain_ckpt", type=str, default="")#-#
-    parser.add_argument("--ckpt_path", type=str, default="")#-#
-    parser.add_argument("--save_ckpt_path", type=str, default="")#-#
-    parser.add_argument("--cpu", action="store_true", help="Force training on CPU")#-#
-    parser.add_argument(#-#
-        "--return_metrics",#-#
-        type=str,#-#
-        default="",#-#
-        help="Path to write JSON with best-model accuracy and loss metrics",#-#
-    )#-#
-    parser.add_argument(#-#
-        "--loss_key",#-#
-        type=str,#-#
-        default="train_loss",#-#
-        help="Name of the loss metric logged by the model (default: train_loss)",#-#
-    )#-#
-#-#
+    parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--dropout", type=float, default=None)
+    parser.add_argument("--hidden_dim", type=int, default=None)
+
+    parser.add_argument("--pretrain_ckpt", type=str, default="")
+    parser.add_argument("--ckpt_path", type=str, default="")
+    parser.add_argument("--save_ckpt_path", type=str, default="")
+    parser.add_argument("--cpu", action="store_true", help="Force training on CPU")
+    parser.add_argument(
+        "--return_metrics",
+        type=str,
+        default="",
+        help="Path to write JSON with best-model accuracy and loss metrics",
+    )
+    parser.add_argument(
+        "--loss_key",
+        type=str,
+        default="train_loss",
+        help="Name of the loss metric logged by the model (default: train_loss)",
+    )
+
     # Also allow for epochs, batch size, and other trainer parameters to be overridden from the command line if needed
-    parser.add_argument("--max_epochs", type=int, default=None)#-#
-    parser.add_argument("--train_batch_size", type=int, default=None)#-#
-    parser.add_argument("--val_batch_size", type=int, default=None)#-#
+    parser.add_argument("--max_epochs", type=int, default=None)
+    parser.add_argument("--train_batch_size", type=int, default=None)
+    parser.add_argument("--val_batch_size", type=int, default=None)
 
     parser.add_argument(
         "--train_path",
         type=str,
-        nargs="+",#-#
+        nargs="+",
         default=None,
-        help="One or more training data directories; overrides config if provided.",#-#
+        help="One or more training data directories; overrides config if provided.",
     )
     parser.add_argument(
         "--val_path",
         type=str,
-        nargs="+",#-#
+        nargs="+",
         default=None,
-        help="One or more validation data directories; overrides config if provided.",#-#
+        help="One or more validation data directories; overrides config if provided.",
     )
     parser.add_argument("--agent_token_path", type=str, default=None)
     parser.add_argument("--map_token_path", type=str, default=None)
@@ -624,12 +624,12 @@ if __name__ == "__main__":#-#
     )
 
     # Optuna passes a trial number to the training script for each run, which can be used for logging and tracking purposes. We'll include it as an optional argument in case it's needed, but it won't affect the training logic directly.
-    parser.add_argument(#-#
-        "--trial_number",#-#
-        type=int,#-#
-        default=0,#-#
-        help="Optional trial number for hyperparameter search runs; used for logging purposes",#-#
-    )#-#
+    parser.add_argument(
+        "--trial_number",
+        type=int,
+        default=0,
+        help="Optional trial number for hyperparameter search runs; used for logging purposes",
+    )
 
     parser.add_argument(
         "--validate_dataset",
@@ -687,7 +687,7 @@ if __name__ == "__main__":#-#
 
     if args.max_epochs is not None:
         config.Trainer.max_epochs = args.max_epochs
-#-#
+
     if args.train_batch_size is not None:
         config.Dataset.train_batch_size = args.train_batch_size
 
@@ -749,7 +749,7 @@ if __name__ == "__main__":#-#
     if args.pretrain_ckpt == "":
         model = Predictor(config.Model)
     else:
-        logger = Logging().log(level="DEBUG")#-#
+        logger = Logging().log(level="DEBUG")
         model = Predictor(config.Model)
         model.load_params_from_file(filename=args.pretrain_ckpt, logger=logger)
     trainer_config = config.Trainer
@@ -757,7 +757,7 @@ if __name__ == "__main__":#-#
     # Dynamically adjust strategy based on number of devices requested, since DDP doesn't work with a single device
     if trainer_config.devices > 1:
         strategy = DDPStrategy(
-            find_unused_parameters=True, gradient_as_bucket_view=True#-#
+            find_unused_parameters=True, gradient_as_bucket_view=True
         )
     else:
         strategy = "auto"
@@ -811,31 +811,31 @@ if __name__ == "__main__":#-#
         # )
     else:
         wandb_logger = None
-#-#
-    model_checkpoint = ModelCheckpoint(#-#
-        dirpath=args.save_ckpt_path,#-#
-        filename="{epoch:02d}",#-#
+
+    model_checkpoint = ModelCheckpoint(
+        dirpath=args.save_ckpt_path,
+        filename="{epoch:02d}",
         monitor="train_loss_epoch",
-        every_n_epochs=1,#-#
-        save_top_k=5,#-#
+        every_n_epochs=1,
+        save_top_k=5,
         mode="min",
         save_last=True,
-    )#-#
-    lr_monitor = LearningRateMonitor(logging_interval="epoch")#-#
+    )
+    lr_monitor = LearningRateMonitor(logging_interval="epoch")
     loss_tracker = EpochLossTracker(loss_key=args.loss_key)
-    trainer = pl.Trainer(#-#
-        accelerator=trainer_config.accelerator,#-#
-        devices=trainer_config.devices,#-#
-        strategy=strategy,#-#
-        accumulate_grad_batches=trainer_config.accumulate_grad_batches,#-#
-        num_nodes=trainer_config.num_nodes,#-#
-        callbacks=[model_checkpoint, lr_monitor, loss_tracker],#-#
-        max_epochs=trainer_config.max_epochs,#-#
-        num_sanity_val_steps=0,#-#
-        gradient_clip_val=0.5,#-#
-        logger=wandb_logger,#-#
+    trainer = pl.Trainer(
+        accelerator=trainer_config.accelerator,
+        devices=trainer_config.devices,
+        strategy=strategy,
+        accumulate_grad_batches=trainer_config.accumulate_grad_batches,
+        num_nodes=trainer_config.num_nodes,
+        callbacks=[model_checkpoint, lr_monitor, loss_tracker],
+        max_epochs=trainer_config.max_epochs,
+        num_sanity_val_steps=0,
+        gradient_clip_val=0.5,
+        logger=wandb_logger,
         profiler=profiler,
-    )#-#
+    )
 
     if args.ckpt_path == "":
         trainer.fit(model, datamodule)
@@ -852,30 +852,30 @@ if __name__ == "__main__":#-#
             model_checkpoint=model_checkpoint,
             trainer=trainer,
             loss_tracker=loss_tracker,
-            metric_name="val_cls_acc",#-#
+            metric_name="val_cls_acc",
         )
 
-        accuracy = metrics.get("accuracy")#-#
-        start_loss = metrics.get("start_loss")#-#
-        end_loss = metrics.get("end_loss")#-#
-        loss_decrease = metrics.get("loss_decrease")#-#
+        accuracy = metrics.get("accuracy")
+        start_loss = metrics.get("start_loss")
+        end_loss = metrics.get("end_loss")
+        loss_decrease = metrics.get("loss_decrease")
 
         print("\n── Training summary ──────────────────────")
-        print(#-#
-            f"  Best val accuracy : {accuracy:.4f}"#-#
-            if accuracy is not None#-#
-            else "  Best val accuracy : n/a"#-#
-        )#-#
-        print(#-#
-            f"  Start loss        : {start_loss:.4f}"#-#
-            if start_loss is not None#-#
-            else "  Start loss        : n/a"#-#
-        )#-#
-        print(#-#
-            f"  End loss          : {end_loss:.4f}"#-#
-            if end_loss is not None#-#
-            else "  End loss          : n/a"#-#
-        )#-#
+        print(
+            f"  Best val accuracy : {accuracy:.4f}"
+            if accuracy is not None
+            else "  Best val accuracy : n/a"
+        )
+        print(
+            f"  Start loss        : {start_loss:.4f}"
+            if start_loss is not None
+            else "  Start loss        : n/a"
+        )
+        print(
+            f"  End loss          : {end_loss:.4f}"
+            if end_loss is not None
+            else "  End loss          : n/a"
+        )
         if loss_decrease is not None:
             direction = "↓" if loss_decrease > 0 else "↑ (increased!)"
             print(f"  Loss change       : {abs(loss_decrease):.4f} {direction}")
@@ -884,8 +884,8 @@ if __name__ == "__main__":#-#
         print("──────────────────────────────────────────\n")
 
         try:
-            Path(args.return_metrics).parent.mkdir(parents=True, exist_ok=True)#-#
-            with open(args.return_metrics, "w") as fh:#-#
+            Path(args.return_metrics).parent.mkdir(parents=True, exist_ok=True)
+            with open(args.return_metrics, "w") as fh:
                 json.dump(metrics, fh, indent=2)
             print(f"Wrote metrics to {args.return_metrics}")
         except Exception as e:

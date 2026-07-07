@@ -1,34 +1,34 @@
-# Python#-#
-__pycache__/#-#
-*.py[cod]#-#
-*.egg-info/#-#
-dist/#-#
-build/#-#
-.venv/#-#
-#-#
-# UV#-#
-.uv-cache/#-#
-#-#
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+
+# UV
+.uv-cache/
+
 # Local environment files
 .env
 .env.*
 !.env.example
 
-# IDE#-#
-.idea/#-#
-.vscode/#-#
-*.swp#-#
-*.swo#-#
-*~#-#
-#-#
-# OS#-#
-.DS_Store#-#
-Thumbs.db#-#
-#-#
-# Test / coverage#-#
-.coverage#-#
-htmlcov/#-#
-.pytest_cache/#-#
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/
 
 # Training / experiment outputs
 /checkpoints/
@@ -39,12 +39,12 @@ htmlcov/#-#
 *.ckpt
 
 # Additional files
-/packages/smart/data#-#
-/packages/smart/wandb#-#
-/packages/smart/Miniconda3-latest-Linux-x86_64.sh#-#
-/packages/smart/lightning_logs#-#
-/packages/smart-preprocess/target/#-#
-/.sim_integration_out/#-#
+/packages/smart/data
+/packages/smart/wandb
+/packages/smart/Miniconda3-latest-Linux-x86_64.sh
+/packages/smart/lightning_logs
+/packages/smart-preprocess/target/
+/.sim_integration_out/
 wandb
 data
 wandb/

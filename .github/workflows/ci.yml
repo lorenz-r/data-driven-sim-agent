@@ -1,22 +1,22 @@
-name: CI#-#
-#-#
-on:#-#
-  push:#-#
-    branches: [main]#-#
+name: CI
+
+on:
+  push:
+    branches: [main]
 
   workflow_dispatch:
     
-  pull_request:#-#
-#-#
-concurrency:#-#
-  group: ${{ github.workflow }}-${{ github.ref }}#-#
-  cancel-in-progress: true#-#
-#-#
-env:#-#
-  UV_FROZEN: "1"#-#
-  UV_CACHE_DIR: /tmp/.uv-cache#-#
-#-#
-jobs:#-#
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
 
   lint:
     runs-on: ubuntu-latest
@@ -39,7 +39,7 @@ jobs:#-#
             **/*.py
 
       - name: Install Dependencies
-        run: uv sync --package data-driven-sim-agent --package argoverse-forecasting --package sim-integration --package smart --package integration-tests#-#
+        run: uv sync --package data-driven-sim-agent --package argoverse-forecasting --package sim-integration --package smart --package integration-tests
       
 
       - name: Run Ruff (Linting & Formatting)
@@ -61,66 +61,66 @@ jobs:#-#
               echo "Only excluded files were changed. Skipping Mypy."
             fi
 
-  rust-fmt:#-#
-    runs-on: ubuntu-latest#-#
-    timeout-minutes: 5#-#
-    steps:#-#
-      - uses: actions/checkout@v4#-#
-#-#
-      - name: Read Rust toolchain version#-#
-        id: rust#-#
-        run: echo "toolchain=$(grep -m1 '^channel' rust-toolchain.toml | tr -d ' "' | cut -d= -f2)" >> $GITHUB_OUTPUT#-#
-#-#
-      - uses: dtolnay/rust-toolchain@master#-#
-        with:#-#
-          toolchain: ${{ steps.rust.outputs.toolchain }}#-#
-#-#
-      - uses: Swatinem/rust-cache@v2#-#
-        with:#-#
-          workspaces: packages/smart-preprocess#-#
-#-#
-      - name: cargo fmt --check (smart-preprocess)#-#
-        run: cargo fmt --manifest-path packages/smart-preprocess/Cargo.toml -- --check#-#
-#-#
-  test:#-#
-    runs-on: ubuntu-latest#-#
-    timeout-minutes: 15#-#
-    steps:#-#
-      - uses: actions/checkout@v4#-#
-#-#
-      - uses: astral-sh/setup-uv@v5#-#
-        with:#-#
-          enable-cache: true#-#
-          cache-suffix: "py3.11"#-#
-#-#
-      - name: Read Rust toolchain version#-#
-        id: rust#-#
-        run: echo "toolchain=$(grep -m1 '^channel' rust-toolchain.toml | tr -d ' "' | cut -d= -f2)" >> $GITHUB_OUTPUT#-#
-#-#
-      - uses: dtolnay/rust-toolchain@master#-#
-        with:#-#
-          toolchain: ${{ steps.rust.outputs.toolchain }}#-#
-#-#
-      - uses: Swatinem/rust-cache@v2#-#
-        with:#-#
-          workspaces: packages/smart-preprocess#-#
-#-#
-      - name: Test (CPU-only, skip GPU markers)#-#
-        run: bash ./test.sh#-#
-#-#
-  test-gpu:#-#
-    runs-on: ubuntu-latest  # swap to self-hosted GPU runner when available#-#
-    if: false               # disabled until GPU runner exists#-#
-    timeout-minutes: 30#-#
-    steps:#-#
-      - uses: actions/checkout@v4#-#
-#-#
-      - uses: astral-sh/setup-uv@v5#-#
-        with:#-#
-          enable-cache: true#-#
-#-#
-      - name: Install#-#
-        run: uv sync --package data-driven-sim-agent --package argoverse-forecasting --package sim-integration --package smart-preprocess --package integration-tests#-#
-#-#
-      - name: Test (all)#-#
-        run: uv run pytest --tb=short -q#-#
+  rust-fmt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read Rust toolchain version
+        id: rust
+        run: echo "toolchain=$(grep -m1 '^channel' rust-toolchain.toml | tr -d ' "' | cut -d= -f2)" >> $GITHUB_OUTPUT
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.toolchain }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/smart-preprocess
+
+      - name: cargo fmt --check (smart-preprocess)
+        run: cargo fmt --manifest-path packages/smart-preprocess/Cargo.toml -- --check
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-suffix: "py3.11"
+
+      - name: Read Rust toolchain version
+        id: rust
+        run: echo "toolchain=$(grep -m1 '^channel' rust-toolchain.toml | tr -d ' "' | cut -d= -f2)" >> $GITHUB_OUTPUT
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.toolchain }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/smart-preprocess
+
+      - name: Test (CPU-only, skip GPU markers)
+        run: bash ./test.sh
+
+  test-gpu:
+    runs-on: ubuntu-latest  # swap to self-hosted GPU runner when available
+    if: false               # disabled until GPU runner exists
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --package data-driven-sim-agent --package argoverse-forecasting --package sim-integration --package smart-preprocess --package integration-tests
+
+      - name: Test (all)
+        run: uv run pytest --tb=short -q

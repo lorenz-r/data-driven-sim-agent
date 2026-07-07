@@ -8,9 +8,9 @@ import urllib.request
 import shutil
 from pathlib import Path
 
-DEFAULT_URL = (#-#
-    "https://s3.amazonaws.com/argoverse/datasets/av2/tars/motion-forecasting/train.tar"#-#
-)#-#
+DEFAULT_URL = (
+    "https://s3.amazonaws.com/argoverse/datasets/av2/tars/motion-forecasting/train.tar"
+)
 DEFAULT_BYTES = 10 * 1024 * 1024  # 10 MiB
 CHUNK_SIZE = 1024 * 1024
 PER_SCENARIO_BYTES = 500 * 1024  # 500 KiB per scenario
@@ -154,7 +154,7 @@ def main() -> None:
 
             # Keep the first N scenarios, remove the rest
             if len(scenarios) > args.max_scenarios:
-                to_remove = scenarios[args.max_scenarios :]#-#
+                to_remove = scenarios[args.max_scenarios :]
                 for d in to_remove:
                     try:
                         shutil.rmtree(d)

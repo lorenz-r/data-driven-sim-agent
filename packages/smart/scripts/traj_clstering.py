@@ -3,9 +3,9 @@ import numpy as np
 
 
 def average_distance_vectorized(point_set1, centroids):
-    dists = np.sqrt(#-#
-        np.sum((point_set1[:, None, :, :] - centroids[None, :, :, :]) ** 2, axis=-1)#-#
-    )#-#
+    dists = np.sqrt(
+        np.sum((point_set1[:, None, :, :] - centroids[None, :, :, :]) ** 2, axis=-1)
+    )
     return np.mean(dists, axis=2)
 
 
@@ -27,7 +27,7 @@ def Kdisk_cluster(
     max_attempts=None,
     cal_mean_heading_flag=True,
 ):
-    S: list[np.ndarray] = []#-#
+    S: list[np.ndarray] = []
     ret_traj_list = []
     attempts = 0
     while len(S) < N:
@@ -46,20 +46,20 @@ def Kdisk_cluster(
         x0 = X[choice_index]
         if x0[0, 0] < -10 or x0[0, 0] > 50 or x0[0, 1] > 10 or x0[0, 1] < -10:
             continue
-        res_mask = np.sum((X - x0) ** 2, axis=(1, 2)) / 4 > (tol**2)#-#
-        del_mask = np.sum((X - x0) ** 2, axis=(1, 2)) / 4 <= (tol**2)#-#
+        res_mask = np.sum((X - x0) ** 2, axis=(1, 2)) / 4 > (tol**2)
+        del_mask = np.sum((X - x0) ** 2, axis=(1, 2)) / 4 <= (tol**2)
         if cal_mean_heading_flag:
             del_contour = X[del_mask]
             diff_xy = del_contour[:, 0, :] - del_contour[:, 3, :]
             del_heading = np.arctan2(diff_xy[:, 1], diff_xy[:, 0]).mean()
-            x0 = cal_polygon_contour(#-#
-                x0.mean(0)[0], x0.mean(0)[1], del_heading, width, length#-#
-            )#-#
+            x0 = cal_polygon_contour(
+                x0.mean(0)[0], x0.mean(0)[1], del_heading, width, length
+            )
             del_traj = a_pos[del_mask]
             ret_traj = del_traj.mean(0)[None, ...]
             if abs(ret_traj[0, 1, 0] - ret_traj[0, 0, 0]) > 1 and ret_traj[0, 1, 0] < 0:
                 print(ret_traj)
-                print("1")#-#
+                print("1")
         else:
             x0 = x0[None, ...]
             ret_traj = a_pos[choice_index][None, ...]
@@ -99,15 +99,15 @@ def cal_polygon_contour(x, y, theta, width, length):
     left_back_y = y - 0.5 * length * np.sin(theta) + 0.5 * width * np.cos(theta)
     left_back = np.column_stack((left_back_x, left_back_y))
 
-    polygon_contour = np.concatenate(#-#
-        (#-#
-            left_front[:, None, :],#-#
-            right_front[:, None, :],#-#
-            right_back[:, None, :],#-#
-            left_back[:, None, :],#-#
-        ),#-#
-        axis=1,#-#
-    )#-#
+    polygon_contour = np.concatenate(
+        (
+            left_front[:, None, :],
+            right_front[:, None, :],
+            right_back[:, None, :],
+            left_back[:, None, :],
+        ),
+        axis=1,
+    )
 
     return polygon_contour
 
@@ -170,18 +170,18 @@ def build_tokens_from_trajectories(
     return res
 
 
-if __name__ == "__main__":#-#
-    shift = 5  # motion token time dimension#-#
-    num_cluster = 6  # vocabulary size#-#
+if __name__ == "__main__":
+    shift = 5  # motion token time dimension
+    num_cluster = 6  # vocabulary size
     cal_mean_heading = True
     data = {
         "veh": np.random.rand(1000, 6, 3),
         "cyc": np.random.rand(1000, 6, 3),
-        "ped": np.random.rand(1000, 6, 3),#-#
+        "ped": np.random.rand(1000, 6, 3),
     }
     # Collect the trajectories of all traffic participants from the raw data [NumAgent, shift+1, [relative_x, relative_y, relative_theta]]
-    nms_res: dict[str, np.ndarray] = {}#-#
-    res: dict[str, dict[str, np.ndarray]] = {"token": {}, "traj": {}, "token_all": {}}#-#
+    nms_res: dict[str, np.ndarray] = {}
+    res: dict[str, dict[str, np.ndarray]] = {"token": {}, "traj": {}, "token_all": {}}
     for k, v in data.items():
         # if k != 'veh':
         #     continue
@@ -193,28 +193,28 @@ if __name__ == "__main__":#-#
         a_pos[:, :, -1] = wrap_angle(a_pos[:, :, -1])
         print(a_pos.shape)
         if shift <= 2:
-            if k == "veh":#-#
+            if k == "veh":
                 width = 1.0
                 length = 2.4
-            elif k == "cyc":#-#
+            elif k == "cyc":
                 width = 0.5
                 length = 1.5
             else:
                 width = 0.5
                 length = 0.5
         else:
-            if k == "veh":#-#
+            if k == "veh":
                 width = 2.0
                 length = 4.8
-            elif k == "cyc":#-#
+            elif k == "cyc":
                 width = 1.0
                 length = 2.0
             else:
                 width = 1.0
                 length = 1.0
-        contour = cal_polygon_contour(#-#
-            a_pos[:, shift, 0], a_pos[:, shift, 1], a_pos[:, shift, 2], width, length#-#
-        )#-#
+        contour = cal_polygon_contour(
+            a_pos[:, shift, 0], a_pos[:, shift, 1], a_pos[:, shift, 2], width, length
+        )
 
         # plt.figure(figsize=(10, 10))
         # for rect in contour:
@@ -227,24 +227,24 @@ if __name__ == "__main__":#-#
         # plt.axis('equal')
         # plt.savefig(f'src_{k}_new.jpg', dpi=300)
 
-        if k == "veh":#-#
+        if k == "veh":
             tol = 0.05
-        elif k == "cyc":#-#
+        elif k == "cyc":
             tol = 0.004
         else:
             tol = 0.004
-        centroids, ret_traj = Kdisk_cluster(#-#
-            contour, num_cluster, tol, width, length, a_pos[:, : shift + 1]#-#
-        )#-#
+        centroids, ret_traj = Kdisk_cluster(
+            contour, num_cluster, tol, width, length, a_pos[:, : shift + 1]
+        )
         # plt.figure(figsize=(10, 10))
-        contour = cal_polygon_contour(#-#
-            ret_traj[:, :, 0].reshape(num_cluster * (shift + 1)),#-#
-            ret_traj[:, :, 1].reshape(num_cluster * (shift + 1)),#-#
-            ret_traj[:, :, 2].reshape(num_cluster * (shift + 1)),#-#
-            width,#-#
-            length,#-#
-        )#-#
-#-#
-        res["token_all"][k] = contour.reshape(num_cluster, (shift + 1), 4, 2)#-#
-        res["token"][k] = centroids#-#
-        res["traj"][k] = ret_traj#-#
+        contour = cal_polygon_contour(
+            ret_traj[:, :, 0].reshape(num_cluster * (shift + 1)),
+            ret_traj[:, :, 1].reshape(num_cluster * (shift + 1)),
+            ret_traj[:, :, 2].reshape(num_cluster * (shift + 1)),
+            width,
+            length,
+        )
+
+        res["token_all"][k] = contour.reshape(num_cluster, (shift + 1), 4, 2)
+        res["token"][k] = centroids
+        res["traj"][k] = ret_traj
