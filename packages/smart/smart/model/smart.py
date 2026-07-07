@@ -1,5 +1,5 @@
 import contextlib
-from typing import Dict
+from typing import Dict#-#
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -92,7 +92,7 @@ class SMART(pl.LightningModule):
                 getattr(model_config, "map_token_path", None),
                 default_map_token_path(),
             )
-        )
+        )#-#
         self.init_map_token()
         self.token_path = str(
             resolve_token_path(
@@ -116,7 +116,7 @@ class SMART(pl.LightningModule):
             pl2a_radius=model_config.decoder.pl2a_radius,
             a2a_radius=model_config.decoder.a2a_radius,
             time_span=model_config.decoder.time_span,
-            map_token={"traj_src": self.map_token["traj_src"]},
+            map_token={"traj_src": self.map_token["traj_src"]},#-#
             token_data=token_data,
             token_size=token_size,
         )
@@ -124,7 +124,7 @@ class SMART(pl.LightningModule):
         self.minFDE = minFDE(max_guesses=1)
         self.TokenCls = TokenCls(max_guesses=1)
 
-        self.test_predictions: Dict[str, object] = dict()
+        self.test_predictions: Dict[str, object] = dict()#-#
         self.cls_loss = self.build_cls_loss(token_data)
         loss_config = _config_get(self.model_config, "loss", None)
         label_smoothing = float(_config_get(loss_config, "label_smoothing", 0.1))
@@ -147,10 +147,10 @@ class SMART(pl.LightningModule):
     def get_trajectory_token(self):
         if not os.path.exists(self.token_path):
             raise missing_token_error(Path(self.token_path), "Agent")
-        token_data = pickle.load(open(self.token_path, "rb"))
-        self.trajectory_token = token_data["token"]
-        self.trajectory_token_traj = token_data["traj"]
-        self.trajectory_token_all = token_data["token_all"]
+        token_data = pickle.load(open(self.token_path, "rb"))#-#
+        self.trajectory_token = token_data["token"]#-#
+        self.trajectory_token_traj = token_data["traj"]#-#
+        self.trajectory_token_all = token_data["token_all"]#-#
         expected_token_size = self.model_config.decoder.token_size
         for category, token in self.trajectory_token.items():
             if token.shape[0] != expected_token_size:
@@ -165,26 +165,26 @@ class SMART(pl.LightningModule):
         if not os.path.exists(self.map_token_traj_path):
             raise missing_token_error(Path(self.map_token_traj_path), "Map")
         self.argmin_sample_len = 3
-        map_token_traj = pickle.load(open(self.map_token_traj_path, "rb"))
-        self.map_token = {
-            "traj_src": map_token_traj["traj_src"],
-        }
-        traj_end_theta = np.arctan2(
-            self.map_token["traj_src"][:, -1, 1] - self.map_token["traj_src"][:, -2, 1],
-            self.map_token["traj_src"][:, -1, 0] - self.map_token["traj_src"][:, -2, 0],
-        )
-        indices = torch.linspace(
-            0, self.map_token["traj_src"].shape[1] - 1, steps=self.argmin_sample_len
-        ).long()
-        self.map_token["sample_pt"] = torch.from_numpy(
-            self.map_token["traj_src"][:, indices]
-        ).to(torch.float)
-        self.map_token["traj_end_theta"] = torch.from_numpy(traj_end_theta).to(
-            torch.float
-        )
-        self.map_token["traj_src"] = torch.from_numpy(self.map_token["traj_src"]).to(
-            torch.float
-        )
+        map_token_traj = pickle.load(open(self.map_token_traj_path, "rb"))#-#
+        self.map_token = {#-#
+            "traj_src": map_token_traj["traj_src"],#-#
+        }#-#
+        traj_end_theta = np.arctan2(#-#
+            self.map_token["traj_src"][:, -1, 1] - self.map_token["traj_src"][:, -2, 1],#-#
+            self.map_token["traj_src"][:, -1, 0] - self.map_token["traj_src"][:, -2, 0],#-#
+        )#-#
+        indices = torch.linspace(#-#
+            0, self.map_token["traj_src"].shape[1] - 1, steps=self.argmin_sample_len#-#
+        ).long()#-#
+        self.map_token["sample_pt"] = torch.from_numpy(#-#
+            self.map_token["traj_src"][:, indices]#-#
+        ).to(torch.float)#-#
+        self.map_token["traj_end_theta"] = torch.from_numpy(traj_end_theta).to(#-#
+            torch.float#-#
+        )#-#
+        self.map_token["traj_src"] = torch.from_numpy(self.map_token["traj_src"]).to(#-#
+            torch.float#-#
+        )#-#
 
     def forward(self, data: HeteroData):
         res = self.encoder(data)
@@ -225,88 +225,88 @@ class SMART(pl.LightningModule):
 
         return self.cls_loss(logits_for_loss, target_for_loss)
 
-    def training_step(self, data, batch_idx):
+    def training_step(self, data, batch_idx):#-#
         if data is None:
             return None
         data = self.match_token_map(data)
         data = self.sample_pt_pred(data)
         if isinstance(data, Batch):
-            data["agent"]["av_index"] += data["agent"]["ptr"][:-1]
+            data["agent"]["av_index"] += data["agent"]["ptr"][:-1]#-#
         pred = self(data)
-        next_token_prob = pred["next_token_prob"]
-        next_token_idx_gt = pred["next_token_idx_gt"]
-        next_token_eval_mask = pred["next_token_eval_mask"]
+        next_token_prob = pred["next_token_prob"]#-#
+        next_token_idx_gt = pred["next_token_idx_gt"]#-#
+        next_token_eval_mask = pred["next_token_eval_mask"]#-#
         cls_loss = self.token_classification_loss(
             next_token_prob,
             next_token_idx_gt,
             next_token_eval_mask,
             data["agent"]["type"],
-        )
+        )#-#
         loss = cls_loss
-        self.log(
-            "train_loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=1
-        )
-        self.log(
-            "cls_loss",
-            cls_loss,
-            prog_bar=True,
-            on_step=True,
-            on_epoch=True,
-            batch_size=1,
-        )
+        self.log(#-#
+            "train_loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=1#-#
+        )#-#
+        self.log(#-#
+            "cls_loss",#-#
+            cls_loss,#-#
+            prog_bar=True,#-#
+            on_step=True,#-#
+            on_epoch=True,#-#
+            batch_size=1,#-#
+        )#-#
         return loss
 
-    def validation_step(self, data, batch_idx):
+    def validation_step(self, data, batch_idx):#-#
         if data is None:
             return None
         data = self.match_token_map(data)
         data = self.sample_pt_pred(data)
         if isinstance(data, Batch):
-            data["agent"]["av_index"] += data["agent"]["ptr"][:-1]
+            data["agent"]["av_index"] += data["agent"]["ptr"][:-1]#-#
         pred = self(data)
-        next_token_idx = pred["next_token_idx"]
-        next_token_idx_gt = pred["next_token_idx_gt"]
-        next_token_eval_mask = pred["next_token_eval_mask"]
-        next_token_prob = pred["next_token_prob"]
+        next_token_idx = pred["next_token_idx"]#-#
+        next_token_idx_gt = pred["next_token_idx_gt"]#-#
+        next_token_eval_mask = pred["next_token_eval_mask"]#-#
+        next_token_prob = pred["next_token_prob"]#-#
         cls_loss = self.token_classification_loss(
             next_token_prob,
             next_token_idx_gt,
             next_token_eval_mask,
             data["agent"]["type"],
-        )
+        )#-#
         loss = cls_loss
-        self.TokenCls.update(
-            pred=next_token_idx[next_token_eval_mask],
-            target=next_token_idx_gt[next_token_eval_mask],
-            valid_mask=next_token_eval_mask[next_token_eval_mask],
-        )
-        self.log(
-            "val_cls_acc",
-            self.TokenCls,
-            prog_bar=True,
-            on_step=False,
-            on_epoch=True,
-            batch_size=1,
-            sync_dist=True,
-        )
-        self.log(
-            "val_loss",
-            loss,
-            prog_bar=True,
-            on_step=False,
-            on_epoch=True,
-            batch_size=1,
-            sync_dist=True,
-        )
+        self.TokenCls.update(#-#
+            pred=next_token_idx[next_token_eval_mask],#-#
+            target=next_token_idx_gt[next_token_eval_mask],#-#
+            valid_mask=next_token_eval_mask[next_token_eval_mask],#-#
+        )#-#
+        self.log(#-#
+            "val_cls_acc",#-#
+            self.TokenCls,#-#
+            prog_bar=True,#-#
+            on_step=False,#-#
+            on_epoch=True,#-#
+            batch_size=1,#-#
+            sync_dist=True,#-#
+        )#-#
+        self.log(#-#
+            "val_loss",#-#
+            loss,#-#
+            prog_bar=True,#-#
+            on_step=False,#-#
+            on_epoch=True,#-#
+            batch_size=1,#-#
+            sync_dist=True,#-#
+        )#-#
 
-        eval_mask = data["agent"]["valid_mask"][
-            :, self.num_historical_steps - 1
-        ]  # * (data['agent']['category'] == 3)
+        eval_mask = data["agent"]["valid_mask"][#-#
+            :, self.num_historical_steps - 1#-#
+        ]  # * (data['agent']['category'] == 3)#-#
         if self.inference_token:
             pred = self.inference(data)
-            gt = pred["gt"]
-            valid_mask = data["agent"]["valid_mask"][:, self.num_historical_steps :]
-            pred_traj = pred["pred_traj"]
+            gt = pred["gt"]#-#
+            valid_mask = data["agent"]["valid_mask"][:, self.num_historical_steps :]#-#
+            pred_traj = pred["pred_traj"]#-#
             # next_token_idx = pred['next_token_idx'][..., None]
             # next_token_idx_gt = pred['next_token_idx_gt'][:, 2:]
             # next_token_eval_mask = pred['next_token_eval_mask'][:, 2:]
@@ -314,36 +314,36 @@ class SMART(pl.LightningModule):
             # self.TokenCls.update(pred=next_token_idx[next_token_eval_mask], target=next_token_idx_gt[next_token_eval_mask],
             #                      valid_mask=next_token_eval_mask[next_token_eval_mask])
             # self.log('val_inference_cls_acc', self.TokenCls, prog_bar=True, on_step=False, on_epoch=True, batch_size=1, sync_dist=True)
-            eval_mask = data["agent"]["valid_mask"][:, self.num_historical_steps - 1]
+            eval_mask = data["agent"]["valid_mask"][:, self.num_historical_steps - 1]#-#
 
-            self.minADE.update(
-                pred=pred_traj[eval_mask],
-                target=gt[eval_mask],
-                valid_mask=valid_mask[eval_mask],
-            )
-            self.minFDE.update(
-                pred=pred_traj[eval_mask],
-                target=gt[eval_mask],
-                valid_mask=valid_mask[eval_mask],
-            )
+            self.minADE.update(#-#
+                pred=pred_traj[eval_mask],#-#
+                target=gt[eval_mask],#-#
+                valid_mask=valid_mask[eval_mask],#-#
+            )#-#
+            self.minFDE.update(#-#
+                pred=pred_traj[eval_mask],#-#
+                target=gt[eval_mask],#-#
+                valid_mask=valid_mask[eval_mask],#-#
+            )#-#
             # print('ade: ', self.minADE.compute(), 'fde: ', self.minFDE.compute())
 
-            self.log(
-                "val_minADE",
-                self.minADE,
-                prog_bar=True,
-                on_step=False,
-                on_epoch=True,
-                batch_size=1,
-            )
-            self.log(
-                "val_minFDE",
-                self.minFDE,
-                prog_bar=True,
-                on_step=False,
-                on_epoch=True,
-                batch_size=1,
-            )
+            self.log(#-#
+                "val_minADE",#-#
+                self.minADE,#-#
+                prog_bar=True,#-#
+                on_step=False,#-#
+                on_epoch=True,#-#
+                batch_size=1,#-#
+            )#-#
+            self.log(#-#
+                "val_minFDE",#-#
+                self.minFDE,#-#
+                prog_bar=True,#-#
+                on_step=False,#-#
+                on_epoch=True,#-#
+                batch_size=1,#-#
+            )#-#
 
     def on_validation_start(self):
         self.gt = []
@@ -362,16 +362,16 @@ class SMART(pl.LightningModule):
             if current_step + 1 < self.warmup_steps:
                 return float(current_step + 1) / float(max(1, self.warmup_steps))
             return max(
-                0.0,
-                0.5
-                * (
-                    1.0
-                    + math.cos(
-                        math.pi
-                        * (current_step - self.warmup_steps)
-                        / float(max(1, self.total_steps - self.warmup_steps))
-                    )
-                ),
+                0.0,#-#
+                0.5#-#
+                * (#-#
+                    1.0#-#
+                    + math.cos(#-#
+                        math.pi#-#
+                        * (current_step - self.warmup_steps)#-#
+                        / float(max(1, self.total_steps - self.warmup_steps))#-#
+                    )#-#
+                ),#-#
             )
 
         lr_scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
@@ -381,58 +381,58 @@ class SMART(pl.LightningModule):
         if not os.path.isfile(filename):
             raise FileNotFoundError
 
-        logger.info(
-            "==> Loading parameters from checkpoint %s to %s"
-            % (filename, "CPU" if to_cpu else "GPU")
-        )
-        loc_type = torch.device("cpu") if to_cpu else None
+        logger.info(#-#
+            "==> Loading parameters from checkpoint %s to %s"#-#
+            % (filename, "CPU" if to_cpu else "GPU")#-#
+        )#-#
+        loc_type = torch.device("cpu") if to_cpu else None#-#
         checkpoint = torch.load(filename, map_location=loc_type, weights_only=False)
-        model_state_disk = checkpoint["state_dict"]
+        model_state_disk = checkpoint["state_dict"]#-#
 
         version = checkpoint.get("version", None)
         if version is not None:
-            logger.info("==> Checkpoint trained from version: %s" % version)
+            logger.info("==> Checkpoint trained from version: %s" % version)#-#
 
-        logger.info(f"The number of disk ckpt keys: {len(model_state_disk)}")
+        logger.info(f"The number of disk ckpt keys: {len(model_state_disk)}")#-#
         model_state = self.state_dict()
         model_state_disk_filter = {}
         for key, val in model_state_disk.items():
-            if (
-                key in model_state
-                and model_state_disk[key].shape == model_state[key].shape
-            ):
+            if (#-#
+                key in model_state#-#
+                and model_state_disk[key].shape == model_state[key].shape#-#
+            ):#-#
                 model_state_disk_filter[key] = val
             else:
                 if key not in model_state:
-                    print(
-                        f"Ignore key in disk (not found in model): {key}, shape={val.shape}"
-                    )
+                    print(#-#
+                        f"Ignore key in disk (not found in model): {key}, shape={val.shape}"#-#
+                    )#-#
                 else:
-                    print(
-                        f"Ignore key in disk (shape does not match): {key}, load_shape={val.shape}, model_shape={model_state[key].shape}"
-                    )
+                    print(#-#
+                        f"Ignore key in disk (shape does not match): {key}, load_shape={val.shape}, model_shape={model_state[key].shape}"#-#
+                    )#-#
 
         model_state_disk = model_state_disk_filter
 
-        missing_keys, unexpected_keys = self.load_state_dict(
-            model_state_disk, strict=False
-        )
+        missing_keys, unexpected_keys = self.load_state_dict(#-#
+            model_state_disk, strict=False#-#
+        )#-#
 
-        logger.info(f"Missing keys: {missing_keys}")
-        logger.info(f"The number of missing keys: {len(missing_keys)}")
-        logger.info(f"The number of unexpected keys: {len(unexpected_keys)}")
-        logger.info("==> Done (total keys %d)" % (len(model_state)))
+        logger.info(f"Missing keys: {missing_keys}")#-#
+        logger.info(f"The number of missing keys: {len(missing_keys)}")#-#
+        logger.info(f"The number of unexpected keys: {len(unexpected_keys)}")#-#
+        logger.info("==> Done (total keys %d)" % (len(model_state)))#-#
 
-        epoch = checkpoint.get("epoch", -1)
-        it = checkpoint.get("it", 0.0)
+        epoch = checkpoint.get("epoch", -1)#-#
+        it = checkpoint.get("it", 0.0)#-#
 
         return it, epoch
 
     def match_token_map(self, data):
-        traj_pos = data["map_save"]["traj_pos"].to(torch.float)
-        traj_theta = data["map_save"]["traj_theta"].to(torch.float)
-        pl_idx_list = data["map_save"]["pl_idx_list"]
-        token_sample_pt = self.map_token["sample_pt"].to(traj_pos.device)
+        traj_pos = data["map_save"]["traj_pos"].to(torch.float)#-#
+        traj_theta = data["map_save"]["traj_theta"].to(torch.float)#-#
+        pl_idx_list = data["map_save"]["pl_idx_list"]#-#
+        token_sample_pt = self.map_token["sample_pt"].to(traj_pos.device)#-#
         pl_num = traj_pos.shape[0]
 
         pt_token_pos = traj_pos[:, 0, :].clone()
@@ -443,44 +443,44 @@ class SMART(pl.LightningModule):
         rot_mat[..., 0, 1] = -sin
         rot_mat[..., 1, 0] = sin
         rot_mat[..., 1, 1] = cos
-        traj_pos_local = torch.bmm(
-            (traj_pos - traj_pos[:, 0:1]), rot_mat.view(-1, 2, 2)
-        )
-        distance = torch.sum(
-            (token_sample_pt[None] - traj_pos_local.unsqueeze(1)) ** 2, dim=(-2, -1)
-        )
+        traj_pos_local = torch.bmm(#-#
+            (traj_pos - traj_pos[:, 0:1]), rot_mat.view(-1, 2, 2)#-#
+        )#-#
+        distance = torch.sum(#-#
+            (token_sample_pt[None] - traj_pos_local.unsqueeze(1)) ** 2, dim=(-2, -1)#-#
+        )#-#
         pt_token_id = torch.argmin(distance, dim=1)
 
         if self.noise:
-            topk_indices = torch.argsort(
-                torch.sum(
-                    (token_sample_pt[None] - traj_pos_local.unsqueeze(1)) ** 2,
-                    dim=(-2, -1),
-                ),
-                dim=1,
-            )[:, :8]
-            sample_topk = torch.randint(
-                0,
-                topk_indices.shape[-1],
-                size=(topk_indices.shape[0], 1),
-                device=topk_indices.device,
-            )
+            topk_indices = torch.argsort(#-#
+                torch.sum(#-#
+                    (token_sample_pt[None] - traj_pos_local.unsqueeze(1)) ** 2,#-#
+                    dim=(-2, -1),#-#
+                ),#-#
+                dim=1,#-#
+            )[:, :8]#-#
+            sample_topk = torch.randint(#-#
+                0,#-#
+                topk_indices.shape[-1],#-#
+                size=(topk_indices.shape[0], 1),#-#
+                device=topk_indices.device,#-#
+            )#-#
             pt_token_id = torch.gather(topk_indices, 1, sample_topk).squeeze(-1)
 
         pl_idx_full = pl_idx_list.clone()
-        token2pl = torch.stack(
-            [torch.arange(len(pl_idx_list), device=traj_pos.device), pl_idx_full.long()]
-        )
+        token2pl = torch.stack(#-#
+            [torch.arange(len(pl_idx_list), device=traj_pos.device), pl_idx_full.long()]#-#
+        )#-#
         count_nums = []
-        for polyline_idx in pl_idx_full.unique():
-            pt = token2pl[0, token2pl[1, :] == polyline_idx]
-            left_side = (data["pt_token"]["side"][pt] == 0).sum()
-            right_side = (data["pt_token"]["side"][pt] == 1).sum()
-            center_side = (data["pt_token"]["side"][pt] == 2).sum()
+        for polyline_idx in pl_idx_full.unique():#-#
+            pt = token2pl[0, token2pl[1, :] == polyline_idx]#-#
+            left_side = (data["pt_token"]["side"][pt] == 0).sum()#-#
+            right_side = (data["pt_token"]["side"][pt] == 1).sum()#-#
+            center_side = (data["pt_token"]["side"][pt] == 2).sum()#-#
             count_nums.append(torch.stack([left_side, right_side, center_side]))
         count_nums = torch.stack(count_nums, dim=0)
         num_polyline = int(count_nums.max().item())
-        traj_mask = torch.zeros(
+        traj_mask = torch.zeros(#-#
             (int(len(pl_idx_full.unique())), 3, num_polyline),
             dtype=bool,
             device=traj_pos.device,
@@ -489,47 +489,47 @@ class SMART(pl.LightningModule):
             torch.arange(traj_mask.size(2), device=traj_pos.device)
             .unsqueeze(0)
             .unsqueeze(0)
-        )
+        )#-#
         idx_matrix = idx_matrix.expand(traj_mask.size(0), traj_mask.size(1), -1)  #
         counts_num_expanded = count_nums.unsqueeze(-1)
         mask_update = idx_matrix < counts_num_expanded
         traj_mask[mask_update] = True
 
-        data["pt_token"]["traj_mask"] = traj_mask
-        data["pt_token"]["position"] = torch.cat(
-            [
-                pt_token_pos,
-                torch.zeros(
-                    (data["pt_token"]["num_nodes"], 1),
-                    device=traj_pos.device,
-                    dtype=torch.float,
-                ),
-            ],
-            dim=-1,
-        )
-        data["pt_token"]["orientation"] = pt_token_orientation
-        data["pt_token"]["height"] = data["pt_token"]["position"][:, -1]
-        data[("pt_token", "to", "map_polygon")] = {}
-        data[("pt_token", "to", "map_polygon")]["edge_index"] = token2pl
-        data["pt_token"]["token_idx"] = pt_token_id
+        data["pt_token"]["traj_mask"] = traj_mask#-#
+        data["pt_token"]["position"] = torch.cat(#-#
+            [#-#
+                pt_token_pos,#-#
+                torch.zeros(#-#
+                    (data["pt_token"]["num_nodes"], 1),#-#
+                    device=traj_pos.device,#-#
+                    dtype=torch.float,#-#
+                ),#-#
+            ],#-#
+            dim=-1,#-#
+        )#-#
+        data["pt_token"]["orientation"] = pt_token_orientation#-#
+        data["pt_token"]["height"] = data["pt_token"]["position"][:, -1]#-#
+        data[("pt_token", "to", "map_polygon")] = {}#-#
+        data[("pt_token", "to", "map_polygon")]["edge_index"] = token2pl#-#
+        data["pt_token"]["token_idx"] = pt_token_id#-#
         return data
 
     def sample_pt_pred(self, data):
-        traj_mask = data["pt_token"]["traj_mask"]
+        traj_mask = data["pt_token"]["traj_mask"]#-#
         raw_pt_index = torch.arange(
             1,
             traj_mask.shape[2],
             device=traj_mask.device,
         ).repeat(traj_mask.shape[0], traj_mask.shape[1], 1)
-        masked_pt_index = raw_pt_index.view(-1)[
+        masked_pt_index = raw_pt_index.view(-1)[#-#
             torch.randperm(raw_pt_index.numel(), device=traj_mask.device)[
-                : traj_mask.shape[0]
-                * traj_mask.shape[1]
-                * ((traj_mask.shape[2] - 1) // 3)
-            ].reshape(
-                traj_mask.shape[0], traj_mask.shape[1], (traj_mask.shape[2] - 1) // 3
-            )
-        ]
+                : traj_mask.shape[0]#-#
+                * traj_mask.shape[1]#-#
+                * ((traj_mask.shape[2] - 1) // 3)#-#
+            ].reshape(#-#
+                traj_mask.shape[0], traj_mask.shape[1], (traj_mask.shape[2] - 1) // 3#-#
+            )#-#
+        ]#-#
         masked_pt_index = torch.sort(masked_pt_index, -1)[0]
         pt_valid_mask = traj_mask.clone()
         pt_valid_mask.scatter_(2, masked_pt_index, False)
@@ -537,13 +537,13 @@ class SMART(pl.LightningModule):
         pt_pred_mask.scatter_(2, masked_pt_index, False)
         tmp_mask = pt_pred_mask.clone()
         tmp_mask[:, :, :] = True
-        tmp_mask.scatter_(2, masked_pt_index - 1, False)
+        tmp_mask.scatter_(2, masked_pt_index - 1, False)#-#
         pt_pred_mask.masked_fill_(tmp_mask, False)
         pt_pred_mask = pt_pred_mask * torch.roll(traj_mask, shifts=-1, dims=2)
         pt_target_mask = torch.roll(pt_pred_mask, shifts=1, dims=2)
 
-        data["pt_token"]["pt_valid_mask"] = pt_valid_mask[traj_mask]
-        data["pt_token"]["pt_pred_mask"] = pt_pred_mask[traj_mask]
-        data["pt_token"]["pt_target_mask"] = pt_target_mask[traj_mask]
+        data["pt_token"]["pt_valid_mask"] = pt_valid_mask[traj_mask]#-#
+        data["pt_token"]["pt_pred_mask"] = pt_pred_mask[traj_mask]#-#
+        data["pt_token"]["pt_target_mask"] = pt_target_mask[traj_mask]#-#
 
         return data

@@ -1,31 +1,31 @@
-[project]
-name = "sim-integration"
-version = "0.1.0"
-description = "Core simulation integration library"
-requires-python = ">=3.11,<3.12"
-dependencies = [
-    "torch>=2.6.0,<2.7",
-    "numpy>=1.26,<2.3",
-    "pandas>=2.2",
-    "pyarrow>=12.0; extra == 'parquet' or platform_system == 'Linux'",
-    "scikit-learn>=1.2",
-    "matplotlib>=3.7",
-    "shapely>=2.0"
-]
-
-[project.optional-dependencies]
-gpu = [
-    "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3%2Bcu12torch2.4cxx11abiFALSE-cp311-cp311-linux_x86_64.whl ; python_version == '3.11' and platform_system == 'Linux'",
-]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/sim_integration"]
-
-[tool.hatch.metadata]
-allow-direct-references = true
-
-[tool.uv]
+[project]#-#
+name = "sim-integration"#-#
+version = "0.1.0"#-#
+description = "Core simulation integration library"#-#
+requires-python = ">=3.11,<3.12"#-#
+dependencies = [#-#
+    "torch>=2.6.0,<2.7",#-#
+    "numpy>=1.26,<2.3",#-#
+    "pandas>=2.2",#-#
+    "pyarrow>=12.0; extra == 'parquet' or platform_system == 'Linux'",#-#
+    "scikit-learn>=1.2",#-#
+    "matplotlib>=3.7",#-#
+    "shapely>=2.0"#-#
+]#-#
+#-#
+[project.optional-dependencies]#-#
+gpu = [#-#
+    "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3%2Bcu12torch2.4cxx11abiFALSE-cp311-cp311-linux_x86_64.whl ; python_version == '3.11' and platform_system == 'Linux'",#-#
+]#-#
+#-#
+[build-system]#-#
+requires = ["hatchling"]#-#
+build-backend = "hatchling.build"#-#
+#-#
+[tool.hatch.build.targets.wheel]#-#
+packages = ["src/sim_integration"]#-#
+#-#
+[tool.hatch.metadata]#-#
+allow-direct-references = true#-#
+#-#
+[tool.uv]#-#

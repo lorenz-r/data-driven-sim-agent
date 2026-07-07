@@ -1,16 +1,16 @@
-from typing import Optional, Tuple, cast
+from typing import Optional, Tuple, cast#-#
 import torch
 from torch_scatter import gather_csr
 from torch_scatter import segment_csr
 
 
 def topk(
-    max_guesses: int,
-    pred: torch.Tensor,
-    prob: Optional[torch.Tensor] = None,
-    ptr: Optional[torch.Tensor] = None,
-    joint: bool = False,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    max_guesses: int,#-#
+    pred: torch.Tensor,#-#
+    prob: Optional[torch.Tensor] = None,#-#
+    ptr: Optional[torch.Tensor] = None,#-#
+    joint: bool = False,#-#
+) -> Tuple[torch.Tensor, torch.Tensor]:#-#
     max_guesses = min(max_guesses, pred.size(1))
     if max_guesses == pred.size(1):
         if prob is not None:
@@ -22,41 +22,41 @@ def topk(
         if prob is not None:
             if joint:
                 if ptr is None:
-                    inds_topk = torch.topk(
-                        (prob / prob.sum(dim=-1, keepdim=True)).mean(
-                            dim=0, keepdim=True
-                        ),
-                        k=max_guesses,
-                        dim=-1,
-                        largest=True,
-                        sorted=True,
-                    )[1]
+                    inds_topk = torch.topk(#-#
+                        (prob / prob.sum(dim=-1, keepdim=True)).mean(#-#
+                            dim=0, keepdim=True#-#
+                        ),#-#
+                        k=max_guesses,#-#
+                        dim=-1,#-#
+                        largest=True,#-#
+                        sorted=True,#-#
+                    )[1]#-#
                     inds_topk = inds_topk.repeat(pred.size(0), 1)
                 else:
-                    inds_topk = torch.topk(
-                        segment_csr(
-                            src=prob / prob.sum(dim=-1, keepdim=True),
-                            indptr=ptr,
-                            reduce="mean",
-                        ),
-                        k=max_guesses,
-                        dim=-1,
-                        largest=True,
-                        sorted=True,
-                    )[1]
+                    inds_topk = torch.topk(#-#
+                        segment_csr(#-#
+                            src=prob / prob.sum(dim=-1, keepdim=True),#-#
+                            indptr=ptr,#-#
+                            reduce="mean",#-#
+                        ),#-#
+                        k=max_guesses,#-#
+                        dim=-1,#-#
+                        largest=True,#-#
+                        sorted=True,#-#
+                    )[1]#-#
                     inds_topk = gather_csr(src=inds_topk, indptr=ptr)
             else:
-                inds_topk = torch.topk(
-                    prob, k=max_guesses, dim=-1, largest=True, sorted=True
-                )[1]
-            pred_topk = pred[
-                torch.arange(pred.size(0)).unsqueeze(-1).expand(-1, max_guesses),
-                inds_topk,
-            ]
-            prob_topk = prob[
-                torch.arange(pred.size(0)).unsqueeze(-1).expand(-1, max_guesses),
-                inds_topk,
-            ]
+                inds_topk = torch.topk(#-#
+                    prob, k=max_guesses, dim=-1, largest=True, sorted=True#-#
+                )[1]#-#
+            pred_topk = pred[#-#
+                torch.arange(pred.size(0)).unsqueeze(-1).expand(-1, max_guesses),#-#
+                inds_topk,#-#
+            ]#-#
+            prob_topk = prob[#-#
+                torch.arange(pred.size(0)).unsqueeze(-1).expand(-1, max_guesses),#-#
+                inds_topk,#-#
+            ]#-#
             prob_topk = prob_topk / prob_topk.sum(dim=-1, keepdim=True)
         else:
             pred_topk = pred[:, :max_guesses]
@@ -65,12 +65,12 @@ def topk(
 
 
 def topkind(
-    max_guesses: int,
-    pred: torch.Tensor,
-    prob: Optional[torch.Tensor] = None,
-    ptr: Optional[torch.Tensor] = None,
-    joint: bool = False,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    max_guesses: int,#-#
+    pred: torch.Tensor,#-#
+    prob: Optional[torch.Tensor] = None,#-#
+    ptr: Optional[torch.Tensor] = None,#-#
+    joint: bool = False,#-#
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:#-#
     max_guesses = min(max_guesses, pred.size(1))
     if max_guesses == pred.size(1):
         if prob is not None:
@@ -82,41 +82,41 @@ def topkind(
         if prob is not None:
             if joint:
                 if ptr is None:
-                    inds_topk = torch.topk(
-                        (prob / prob.sum(dim=-1, keepdim=True)).mean(
-                            dim=0, keepdim=True
-                        ),
-                        k=max_guesses,
-                        dim=-1,
-                        largest=True,
-                        sorted=True,
-                    )[1]
+                    inds_topk = torch.topk(#-#
+                        (prob / prob.sum(dim=-1, keepdim=True)).mean(#-#
+                            dim=0, keepdim=True#-#
+                        ),#-#
+                        k=max_guesses,#-#
+                        dim=-1,#-#
+                        largest=True,#-#
+                        sorted=True,#-#
+                    )[1]#-#
                     inds_topk = inds_topk.repeat(pred.size(0), 1)
                 else:
-                    inds_topk = torch.topk(
-                        segment_csr(
-                            src=prob / prob.sum(dim=-1, keepdim=True),
-                            indptr=ptr,
-                            reduce="mean",
-                        ),
-                        k=max_guesses,
-                        dim=-1,
-                        largest=True,
-                        sorted=True,
-                    )[1]
+                    inds_topk = torch.topk(#-#
+                        segment_csr(#-#
+                            src=prob / prob.sum(dim=-1, keepdim=True),#-#
+                            indptr=ptr,#-#
+                            reduce="mean",#-#
+                        ),#-#
+                        k=max_guesses,#-#
+                        dim=-1,#-#
+                        largest=True,#-#
+                        sorted=True,#-#
+                    )[1]#-#
                     inds_topk = gather_csr(src=inds_topk, indptr=ptr)
             else:
-                inds_topk = torch.topk(
-                    prob, k=max_guesses, dim=-1, largest=True, sorted=True
-                )[1]
-            pred_topk = pred[
-                torch.arange(pred.size(0)).unsqueeze(-1).expand(-1, max_guesses),
-                inds_topk,
-            ]
-            prob_topk = prob[
-                torch.arange(pred.size(0)).unsqueeze(-1).expand(-1, max_guesses),
-                inds_topk,
-            ]
+                inds_topk = torch.topk(#-#
+                    prob, k=max_guesses, dim=-1, largest=True, sorted=True#-#
+                )[1]#-#
+            pred_topk = pred[#-#
+                torch.arange(pred.size(0)).unsqueeze(-1).expand(-1, max_guesses),#-#
+                inds_topk,#-#
+            ]#-#
+            prob_topk = prob[#-#
+                torch.arange(pred.size(0)).unsqueeze(-1).expand(-1, max_guesses),#-#
+                inds_topk,#-#
+            ]#-#
             prob_topk = prob_topk / prob_topk.sum(dim=-1, keepdim=True)
         else:
             pred_topk = pred[:, :max_guesses]
@@ -125,15 +125,15 @@ def topkind(
 
 
 def valid_filter(
-    pred: torch.Tensor,
-    target: torch.Tensor,
-    prob: Optional[torch.Tensor] = None,
-    valid_mask: Optional[torch.Tensor] = None,
-    ptr: Optional[torch.Tensor] = None,
-    keep_invalid_final_step: bool = True,
-) -> Tuple[
-    torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor, torch.Tensor
-]:
+    pred: torch.Tensor,#-#
+    target: torch.Tensor,#-#
+    prob: Optional[torch.Tensor] = None,#-#
+    valid_mask: Optional[torch.Tensor] = None,#-#
+    ptr: Optional[torch.Tensor] = None,#-#
+    keep_invalid_final_step: bool = True,#-#
+) -> Tuple[#-#
+    torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor, torch.Tensor#-#
+]:#-#
     if valid_mask is None:
         valid_mask = target.new_ones(target.size()[:-1], dtype=torch.bool)
     if keep_invalid_final_step:
@@ -146,7 +146,7 @@ def valid_filter(
         prob = prob[filter_mask]
     valid_mask = valid_mask[filter_mask]
     if ptr is not None:
-        num_nodes_batch = segment_csr(src=filter_mask.long(), indptr=ptr, reduce="sum")
+        num_nodes_batch = segment_csr(src=filter_mask.long(), indptr=ptr, reduce="sum")#-#
         ptr = num_nodes_batch.new_zeros((num_nodes_batch.size(0) + 1,))
         torch.cumsum(num_nodes_batch, dim=0, out=ptr[1:])
     else:
@@ -175,27 +175,27 @@ def new_batch_nms(pred_trajs, dist_thresh, num_ret_modes=6):
     pred_scores = nearby_neighbor.sum(dim=-1) / num_modes
 
     sorted_idxs = pred_scores.argsort(dim=-1, descending=True)
-    bs_idxs_full = (
-        torch.arange(batch_size).type_as(sorted_idxs)[:, None].repeat(1, num_modes)
-    )
+    bs_idxs_full = (#-#
+        torch.arange(batch_size).type_as(sorted_idxs)[:, None].repeat(1, num_modes)#-#
+    )#-#
     sorted_pred_scores = pred_scores[bs_idxs_full, sorted_idxs]
-    sorted_pred_trajs = pred_trajs[
-        bs_idxs_full, sorted_idxs
-    ]  # (batch_size, num_modes, num_timestamps, 7)
+    sorted_pred_trajs = pred_trajs[#-#
+        bs_idxs_full, sorted_idxs#-#
+    ]  # (batch_size, num_modes, num_timestamps, 7)#-#
     sorted_pred_goals = sorted_pred_trajs[:, :, -1, :]  # (batch_size, num_modes, 7)
 
-    dist = (
-        sorted_pred_goals[:, :, None, 0:2] - sorted_pred_goals[:, None, :, 0:2]
-    ).norm(dim=-1)
-    point_cover_mask = dist < dist_thresh
+    dist = (#-#
+        sorted_pred_goals[:, :, None, 0:2] - sorted_pred_goals[:, None, :, 0:2]#-#
+    ).norm(dim=-1)#-#
+    point_cover_mask = dist < dist_thresh#-#
 
     point_val = sorted_pred_scores.clone()  # (batch_size, N)
     point_val_selected = torch.zeros_like(point_val)  # (batch_size, N)
 
     ret_idxs = sorted_idxs.new_zeros(batch_size, num_ret_modes).long()
-    ret_trajs = sorted_pred_trajs.new_zeros(
-        batch_size, num_ret_modes, num_timestamps, num_feat_dim
-    )
+    ret_trajs = sorted_pred_trajs.new_zeros(#-#
+        batch_size, num_ret_modes, num_timestamps, num_feat_dim#-#
+    )#-#
     ret_scores = sorted_pred_trajs.new_zeros(batch_size, num_ret_modes)
     bs_idxs = torch.arange(batch_size).type_as(ret_idxs)
 
@@ -211,17 +211,17 @@ def new_batch_nms(pred_trajs, dist_thresh, num_ret_modes=6):
         ret_trajs[:, k] = sorted_pred_trajs[bs_idxs, cur_idx]
         ret_scores[:, k] = sorted_pred_scores[bs_idxs, cur_idx]
 
-    bs_idxs = (
-        torch.arange(batch_size).type_as(sorted_idxs)[:, None].repeat(1, num_ret_modes)
-    )
+    bs_idxs = (#-#
+        torch.arange(batch_size).type_as(sorted_idxs)[:, None].repeat(1, num_ret_modes)#-#
+    )#-#
 
     ret_idxs = sorted_idxs[bs_idxs, ret_idxs]
     return ret_trajs, ret_scores, ret_idxs
 
 
-def batch_nms(
-    pred_trajs, pred_scores, dist_thresh, num_ret_modes=6, mode="static", speed=None
-):
+def batch_nms(#-#
+    pred_trajs, pred_scores, dist_thresh, num_ret_modes=6, mode="static", speed=None#-#
+):#-#
     """
 
     Args:
@@ -238,41 +238,41 @@ def batch_nms(
     batch_size, num_modes, num_timestamps, num_feat_dim = pred_trajs.shape
 
     sorted_idxs = pred_scores.argsort(dim=-1, descending=True)
-    bs_idxs_full = (
-        torch.arange(batch_size).type_as(sorted_idxs)[:, None].repeat(1, num_modes)
-    )
+    bs_idxs_full = (#-#
+        torch.arange(batch_size).type_as(sorted_idxs)[:, None].repeat(1, num_modes)#-#
+    )#-#
     sorted_pred_scores = pred_scores[bs_idxs_full, sorted_idxs]
-    sorted_pred_trajs = pred_trajs[
-        bs_idxs_full, sorted_idxs
-    ]  # (batch_size, num_modes, num_timestamps, 7)
+    sorted_pred_trajs = pred_trajs[#-#
+        bs_idxs_full, sorted_idxs#-#
+    ]  # (batch_size, num_modes, num_timestamps, 7)#-#
     sorted_pred_goals = sorted_pred_trajs[:, :, -1, :]  # (batch_size, num_modes, 7)
 
     if mode == "speed":
         scale = torch.ones(batch_size).to(sorted_pred_goals.device)
         lon_dist_thresh = 4 * scale
         lat_dist_thresh = 0.5 * scale
-        lon_dist = (
-            sorted_pred_goals[:, :, None, [0]] - sorted_pred_goals[:, None, :, [0]]
-        ).norm(dim=-1)
-        lat_dist = (
-            sorted_pred_goals[:, :, None, [1]] - sorted_pred_goals[:, None, :, [1]]
-        ).norm(dim=-1)
-        point_cover_mask = (lon_dist < lon_dist_thresh[:, None, None]) & (
-            lat_dist < lat_dist_thresh[:, None, None]
-        )
+        lon_dist = (#-#
+            sorted_pred_goals[:, :, None, [0]] - sorted_pred_goals[:, None, :, [0]]#-#
+        ).norm(dim=-1)#-#
+        lat_dist = (#-#
+            sorted_pred_goals[:, :, None, [1]] - sorted_pred_goals[:, None, :, [1]]#-#
+        ).norm(dim=-1)#-#
+        point_cover_mask = (lon_dist < lon_dist_thresh[:, None, None]) & (#-#
+            lat_dist < lat_dist_thresh[:, None, None]#-#
+        )#-#
     else:
-        dist = (
-            sorted_pred_goals[:, :, None, 0:2] - sorted_pred_goals[:, None, :, 0:2]
-        ).norm(dim=-1)
-        point_cover_mask = dist < dist_thresh
+        dist = (#-#
+            sorted_pred_goals[:, :, None, 0:2] - sorted_pred_goals[:, None, :, 0:2]#-#
+        ).norm(dim=-1)#-#
+        point_cover_mask = dist < dist_thresh#-#
 
     point_val = sorted_pred_scores.clone()  # (batch_size, N)
     point_val_selected = torch.zeros_like(point_val)  # (batch_size, N)
 
     ret_idxs = sorted_idxs.new_zeros(batch_size, num_ret_modes).long()
-    ret_trajs = sorted_pred_trajs.new_zeros(
-        batch_size, num_ret_modes, num_timestamps, num_feat_dim
-    )
+    ret_trajs = sorted_pred_trajs.new_zeros(#-#
+        batch_size, num_ret_modes, num_timestamps, num_feat_dim#-#
+    )#-#
     ret_scores = sorted_pred_trajs.new_zeros(batch_size, num_ret_modes)
     bs_idxs = torch.arange(batch_size).type_as(ret_idxs)
 
@@ -288,17 +288,17 @@ def batch_nms(
         ret_trajs[:, k] = sorted_pred_trajs[bs_idxs, cur_idx]
         ret_scores[:, k] = sorted_pred_scores[bs_idxs, cur_idx]
 
-    bs_idxs = (
-        torch.arange(batch_size).type_as(sorted_idxs)[:, None].repeat(1, num_ret_modes)
-    )
+    bs_idxs = (#-#
+        torch.arange(batch_size).type_as(sorted_idxs)[:, None].repeat(1, num_ret_modes)#-#
+    )#-#
 
     ret_idxs = sorted_idxs[bs_idxs, ret_idxs]
     return ret_trajs, ret_scores, ret_idxs
 
 
-def batch_nms_token(
-    pred_trajs, pred_scores, dist_thresh, num_ret_modes=6, mode="static", speed=None
-):
+def batch_nms_token(#-#
+    pred_trajs, pred_scores, dist_thresh, num_ret_modes=6, mode="static", speed=None#-#
+):#-#
     """
     Args:
         pred_trajs (batch_size, num_modes, num_timestamps, 7)
@@ -314,26 +314,26 @@ def batch_nms_token(
     batch_size, num_modes, num_feat_dim = pred_trajs.shape
 
     sorted_idxs = pred_scores.argsort(dim=-1, descending=True)
-    bs_idxs_full = (
-        torch.arange(batch_size).type_as(sorted_idxs)[:, None].repeat(1, num_modes)
-    )
+    bs_idxs_full = (#-#
+        torch.arange(batch_size).type_as(sorted_idxs)[:, None].repeat(1, num_modes)#-#
+    )#-#
     sorted_pred_scores = pred_scores[bs_idxs_full, sorted_idxs]
-    sorted_pred_goals = pred_trajs[
-        bs_idxs_full, sorted_idxs
-    ]  # (batch_size, num_modes, num_timestamps, 7)
+    sorted_pred_goals = pred_trajs[#-#
+        bs_idxs_full, sorted_idxs#-#
+    ]  # (batch_size, num_modes, num_timestamps, 7)#-#
 
     if mode == "nearby":
-        dist = (
-            sorted_pred_goals[:, :, None, 0:2] - sorted_pred_goals[:, None, :, 0:2]
-        ).norm(dim=-1)
+        dist = (#-#
+            sorted_pred_goals[:, :, None, 0:2] - sorted_pred_goals[:, None, :, 0:2]#-#
+        ).norm(dim=-1)#-#
         values, indices = torch.topk(dist, 5, dim=-1, largest=False)
         thresh_hold = values[..., -1]
         point_cover_mask = dist < thresh_hold[..., None]
     else:
-        dist = (
-            sorted_pred_goals[:, :, None, 0:2] - sorted_pred_goals[:, None, :, 0:2]
-        ).norm(dim=-1)
-        point_cover_mask = dist < dist_thresh
+        dist = (#-#
+            sorted_pred_goals[:, :, None, 0:2] - sorted_pred_goals[:, None, :, 0:2]#-#
+        ).norm(dim=-1)#-#
+        point_cover_mask = dist < dist_thresh#-#
 
     point_val = sorted_pred_scores.clone()  # (batch_size, N)
     point_val_selected = torch.zeros_like(point_val)  # (batch_size, N)
@@ -355,9 +355,9 @@ def batch_nms_token(
         ret_goals[:, k] = sorted_pred_goals[bs_idxs, cur_idx]
         ret_scores[:, k] = sorted_pred_scores[bs_idxs, cur_idx]
 
-    bs_idxs = (
-        torch.arange(batch_size).type_as(sorted_idxs)[:, None].repeat(1, num_ret_modes)
-    )
+    bs_idxs = (#-#
+        torch.arange(batch_size).type_as(sorted_idxs)[:, None].repeat(1, num_ret_modes)#-#
+    )#-#
 
     ret_idxs = sorted_idxs[bs_idxs, ret_idxs]
     return ret_goals, ret_scores, ret_idxs
@@ -366,28 +366,28 @@ def batch_nms_token(
 def get_best_accuracy(
     model_checkpoint: Optional[object],
     trainer: Optional[object],
-    metric_name: str = "val_cls_acc",
+    metric_name: str = "val_cls_acc",#-#
 ) -> Optional[float]:
     """Extract the best validation accuracy from the provided checkpoint or trainer.
-
+#-#
     Tries several fallbacks in order:
     - ``model_checkpoint.best_model_score`` if available
     - ``trainer.callback_metrics[metric_name]`` if present
-
+#-#
     Returns a float accuracy or None if not found.
     """
     best_score = None
-
+#-#
     if model_checkpoint is not None:
         try:
-            best_score = getattr(model_checkpoint, "best_model_score", None)
+            best_score = getattr(model_checkpoint, "best_model_score", None)#-#
             if best_score is not None:
                 try:
-                    return (
-                        float(best_score.item())
-                        if hasattr(best_score, "item")
-                        else float(best_score)
-                    )
+                    return (#-#
+                        float(best_score.item())#-#
+                        if hasattr(best_score, "item")#-#
+                        else float(best_score)#-#
+                    )#-#
                 except Exception:
                     try:
                         return float(best_score)
@@ -395,14 +395,14 @@ def get_best_accuracy(
                         best_score = None
         except Exception:
             best_score = None
-
+#-#
     if trainer is not None:
         try:
-            metrics = getattr(trainer, "callback_metrics", {}) or {}
+            metrics = getattr(trainer, "callback_metrics", {}) or {}#-#
             val = metrics.get(metric_name)
             if val is not None:
                 try:
-                    return float(val.item()) if hasattr(val, "item") else float(val)
+                    return float(val.item()) if hasattr(val, "item") else float(val)#-#
                 except Exception:
                     try:
                         return float(val)
@@ -410,10 +410,10 @@ def get_best_accuracy(
                         return None
         except Exception:
             return None
-
+#-#
     return None
-
-
+#-#
+#-#
 def _to_float(value: object) -> Optional[float]:
     """Safely coerce a scalar (plain number or tensor) to float."""
     if value is None:
@@ -424,23 +424,23 @@ def _to_float(value: object) -> Optional[float]:
         )
     except Exception:
         return None
-
-
+#-#
+#-#
 def get_training_metrics(
     model_checkpoint: Optional[object] = None,
     trainer: Optional[object] = None,
     loss_tracker: Optional[object] = None,
-    metric_name: str = "val_cls_acc",
+    metric_name: str = "val_cls_acc",#-#
 ) -> dict:
     """Return a dict with accuracy and loss metrics from a completed training run.
-
+#-#
     Keys returned
     -------------
     accuracy      – best monitored validation accuracy (float | None)
     start_loss    – training loss at epoch 1 (float | None)
     end_loss      – training loss at the final epoch (float | None)
     loss_decrease – start_loss − end_loss; positive means loss went down (float | None)
-
+#-#
     Parameters
     ----------
     model_checkpoint
@@ -454,19 +454,19 @@ def get_training_metrics(
         Name of the accuracy metric monitored during validation.
     """
     accuracy = get_best_accuracy(model_checkpoint, trainer, metric_name)
-
+#-#
     start_loss: Optional[float] = None
     end_loss: Optional[float] = None
     loss_decrease: Optional[float] = None
-
+#-#
     if loss_tracker is not None:
-        start_loss = _to_float(getattr(loss_tracker, "start_loss", None))
-        end_loss = _to_float(getattr(loss_tracker, "end_loss", None))
-        loss_decrease = _to_float(getattr(loss_tracker, "loss_decrease", None))
-
+        start_loss = _to_float(getattr(loss_tracker, "start_loss", None))#-#
+        end_loss = _to_float(getattr(loss_tracker, "end_loss", None))#-#
+        loss_decrease = _to_float(getattr(loss_tracker, "loss_decrease", None))#-#
+#-#
     return {
-        "accuracy": accuracy,
-        "start_loss": start_loss,
-        "end_loss": end_loss,
-        "loss_decrease": loss_decrease,
+        "accuracy": accuracy,#-#
+        "start_loss": start_loss,#-#
+        "end_loss": end_loss,#-#
+        "loss_decrease": loss_decrease,#-#
     }

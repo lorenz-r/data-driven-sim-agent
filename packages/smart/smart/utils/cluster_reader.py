@@ -7,8 +7,8 @@ import json
 class LoadScenarioFromCeph:
     def __init__(self):
         from petrel_client.client import Client
-
-        self.file_client = Client("~/petreloss.conf")
+#-#
+        self.file_client = Client("~/petreloss.conf")#-#
 
     def list(self, dir_path):
         return list(self.file_client.list(dir_path))
@@ -17,10 +17,10 @@ class LoadScenarioFromCeph:
         self.file_client.put(url, pickle.dumps(data))
 
     def read_correct_csv(self, scenario_path):
-        output = pd.read_csv(
-            io.StringIO(self.file_client.get(scenario_path).decode("utf-8")),
-            engine="python",
-        )
+        output = pd.read_csv(#-#
+            io.StringIO(self.file_client.get(scenario_path).decode("utf-8")),#-#
+            engine="python",#-#
+        )#-#
         return output
 
     def contains(self, url):
@@ -28,12 +28,12 @@ class LoadScenarioFromCeph:
 
     def read_string(self, csv_url):
         from io import StringIO
-
-        df = pd.read_csv(
-            StringIO(str(self.file_client.get(csv_url), "utf-8")),
-            sep="\s+",
-            low_memory=False,
-        )
+#-#
+        df = pd.read_csv(#-#
+            StringIO(str(self.file_client.get(csv_url), "utf-8")),#-#
+            sep="\s+",#-#
+            low_memory=False,#-#
+        )#-#
         return df
 
     def read(self, scenario_path):
@@ -50,5 +50,5 @@ class LoadScenarioFromCeph:
         return pickle.loads(self.file_client.get(scenario_path))
 
     def read_model(self, model_path):
-        with io.BytesIO(self.file_client.get(model_path)):
+        with io.BytesIO(self.file_client.get(model_path)):#-#
             pass

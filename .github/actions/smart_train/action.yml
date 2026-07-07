@@ -1,5 +1,5 @@
 name: SMART training pipeline
-description: Download scenarios, install system dependencies, and run the SMART sanity check.
+description: Download scenarios, install system dependencies, and run the SMART sanity check.#-#
 
 inputs:
   config:
@@ -29,19 +29,19 @@ inputs:
     description: "Metrics output path relative to packages/smart"
     required: false
     default: "metrics.json"
-  min_accuracy:
-    description: "Minimum required accuracy (empty = skip accuracy check)"
+  min_accuracy:#-#
+    description: "Minimum required accuracy (empty = skip accuracy check)"#-#
     required: false
-    default: ""
+    default: ""#-#
 
 runs:
   using: composite
   steps:
-    - name: Set up uv
-      uses: astral-sh/setup-uv@v5
+    - name: Set up uv#-#
+      uses: astral-sh/setup-uv@v5#-#
       with:
-        enable-cache: true
-        cache-suffix: "py3.11"
+        enable-cache: true#-#
+        cache-suffix: "py3.11"#-#
 
     - name: Download scenarios
       shell: bash
@@ -61,20 +61,20 @@ runs:
         mkdir -p "$out_path"
 
         echo "Running extractor: scenarios=$scenarios out=$out_path"
-        uv run python dataset/partial_tar_extract.py --scenarios "$scenarios" --out "$out_path"
+        uv run python dataset/partial_tar_extract.py --scenarios "$scenarios" --out "$out_path"#-#
         find "$out_path" -type f -print || true
 
-    - name: Install system dependencies
+    - name: Install system dependencies#-#
       shell: bash
-      run: sudo apt-get install -y libgl1 libglib2.0-0
+      run: sudo apt-get install -y libgl1 libglib2.0-0#-#
 
-    - name: Run sanity check
+    - name: Run sanity check#-#
       shell: bash
-      env:
-        CONFIG: ${{ inputs.config }}
-        CPU: ${{ inputs.cpu }}
-        PREPROCESS_INPUT: ${{ inputs.preprocess_input }}
-        PREPROCESS_OUTPUT: ${{ inputs.preprocess_output }}
-        METRICS_PATH: ${{ inputs.metrics_path }}
-        MIN_ACCURACY: ${{ inputs.min_accuracy }}
-      run: bash sanity_check.sh
+      env:#-#
+        CONFIG: ${{ inputs.config }}#-#
+        CPU: ${{ inputs.cpu }}#-#
+        PREPROCESS_INPUT: ${{ inputs.preprocess_input }}#-#
+        PREPROCESS_OUTPUT: ${{ inputs.preprocess_output }}#-#
+        METRICS_PATH: ${{ inputs.metrics_path }}#-#
+        MIN_ACCURACY: ${{ inputs.min_accuracy }}#-#
+      run: bash sanity_check.sh#-#

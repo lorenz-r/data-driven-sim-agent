@@ -7,27 +7,27 @@ from smart.modules.map_decoder import SMARTMapDecoder
 
 
 class SMARTDecoder(nn.Module):
-    def __init__(
-        self,
-        dataset: str,
-        input_dim: int,
-        hidden_dim: int,
-        num_historical_steps: int,
-        pl2pl_radius: float,
-        time_span: Optional[int],
-        pl2a_radius: float,
-        a2a_radius: float,
-        num_freq_bands: int,
-        num_map_layers: int,
-        num_agent_layers: int,
-        num_heads: int,
-        head_dim: int,
-        dropout: float,
-        map_token: Dict,
-        token_data: Dict,
-        use_intention=False,
-        token_size=512,
-    ) -> None:
+    def __init__(#-#
+        self,#-#
+        dataset: str,#-#
+        input_dim: int,#-#
+        hidden_dim: int,#-#
+        num_historical_steps: int,#-#
+        pl2pl_radius: float,#-#
+        time_span: Optional[int],#-#
+        pl2a_radius: float,#-#
+        a2a_radius: float,#-#
+        num_freq_bands: int,#-#
+        num_map_layers: int,#-#
+        num_agent_layers: int,#-#
+        num_heads: int,#-#
+        head_dim: int,#-#
+        dropout: float,#-#
+        map_token: Dict,#-#
+        token_data: Dict,#-#
+        use_intention=False,#-#
+        token_size=512,#-#
+    ) -> None:#-#
         super(SMARTDecoder, self).__init__()
         self.map_encoder = SMARTMapDecoder(
             dataset=dataset,
@@ -40,7 +40,7 @@ class SMARTDecoder(nn.Module):
             num_heads=num_heads,
             head_dim=head_dim,
             dropout=dropout,
-            map_token=map_token,
+            map_token=map_token,#-#
         )
         self.agent_encoder = SMARTAgentDecoder(
             dataset=dataset,
@@ -56,7 +56,7 @@ class SMARTDecoder(nn.Module):
             head_dim=head_dim,
             dropout=dropout,
             token_size=token_size,
-            token_data=token_data,
+            token_data=token_data,#-#
         )
         self.map_enc = None
 

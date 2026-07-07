@@ -5,7 +5,7 @@ from smart.utils import weight_init
 
 
 class MLPLayer(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int) -> None:
+    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int) -> None:#-#
         super(MLPLayer, self).__init__()
         self.mlp = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),

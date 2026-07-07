@@ -9,21 +9,21 @@ from smart.utils import weight_init
 
 
 class AttentionLayer(MessagePassing):
-    def __init__(
-        self,
-        hidden_dim: int,
-        num_heads: int,
-        head_dim: int,
-        dropout: float,
-        bipartite: bool,
-        has_pos_emb: bool,
-        **kwargs,
-    ) -> None:
-        super(AttentionLayer, self).__init__(aggr="add", node_dim=0, **kwargs)
+    def __init__(#-#
+        self,#-#
+        hidden_dim: int,#-#
+        num_heads: int,#-#
+        head_dim: int,#-#
+        dropout: float,#-#
+        bipartite: bool,#-#
+        has_pos_emb: bool,#-#
+        **kwargs,#-#
+    ) -> None:#-#
+        super(AttentionLayer, self).__init__(aggr="add", node_dim=0, **kwargs)#-#
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.has_pos_emb = has_pos_emb
-        self.scale = head_dim**-0.5
+        self.scale = head_dim**-0.5#-#
 
         self.to_q = nn.Linear(hidden_dim, head_dim * num_heads)
         self.to_k = nn.Linear(hidden_dim, head_dim * num_heads, bias=False)
@@ -54,12 +54,12 @@ class AttentionLayer(MessagePassing):
         self.ff_postnorm = nn.LayerNorm(hidden_dim)
         self.apply(weight_init)
 
-    def forward(
-        self,
-        x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
-        r: Optional[torch.Tensor],
-        edge_index: torch.Tensor,
-    ) -> torch.Tensor:
+    def forward(#-#
+        self,#-#
+        x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],#-#
+        r: Optional[torch.Tensor],#-#
+        edge_index: torch.Tensor,#-#
+    ) -> torch.Tensor:#-#
         if isinstance(
             x, torch.Tensor
         ):  # self attention => source and destination identical
@@ -75,15 +75,15 @@ class AttentionLayer(MessagePassing):
         x = x + self.ff_postnorm(self._ff_block(self.ff_prenorm(x)))
         return x
 
-    def message(
-        self,
-        q_i: torch.Tensor,
-        k_j: torch.Tensor,
-        v_j: torch.Tensor,
-        r: Optional[torch.Tensor],
+    def message(#-#
+        self,#-#
+        q_i: torch.Tensor,#-#
+        k_j: torch.Tensor,#-#
+        v_j: torch.Tensor,#-#
+        r: Optional[torch.Tensor],#-#
         index: torch.Tensor,  # this is just here for efficient computations under the hood
-        ptr: Optional[torch.Tensor],
-    ) -> torch.Tensor:
+        ptr: Optional[torch.Tensor],#-#
+    ) -> torch.Tensor:#-#
         if self.has_pos_emb and r is not None:
             k_j = k_j + self.to_k_r(r).view(-1, self.num_heads, self.head_dim)
             v_j = v_j + self.to_v_r(r).view(-1, self.num_heads, self.head_dim)
@@ -93,20 +93,20 @@ class AttentionLayer(MessagePassing):
         attn = self.attn_drop(attn)
         return v_j * attn.unsqueeze(-1)
 
-    def update(self, inputs: torch.Tensor, x_dst: torch.Tensor) -> torch.Tensor:
+    def update(self, inputs: torch.Tensor, x_dst: torch.Tensor) -> torch.Tensor:#-#
         inputs = inputs.view(-1, self.num_heads * self.head_dim)
         g = torch.sigmoid(self.to_g(torch.cat([inputs, x_dst], dim=-1)))
         return inputs + g * (
             self.to_s(x_dst) - inputs
         )  # gated update to the destination nodes
 
-    def _attn_block(
-        self,
-        x_src: torch.Tensor,
-        x_dst: torch.Tensor,
-        r: Optional[torch.Tensor],
-        edge_index: torch.Tensor,
-    ) -> torch.Tensor:
+    def _attn_block(#-#
+        self,#-#
+        x_src: torch.Tensor,#-#
+        x_dst: torch.Tensor,#-#
+        r: Optional[torch.Tensor],#-#
+        edge_index: torch.Tensor,#-#
+    ) -> torch.Tensor:#-#
         q = self.to_q(x_dst).view(
             -1, self.num_heads, self.head_dim
         )  # destination attends to the source context, hence queries made from x_dst

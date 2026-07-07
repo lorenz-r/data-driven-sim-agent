@@ -200,53 +200,53 @@ def create_splits(
 
     random.seed(seed)
 
-    # Single-pool mode: when source and val source are the same directory,
-    # sample train + val together without overlap.
+    # Single-pool mode: when source and val source are the same directory,#-#
+    # sample train + val together without overlap.#-#
     if source_dir.resolve() == source_val_dir.resolve():
         all_files = collect_files(source_dir)
         need = train_size + val_size
-        if len(all_files) < need:
-            raise ValueError(
-                f"Not enough files: found {len(all_files)}, "
+        if len(all_files) < need:#-#
+            raise ValueError(#-#
+                f"Not enough files: found {len(all_files)}, "#-#
                 f"need {train_size} + {val_size} = {need}"
-            )
-        random.shuffle(all_files)
+            )#-#
+        random.shuffle(all_files)#-#
         train_files = all_files[:train_size]
         val_files = all_files[train_size:need]
-
-        for files, src, out, name, manifest, hash_file in [
-            (
-                train_files,
+#-#
+        for files, src, out, name, manifest, hash_file in [#-#
+            (#-#
+                train_files,#-#
                 source_dir,
                 train_out,
-                "train",
+                "train",#-#
                 train_out / "train_manifest.txt",
                 train_out / "train_dataset_hash.txt",
-            ),
-            (
-                val_files,
+            ),#-#
+            (#-#
+                val_files,#-#
                 source_dir,
                 val_out,
-                "validation",
+                "validation",#-#
                 val_out / "validation_manifest.txt",
                 val_out / "validation_dataset_hash.txt",
-            ),
-        ]:
-            out.mkdir(parents=True, exist_ok=True)
-            print(f"Copying {len(files)} {name} files → {out}")
-            copy_files(files, src, out)
-            write_manifest(files, src, manifest)
-            dataset_hash = generate_dataset_hash(
+            ),#-#
+        ]:#-#
+            out.mkdir(parents=True, exist_ok=True)#-#
+            print(f"Copying {len(files)} {name} files → {out}")#-#
+            copy_files(files, src, out)#-#
+            write_manifest(files, src, manifest)#-#
+            dataset_hash = generate_dataset_hash(#-#
                 files, src, hash_contents=hash_contents
-            )
-            with open(hash_file, "w") as f:
+            )#-#
+            with open(hash_file, "w") as f:#-#
                 f.write(f"seed={seed}\n")
-                f.write(f"hash={dataset_hash}\n")
-            print(f"-{name.capitalize()} dataset hash: {dataset_hash}")
-
-        print("Done ✔")
-        return
-
+                f.write(f"hash={dataset_hash}\n")#-#
+            print(f"-{name.capitalize()} dataset hash: {dataset_hash}")#-#
+#-#
+        print("Done ✔")#-#
+        return#-#
+#-#
     process_split(
         source_dir=source_dir,
         output_dir=train_out,

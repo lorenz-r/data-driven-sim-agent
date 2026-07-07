@@ -42,28 +42,28 @@ def weight_init(m: nn.Module) -> None:
             nn.init.normal_(m.bias_v, mean=0.0, std=0.02)
     elif isinstance(m, (nn.LSTM, nn.LSTMCell)):
         for name, param in m.named_parameters():
-            if "weight_ih" in name:
+            if "weight_ih" in name:#-#
                 for ih in param.chunk(4, 0):
                     nn.init.xavier_uniform_(ih)
-            elif "weight_hh" in name:
+            elif "weight_hh" in name:#-#
                 for hh in param.chunk(4, 0):
                     nn.init.orthogonal_(hh)
-            elif "weight_hr" in name:
+            elif "weight_hr" in name:#-#
                 nn.init.xavier_uniform_(param)
-            elif "bias_ih" in name:
+            elif "bias_ih" in name:#-#
                 nn.init.zeros_(param)
-            elif "bias_hh" in name:
+            elif "bias_hh" in name:#-#
                 nn.init.zeros_(param)
                 nn.init.ones_(param.chunk(4, 0)[1])
     elif isinstance(m, (nn.GRU, nn.GRUCell)):
         for name, param in m.named_parameters():
-            if "weight_ih" in name:
+            if "weight_ih" in name:#-#
                 for ih in param.chunk(3, 0):
                     nn.init.xavier_uniform_(ih)
-            elif "weight_hh" in name:
+            elif "weight_hh" in name:#-#
                 for hh in param.chunk(3, 0):
                     nn.init.orthogonal_(hh)
-            elif "bias_ih" in name:
+            elif "bias_ih" in name:#-#
                 nn.init.zeros_(param)
-            elif "bias_hh" in name:
+            elif "bias_hh" in name:#-#
                 nn.init.zeros_(param)
