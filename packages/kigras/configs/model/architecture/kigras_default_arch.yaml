@@ -6,3 +6,4 @@ decoder_num_layers: 3
 dropout: 0.1
 num_actions: 2
 num_action_bins: 63
+max_agents: 0         # cap on agents per scene during training; 0 = keep all (no filtering)
