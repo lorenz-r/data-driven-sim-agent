@@ -21,6 +21,8 @@ class ArgoDataModule(L.LightningDataModule):
         persistent_workers: bool = True,
         shuffle: bool = True,
         mode: Literal["raw", "proc"] = "proc",
+        grid_power: float = 1.0,
+        num_bins: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -30,7 +32,11 @@ class ArgoDataModule(L.LightningDataModule):
         if path is None:
             raise ValueError("Invalid Path: None")
         if self.hparams.mode == "proc":
-            return ArgoDataset(processed_path=Path(path))
+            return ArgoDataset(
+                processed_path=Path(path),
+                grid_power=self.hparams.grid_power,
+                num_bins=self.hparams.num_bins,
+            )
         return ArgoDataset(raw_path=Path(path))
 
     def setup(self, stage: Optional[str] = None) -> None:

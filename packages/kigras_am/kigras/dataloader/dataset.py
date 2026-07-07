@@ -128,6 +128,8 @@ from av2.geometry.interpolate import compute_midpoint_line
 from av2.map.lane_segment import LaneMarkType, LaneType
 from av2.map.map_api import ArgoverseStaticMap
 
+from kigras.utils.naming import split_filename
+
 # ---------------------------
 # Constants
 # ---------------------------
@@ -533,6 +535,8 @@ class ArgoDataset(Dataset):
         self,
         raw_path: Path | None = None,
         processed_path: Path | None = None,
+        grid_power: float = 1.0,
+        num_bins: int | None = None,
     ):
 
         # path checks
@@ -550,6 +554,10 @@ class ArgoDataset(Dataset):
         path = processed_path if processed_path else raw_path
         self.path = cast(Path, path).resolve()
         self.mode = "proc" if processed_path else "raw"
+        # Action grid identity, so proc mode loads exactly the tokens that match
+        # the model's decode grid (see kigras.utils.naming.split_filename).
+        self.grid_power = grid_power
+        self.num_bins = num_bins
 
         if processed_path:
             self.split = self._load_preprocessed(self.path)
@@ -559,9 +567,10 @@ class ArgoDataset(Dataset):
             self.num_files = len(self.filenames)
 
     def _load_preprocessed(self, processed_path: Path):
-        return np.load(
-            processed_path / f"{processed_path.name}_split.npy", allow_pickle=True
+        filename = split_filename(
+            processed_path.name, grid_power=self.grid_power, num_bins=self.num_bins
         )
+        return np.load(processed_path / filename, allow_pickle=True)
 
     # Length / getitem
     def __len__(self) -> int:

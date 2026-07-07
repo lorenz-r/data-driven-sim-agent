@@ -86,6 +86,9 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
         persistent_workers=dl_cfg.persistent_workers,
         shuffle=dl_cfg.shuffle_train,
         mode=dl_cfg.mode,
+        # Load exactly the tokens that match the model's action grid.
+        grid_power=cfg.model.kinematics.get("grid_power", 1.0),
+        num_bins=model_cfg.num_action_bins,
     )
 
     model = KiGRAS(

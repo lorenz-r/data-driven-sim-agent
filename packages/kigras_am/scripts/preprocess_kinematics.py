@@ -27,6 +27,7 @@ from omegaconf import DictConfig, OmegaConf
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # Import your dataloader and KBM components
 from kigras.dataloader.dataset import ArgoDataset, CURRENT_STEP, PRED_LEN
+from kigras.utils.naming import split_filename
 
 # from kbm import KinematicBicycleModel
 # from kigras.kinematics.inverse_kinematics import InverseKinematicModule
@@ -37,6 +38,7 @@ def run_preprocessing(
     output_dir: Path,
     kinematics_cfg: OmegaConf,
     split: str,
+    size: str = "",
 ):
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -194,7 +196,14 @@ def run_preprocessing(
         f"\nAverage processing time per scenario: {np.mean(processing_times):.4f} seconds"
     )
 
-    save_path = output_dir / f"{split}_split.npy"
+    # Tag the file with the action grid (bin count + warp) so runs with a
+    # different grid never collide and training only ever loads tokens produced
+    # on the same grid the model decodes with.
+    grid_power = kinematics_cfg.get("grid_power", 1.0)
+    num_bins = kinematics_cfg.get("num_accel_bins", None)
+    save_path = output_dir / split_filename(
+        split, size=size, grid_power=grid_power, num_bins=num_bins
+    )
     np.save(save_path, preprocessed_data_list, allow_pickle=True)
     print(f"\nPreprocessing complete! Saved to {save_path}")
 

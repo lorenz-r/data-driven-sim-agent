@@ -7,3 +7,4 @@ loss: huber
 num_yaw_bins: ${model.architecture.num_action_bins}
 num_accel_bins: ${model.architecture.num_action_bins}
 delta_time: 0.1       # timestep (s)
+grid_power: 1.0       # bin-warp exponent; 1.0 = uniform grid, >1 = finer bins near 0
