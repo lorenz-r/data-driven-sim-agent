@@ -40,7 +40,6 @@ bash test.sh
 | `tests/` | Bootstrap integration & test package |
 
 #### SMART data pipeline
-
 ##### 1. Full setup (download + preprocess + optional splits)
 
 AV2 download/cache/split orchestration lives in `packages/trajectory-data`.
