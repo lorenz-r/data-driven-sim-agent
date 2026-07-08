@@ -13,6 +13,7 @@ import argparse
 import importlib.util
 import json
 import sys
+import time
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[2]
 METRICS_PATH = REPO_ROOT / "core" / "data-stuff" / "meta-metrics.py"
 MAP_HELPER_PATH = REPO_ROOT / "core" / "data-stuff" / "map-helper.py"
+PROGRESS_ENABLED = True
 
 SMART_TYPE_VEHICLE = 0
 SMART_TYPE_PEDESTRIAN = 1
@@ -37,6 +39,17 @@ SMART_TYPE_DEFAULT_BOX = {
     SMART_TYPE_CYCLIST: (1.80, 0.60),
     SMART_TYPE_BACKGROUND: (1.00, 1.00),
 }
+
+
+def _progress(message: str) -> None:
+    if not PROGRESS_ENABLED:
+        return
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    print(f"[{timestamp}] {message}", file=sys.stderr, flush=True)
+
+
+def _elapsed(start: float) -> str:
+    return f"{time.monotonic() - start:.1f}s"
 
 
 class ScenarioNpzView(Mapping):
@@ -351,7 +364,9 @@ def _compute_scenario_metrics_from_data(
     no_headings: bool,
     seconds_per_step: float,
 ) -> dict[str, Any]:
+    scenario_start = time.monotonic()
     scenario_id = _scenario_id(data, Path(input_label).stem)
+    _progress(f"{scenario_id}: loading rollout arrays")
     inference_metadata = _load_inference_metadata(data)
     pred_traj = _ensure_rollout_positions(_require_key(data, "pred_traj"))
     pred_head = _ensure_rollout_headings(_optional_key(data, "pred_head"))
@@ -391,6 +406,8 @@ def _compute_scenario_metrics_from_data(
         pred_head[:, target_mask] if pred_head is not None and use_headings else None
     )
 
+    phase_start = time.monotonic()
+    _progress(f"{scenario_id}: computing forecasting and kinematic metrics")
     forecasting = metrics.compute_forecasting_metric_scores(
         gt_positions=scored_gt,
         sim_positions=scored_pred,
@@ -404,12 +421,18 @@ def _compute_scenario_metrics_from_data(
         seconds_per_step=seconds_per_step,
         valid=scored_eval_valid,
     )
+    _progress(
+        f"{scenario_id}: forecasting and kinematic metrics done in "
+        f"{_elapsed(phase_start)}"
+    )
 
     agent_type = _agent_type(data, num_agents)
     lengths, widths = _default_lengths_widths(agent_type)
 
     interactive = None
     if not no_interactive:
+        phase_start = time.monotonic()
+        _progress(f"{scenario_id}: computing interactive metrics")
         interactive = metrics.compute_womd_interactive_metric_scores(
             gt_positions=gt,
             sim_positions=pred_traj,
@@ -425,6 +448,7 @@ def _compute_scenario_metrics_from_data(
             evaluated_object_mask=target_mask,
             is_vehicle=agent_type == SMART_TYPE_VEHICLE,
         )
+        _progress(f"{scenario_id}: interactive metrics done in {_elapsed(phase_start)}")
 
     map_metric = None
     scenario_raw_data_folder = raw_data_folder or _raw_data_folder_from_metadata(
@@ -443,6 +467,8 @@ def _compute_scenario_metrics_from_data(
         "error": None,
     }
     if not no_map:
+        phase_start = time.monotonic()
+        _progress(f"{scenario_id}: loading map geometry")
         map_geometry, loaded_map_metadata, map_error = _load_map_geometry(
             scenario_id=scenario_id,
             raw_data_folder=scenario_raw_data_folder,
@@ -455,9 +481,21 @@ def _compute_scenario_metrics_from_data(
                 f"Warning: skipping map metrics for scenario {scenario_id}: "
                 f"{map_error}",
                 file=sys.stderr,
+                flush=True,
             )
         else:
             try:
+                map_metadata.update(cast(dict[str, Any], loaded_map_metadata))
+                polygon_count = map_metadata.get("polygon_count")
+                target_gt_boxes = int(np.sum(gt_valid_mask & target_mask[:, None]))
+                target_sim_boxes = int(np.sum(pred_valid_mask[:, target_mask, :]))
+                box_count = target_gt_boxes + target_sim_boxes
+                _progress(
+                    f"{scenario_id}: map geometry ready in {_elapsed(phase_start)} "
+                    f"({polygon_count} polygon(s)); computing map metrics for "
+                    f"{box_count} valid boxes / {box_count * 4} corner queries"
+                )
+                phase_start = time.monotonic()
                 map_metric = metrics.compute_womd_map_metric_scores(
                     gt_positions=gt,
                     sim_positions=pred_traj,
@@ -472,17 +510,18 @@ def _compute_scenario_metrics_from_data(
                     sim_valid=pred_valid_mask,
                     evaluated_object_mask=target_mask,
                 )
-                map_metadata.update(cast(dict[str, Any], loaded_map_metadata))
                 map_metadata["available"] = True
+                _progress(f"{scenario_id}: map metrics done in {_elapsed(phase_start)}")
             except Exception as exc:
                 map_metadata["error"] = str(exc)
                 print(
                     f"Warning: failed to compute map metrics for scenario "
                     f"{scenario_id}: {exc}",
                     file=sys.stderr,
+                    flush=True,
                 )
 
-    return {
+    result = {
         "scenario_id": scenario_id,
         "input_npz": input_label,
         "inference_metadata": _compact_inference_metadata(inference_metadata),
@@ -502,6 +541,8 @@ def _compute_scenario_metrics_from_data(
             "map": _score_summary(map_metric),
         },
     }
+    _progress(f"{scenario_id}: scenario done in {_elapsed(scenario_start)}")
+    return result
 
 
 def _compute_scenario_metrics(
@@ -563,12 +604,20 @@ def _batch_scenarios(
         if not scenario_keys:
             raise ValueError(f"No scenarios found in batch file: {npz_path}")
 
+        _progress(f"{npz_path}: evaluating batch with {len(scenario_keys)} scenario(s)")
         batch_metadata = _load_inference_metadata(data)
         batch_raw_data_folder = raw_data_folder or _raw_data_folder_from_metadata(
             batch_metadata
         )
         scenarios = []
-        for scenario_key, scenario_id in zip(scenario_keys, scenario_ids):
+        for index, (scenario_key, scenario_id) in enumerate(
+            zip(scenario_keys, scenario_ids),
+            start=1,
+        ):
+            _progress(
+                f"{npz_path}: scenario {index}/{len(scenario_keys)} "
+                f"({scenario_id})"
+            )
             scenarios.append(
                 _compute_scenario_metrics_from_data(
                     ScenarioNpzView(data, scenario_key),
@@ -598,6 +647,7 @@ def _input_scenarios(
     no_headings: bool,
     seconds_per_step: float,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    _progress(f"Reading input: {npz_path}")
     with np.load(npz_path, allow_pickle=False) as data:
         is_batch = _is_batch_npz(data)
     if is_batch:
@@ -775,9 +825,23 @@ def main() -> None:
         action="store_true",
         help="Include the full per-scenario metric log in the output JSON.",
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress progress messages.",
+    )
     args = parser.parse_args()
 
+    global PROGRESS_ENABLED
+    PROGRESS_ENABLED = not args.quiet
+
+    run_start = time.monotonic()
     npz_files = _resolve_npz_inputs(args.input)
+    _progress(
+        f"Found {len(npz_files)} .npz input file(s); "
+        f"map metrics={'off' if args.no_map else 'on'}, "
+        f"interactive metrics={'off' if args.no_interactive else 'on'}"
+    )
     metrics = _load_meta_metrics()
     map_helper = None
     if not args.no_map:
@@ -788,6 +852,7 @@ def main() -> None:
                 f"Warning: map metrics will be skipped because map-helper "
                 f"could not be loaded: {exc}",
                 file=sys.stderr,
+                flush=True,
             )
     map_geometry_cache: dict[Path, Any] = {}
     raw_data_folder = (
@@ -795,7 +860,8 @@ def main() -> None:
     )
     scenarios: list[dict[str, Any]] = []
     input_metadata: list[dict[str, Any]] = []
-    for npz_path in npz_files:
+    for index, npz_path in enumerate(npz_files, start=1):
+        _progress(f"Input file {index}/{len(npz_files)}: {npz_path}")
         input_scenarios, batch_metadata = _input_scenarios(
             npz_path,
             metrics=metrics,
@@ -834,6 +900,7 @@ def main() -> None:
                 "raw_data_folder": str(raw_data_folder) if raw_data_folder else None,
                 "no_map": args.no_map,
                 "include_scenario_metrics": args.include_scenario_metrics,
+                "quiet": args.quiet,
             },
             "input_metadata": input_metadata,
             "masking_policy": {
@@ -858,9 +925,11 @@ def main() -> None:
     if args.include_scenario_metrics:
         report["scenario_metrics"] = scenarios
 
+    _progress(f"Writing metrics report to: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as file:
         json.dump(_jsonable(report), file, indent=2, sort_keys=True)
+    _progress(f"Evaluation finished in {_elapsed(run_start)}")
     print(f"Wrote metrics report to: {output_path}")
 
 
