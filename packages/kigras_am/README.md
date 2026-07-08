@@ -33,7 +33,7 @@ AV2 raw scenarios
   -> ArgoDataset processed loading
   -> collate_fn sparse batch flattening
   -> process_sparse_batch observer-local edge features
-  -> SparseSceneEncoder MLP + scatter-mean pooling
+  -> SceneEncoder MLP + sparse observer-frame attention
   -> ActionDecoder transformer decoder
   -> action-token logits
   -> optional closed-loop CTRA rollout
@@ -46,8 +46,8 @@ Important files:
 | `kigras/dataloader/dataset.py` | AV2 parsing, processed dataset loading, sparse `collate_fn`. |
 | `scripts/preprocess_kinematics.py` | Converts trajectories into discrete CTRA action-token labels. |
 | `kigras/utils/train_utils.py` | Converts collated batches into observer-local model inputs. |
-| `kigras/model/scene_encoder.py` | Encodes sparse agent/map context into one scene token per observer timestep. |
-| `kigras/model/decoder.py` | Transformer action decoder. This is the only attention-based model component. |
+| `kigras/model/scene_encoder.py` | Encodes sparse agent/map context into one scene token per observer timestep with sparse attention. |
+| `kigras/model/decoder.py` | Transformer action decoder over observer scene tokens and previous actions. |
 | `kigras/model/kigras.py` | LightningModule that wires processing, encoder, decoder, loss, training, and rollout. |
 | `kigras/kinematics/ctra.py` | CTRA action quantization, inverse action recovery, and forward rollout. |
 
@@ -591,9 +591,10 @@ Important defaults:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `embedding_dim` | `64` | `d_model`. |
+| `embedding_dim` | `32` | `d_model`. |
 | `num_head` | `4` | Transformer decoder heads. |
-| `encoder_num_layers` | `3` | Passed to encoder constructor, currently unused by encoder internals. |
+| `encoder_num_layers` | `3` | Sparse observer-frame attention depth. |
+| `encoder_ff_dim` | `256` | Encoder sparse-attention feed-forward width. |
 | `decoder_num_layers` | `3` | Transformer decoder depth. |
 | `decoder_ff_dim` | `256` | Transformer feed-forward width. |
 | `num_action_bins` | `63` | Bins per action dimension. |

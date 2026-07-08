@@ -4,7 +4,7 @@ import pytorch_lightning as pl
 from typing import Any
 
 # Import your separated modules
-from .scene_encoder import SparseSceneEncoder
+from .scene_encoder import SceneEncoder
 from .decoder import ActionDecoder
 from ..dataloader.dataset import CURRENT_STEP, PRED_LEN
 from ..utils.train_utils import process_sparse_batch
@@ -19,6 +19,7 @@ OPTIMIZER_REGISTRY: dict[str, Any] = {
 SCHEDULER_REGISTRY: dict[str, Any] = {
     "onecycle": torch.optim.lr_scheduler.OneCycleLR,
     "cosine": torch.optim.lr_scheduler.CosineAnnealingLR,
+    "exponential": torch.optim.lr_scheduler.ExponentialLR,
 }
 
 
@@ -30,6 +31,7 @@ class KiGRAS(pl.LightningModule):
         d_model=64,
         nhead=4,
         encoder_num_layers=3,
+        encoder_ff_dim=256,
         decoder_num_layers=3,
         decoder_ff_dim=256,
         dropout=0.1,
@@ -67,10 +69,11 @@ class KiGRAS(pl.LightningModule):
         self.scheduler_config = scheduler_config
         self.save_hyperparameters()
 
-        self.encoder = SparseSceneEncoder(
+        self.encoder = SceneEncoder(
             d_model=d_model,
             nhead=nhead,
             num_layers=encoder_num_layers,
+            ff_dim=encoder_ff_dim,
             dropout=dropout,
             num_semantic_classes=num_semantic_classes,
         )
@@ -188,6 +191,8 @@ class KiGRAS(pl.LightningModule):
                     else self.trainer.max_epochs
                 ),
             )
+        elif name == "exponential" and "gamma" not in params:
+            raise ValueError("ExponentialLR scheduler requires params.gamma.")
 
         scheduler_config = {
             "scheduler": scheduler_cls(optimizer, **params),
@@ -273,9 +278,10 @@ class KiGRAS(pl.LightningModule):
                 dim=-1,
             )
             action = self._tokens_to_actions(pred_token, kinematic_model).unsqueeze(1)
-            next_kinematic_state = kinematic_model.forward(kinematic_state, action)[
-                :, -1
-            ]
+            next_kinematic_state = kinematic_model.forward(
+                kinematic_state.to(action.dtype),
+                action,
+            )[:, -1].to(current_state.dtype)
 
             next_state = current_state.new_zeros(current_state.shape)
             next_state[:, 0:4] = next_kinematic_state[:, 0:4]

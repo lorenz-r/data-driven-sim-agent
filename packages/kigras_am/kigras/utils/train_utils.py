@@ -6,6 +6,8 @@ POSITION_SCALE = 100.0
 VELOCITY_SCALE = 30.0
 MAP_DIRECTION_SCALE = 10.0
 LANE_WIDTH_SCALE = 10.0
+AGENT_CONTEXT_RADIUS = 50.0
+MAP_CONTEXT_RADIUS = 50.0
 
 
 def transform_batch_sparse(
@@ -53,10 +55,14 @@ def transform_batch_sparse(
     local_c = tgt_c * obs_c + tgt_s * obs_s
     local_s = tgt_s * obs_c - tgt_c * obs_s
 
-    # Rotate velocities
+    # Relative velocity belongs in the observer frame too: self->self velocity is
+    # zero, while other agents carry velocity relative to the observer.
     tgt_vx, tgt_vy = tgt_states[..., 4], tgt_states[..., 5]
-    local_vx = tgt_vx * obs_c + tgt_vy * obs_s
-    local_vy = -tgt_vx * obs_s + tgt_vy * obs_c
+    obs_vx, obs_vy = obs_states[..., 4], obs_states[..., 5]
+    dvx = tgt_vx - obs_vx
+    dvy = tgt_vy - obs_vy
+    local_vx = dvx * obs_c + dvy * obs_s
+    local_vy = -dvx * obs_s + dvy * obs_c
 
     # Valid mask: Edge is valid if BOTH observer and target are valid
     valid = tgt_states[..., 6].bool() & obs_states[..., 6].bool()
@@ -161,6 +167,28 @@ def normalize_map_context(
     return local_map_context
 
 
+def observer_local_velocity(
+    observer_states: torch.Tensor,
+    velocity_scale: float = VELOCITY_SCALE,
+) -> torch.Tensor:
+    """Return observer velocity in its own heading frame.
+
+    Args:
+        observer_states: [O_total, T, 7] global states for observer rows.
+        velocity_scale: scale used for velocity normalization.
+
+    Returns:
+        [O_total, T, 2] normalized [forward_velocity, lateral_velocity].
+    """
+    obs_c = observer_states[..., 2]
+    obs_s = observer_states[..., 3]
+    obs_vx = observer_states[..., 4]
+    obs_vy = observer_states[..., 5]
+    local_vx = obs_vx * obs_c + obs_vy * obs_s
+    local_vy = -obs_vx * obs_s + obs_vy * obs_c
+    return torch.stack([local_vx, local_vy], dim=-1).div(velocity_scale)
+
+
 def process_sparse_batch(
     batch: dict,
     start_t: int = CURRENT_STEP,
@@ -169,6 +197,8 @@ def process_sparse_batch(
     velocity_scale: float = VELOCITY_SCALE,
     map_direction_scale: float = MAP_DIRECTION_SCALE,
     lane_width_scale: float = LANE_WIDTH_SCALE,
+    agent_context_radius: float | None = AGENT_CONTEXT_RADIUS,
+    map_context_radius: float | None = MAP_CONTEXT_RADIUS,
 ) -> dict:
     """Build observer-local sparse context tensors from a collated KiGRAS batch.
 
@@ -194,6 +224,17 @@ def process_sparse_batch(
         map_to_observer_edges=map_edges,
     )
 
+    if agent_context_radius is not None:
+        agent_dist = torch.linalg.norm(local_agent_context[..., :2], dim=-1)
+        local_agent_context[..., 6] *= (agent_dist <= agent_context_radius).to(
+            local_agent_context.dtype
+        )
+
+    map_valid = trajectories[map_edges[1], :, 6].bool()
+    if map_context_radius is not None:
+        map_dist = torch.linalg.norm(local_map_context[..., 0, :], dim=-1)
+        map_valid &= map_dist <= map_context_radius
+
     local_agent_context = normalize_agent_context(
         local_agent_context,
         position_scale=position_scale,
@@ -206,6 +247,7 @@ def process_sparse_batch(
     )
 
     observer_idx = batch["observers"]["agent_idx"]
+    observer_states = trajectories[observer_idx]
     agent_edge_obs_idx_standardized = _standardize_observer_indices(
         observer_idx, agent_edges[1], states.shape[0]
     )
@@ -236,15 +278,17 @@ def process_sparse_batch(
         "map_width": batch["graph"]["width"][map_edges[0]].div(
             lane_width_scale
         ),  # [E_map], lane width per map edge.
-        "map_valid": trajectories[
-            map_edges[1], :, 6
-        ].bool(),  # [E_map, T], observer validity per map edge.
+        "map_valid": map_valid,  # [E_map, T], observer validity and radius mask.
         "observer_idx": observer_idx,  # [O_total], global agent id per observer row.
         "observer_type_ids": batch["agents"]["type_ids"][
             observer_idx
         ],  # [O_total], observer class.
-        "observer_valid": trajectories[
-            observer_idx, :, 6
+        "observer_velocity": observer_local_velocity(
+            observer_states,
+            velocity_scale=velocity_scale,
+        ),  # [O_total, T, 2], observer velocity in its own frame.
+        "observer_valid": observer_states[
+            :, :, 6
         ].bool(),  # [O_total, T], observer validity.
         "action_tokens": batch["observers"][
             "action_tokens"

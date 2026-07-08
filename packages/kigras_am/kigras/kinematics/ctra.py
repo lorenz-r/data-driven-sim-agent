@@ -1,6 +1,7 @@
 import torch
 from torch import Tensor
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .grids import power_spaced_bins
 
@@ -44,7 +45,6 @@ class CTRAKinematics:
         name: str = "ctra",
         delta_time: float = 0.5,
         max_iter: int = 5,
-        loss: str = "huber",
         num_accel_bins: int = 63,
         num_yaw_bins: int = 63,
         max_accel: float = 5.0,
@@ -53,7 +53,7 @@ class CTRAKinematics:
     ):
         self.dt = delta_time
         self.max_iter = max_iter
-        self.loss_type = loss.lower()
+        self.loss_type = "huber"
 
         # Grid definitions
         self.NUM_ACCEL = num_accel_bins
@@ -104,72 +104,64 @@ class CTRAKinematics:
         """
         dt = self.dt
 
-        # Unbind the last dimension (dim=5 and dim=2 respectively)
         x0, y0, cos_h0, sin_h0, v0 = init_state.unbind(-1)
         a, omega = actions.unbind(-1)
 
-        # Update Headings
-        dtheta_step = omega * dt  # [..., T]
-        dtheta_end = torch.cumsum(dtheta_step, dim=-1)  # [..., T]
-
-        # Starting delta of 0 for the first integration step
-        zeros = torch.zeros_like(dtheta_end[..., :1])  # [..., 1]
-        dtheta_start = torch.cat([zeros, dtheta_end[..., :-1]], dim=-1)  # [..., T]
-
-        # Add a sequence dimension to the initial states so they can
-        # broadcast against the sequence of actions [..., T]
+        # --- Headings ---
         ch0 = cos_h0.unsqueeze(-1)  # [..., 1]
         sh0 = sin_h0.unsqueeze(-1)  # [..., 1]
 
-        # Trigonometric additions (broadcasts [...] with [..., T])
-        cos_h_t = ch0 * dtheta_start.cos() - sh0 * dtheta_start.sin()  # [..., T]
-        sin_h_t = ch0 * dtheta_start.sin() + sh0 * dtheta_start.cos()  # [..., T]
+        dtheta = torch.cumsum(omega * dt, dim=-1)  # [..., T]
+        dtheta_all = torch.cat(
+            [torch.zeros_like(dtheta[..., :1]), dtheta], dim=-1
+        )  # [..., T+1]
 
-        cos_h_next = ch0 * dtheta_end.cos() - sh0 * dtheta_end.sin()  # [..., T]
-        sin_h_next = ch0 * dtheta_end.sin() + sh0 * dtheta_end.cos()  # [..., T]
+        cos_d = dtheta_all.cos()
+        sin_d = dtheta_all.sin()
 
-        # Update Velocity
-        dv_step = a * dt  # [..., T]
-        dv_end = torch.cumsum(dv_step, dim=-1)  # [..., T]
-        dv_start = torch.cat([zeros, dv_end[..., :-1]], dim=-1)  # [..., T]
+        cos_h_all = ch0 * cos_d - sh0 * sin_d  # [..., T+1]
+        sin_h_all = sh0 * cos_d + ch0 * sin_d  # [..., T+1]
 
-        v0_exp = v0.unsqueeze(-1)  # [..., 1]
+        cos_h_current = cos_h_all[..., :-1]  # [..., T]
+        sin_h_current = sin_h_all[..., :-1]  # [..., T]
+
+        cos_h_next = cos_h_all[..., 1:]  # [..., T]
+        sin_h_next = sin_h_all[..., 1:]  # [..., T]
+
+        # --- Velocity ---
+        v0 = v0.unsqueeze(-1)
+        dv_accumulated = torch.cumsum(a * dt, dim=-1)  # [..., T]
+        v_all = torch.cat([v0, v0 + dv_accumulated], dim=-1)  # [..., T+1]
 
         # Velocity at the start and end of each timestep interval
-        v_t = (v0_exp + dv_start).clamp(min=0.0)  # [..., T]
-        v_next = (v0_exp + dv_end).clamp(min=0.0)  # [..., T]
+        v_current = v_all[..., :-1]  # [..., T]
+        v_next = v_all[..., 1:]  # [..., T]
 
-        # Exact Spatial Integration (Curved/Linear logic)
-        eps = 1e-5
-        near_zero = omega.abs() < eps  # [..., T] (Boolean mask)
-
+        # --- Integration ---
+        eps = 1e-4
+        near_zero = omega.abs() < eps  # [..., T]
         safe_omega = torch.where(
             near_zero, torch.ones_like(omega) * eps, omega
         )  # [..., T]
-        safe_omega_sq = safe_omega**2  # [..., T]
-
-        # Unclamped velocity required for exact analytical cancellation
-        v_next_unclamped = v_t + a * dt  # [..., T]
 
         # Exact CTRA curve integration
-        dx_curve = (v_next_unclamped * sin_h_next - v_t * sin_h_t) / safe_omega + (
-            a / safe_omega_sq
-        ) * (cos_h_next - cos_h_t)  # [..., T]
+        dx_curve = (v_next * sin_h_next - v_current * sin_h_current) / safe_omega + (
+            a / safe_omega**2
+        ) * (cos_h_next - cos_h_current)  # [..., T]
+        dy_curve = (-v_next * cos_h_next + v_current * cos_h_current) / safe_omega + (
+            a / safe_omega**2
+        ) * (sin_h_next - sin_h_current)  # [..., T]
 
-        dy_curve = (-v_next_unclamped * cos_h_next + v_t * cos_h_t) / safe_omega + (
-            a / safe_omega_sq
-        ) * (sin_h_next - sin_h_t)  # [..., T]
-
-        # Exact CTRA straight-line integration
-        disp = v_t * dt + 0.5 * a * (dt**2)  # [..., T]
-        dx_lin = disp * cos_h_t  # [..., T]
-        dy_lin = disp * sin_h_t  # [..., T]
+        # Exact CTRA straight-line integration (for when omega is too small and exact integration becomes unstable)
+        disp = v_current * dt + 0.5 * a * (dt**2)  # [..., T]
+        dx_lin = disp * cos_h_current  # [..., T]
+        dy_lin = disp * sin_h_current  # [..., T]
 
         # Merge branches based on the omega magnitude mask
         dx = torch.where(near_zero, dx_lin, dx_curve)  # [..., T]
         dy = torch.where(near_zero, dy_lin, dy_curve)  # [..., T]
 
-        # 4. Construct Full State
+        # Construct Full State
         # Cumulative sum of local deltas to get absolute global positions
         x_end = x0.unsqueeze(-1) + torch.cumsum(dx, dim=-1)  # [..., T]
         y_end = y0.unsqueeze(-1) + torch.cumsum(dy, dim=-1)  # [..., T]
@@ -179,7 +171,7 @@ class CTRAKinematics:
         y_all = torch.cat([y0.unsqueeze(-1), y_end], dim=-1)  # [..., T+1]
         cos_h_all = torch.cat([ch0, cos_h_next], dim=-1)  # [..., T+1]
         sin_h_all = torch.cat([sh0, sin_h_next], dim=-1)  # [..., T+1]
-        v_all = torch.cat([v0_exp, v_next], dim=-1)  # [..., T+1]
+        v_all = torch.cat([v0, v_next], dim=-1)  # [..., T+1]
 
         # Stack the 5 state features into the final dimension
         # Output shape: [..., T+1, 5]
@@ -244,20 +236,23 @@ class CTRAKinematics:
             if valid_mask is not None:
                 # valid_mask: [..., T+1] -> broadcast over 5 state features
                 mask = valid_mask.unsqueeze(-1).to(
-                    observed_states.device, dtype=torch.float32
+                    observed_states.device, dtype=observed_states.dtype
                 )
 
             def closure():
                 opt.zero_grad()
                 pred = self.forward(init_state, wa)
 
-                pos_err = pred[..., 1:, :2] - observed_states[..., 1:, :2]
+                pred_pos = pred[..., 1:, :2]
+                target_pos = observed_states[..., 1:, :2]
+                loss_per_el = F.huber_loss(pred_pos, target_pos, reduction="none").sum(
+                    dim=-1, keepdim=True
+                )
                 if valid_mask is not None:
                     mask_t = mask[..., 1:, :]
-                    loss_per_el = pos_err.pow(2).sum(dim=-1, keepdim=True)
                     loss = (loss_per_el * mask_t).sum()
                 else:
-                    loss = pos_err.pow(2).sum()
+                    loss = loss_per_el.sum()
 
                 loss.backward()
                 return loss

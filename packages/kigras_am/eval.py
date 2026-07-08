@@ -123,6 +123,7 @@ def main(cfg: DictConfig) -> None:
     kin_cfg = cfg.model.kinematics
     if kin_cfg.name != "ctra":
         raise ValueError(f"Unsupported eval kinematics type: {kin_cfg.name}")
+    torch.set_default_dtype(torch.float64)
     kinematic_model = CTRAKinematics(**OmegaConf.to_container(kin_cfg, resolve=True))
 
     val_dataset = ArgoDataset(processed_path=Path(cfg.processed_val))

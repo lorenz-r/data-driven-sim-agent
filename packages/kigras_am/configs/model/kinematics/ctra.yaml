@@ -3,7 +3,6 @@ name: ctra
 max_accel: 5.0        # max acceleration (m/s^2)
 max_yaw_rate: 1.5     # max yaw rate (rad/s)
 max_iter: 20
-loss: huber
 num_yaw_bins: ${model.architecture.num_action_bins}
 num_accel_bins: ${model.architecture.num_action_bins}
 delta_time: 0.1       # timestep (s)

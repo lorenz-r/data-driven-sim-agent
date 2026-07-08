@@ -60,6 +60,7 @@ def _build_random_model(arch_cfg: DictConfig) -> KiGRAS:
         d_model=arch_cfg.embedding_dim,
         nhead=arch_cfg.num_head,
         encoder_num_layers=arch_cfg.encoder_num_layers,
+        encoder_ff_dim=arch_cfg.encoder_ff_dim,
         decoder_num_layers=arch_cfg.decoder_num_layers,
         decoder_ff_dim=arch_cfg.decoder_ff_dim,
         dropout=arch_cfg.dropout,
@@ -108,6 +109,7 @@ def _build_kinematic_model(model: KiGRAS, kin_cfg: DictConfig) -> CTRAKinematics
         f"max_accel={kin_params['max_accel']}, max_yaw_rate={kin_params['max_yaw_rate']}, "
         f"delta_time={kin_params['delta_time']}"
     )
+    torch.set_default_dtype(torch.float64)
     return CTRAKinematics(**kin_params)
 
 
@@ -160,7 +162,7 @@ def _label_rollout_reference(
     ].bool()
     safe_tokens = label_tokens.masked_fill(~label_valid, 0).clamp(min=0)
     actions = _tokens_to_actions(safe_tokens, kinematic_model)
-    states = kinematic_model.forward(init_state, actions)
+    states = kinematic_model.forward(init_state.to(actions.dtype), actions)
     return (
         states[:, 1:, :2].cpu().numpy(),
         label_valid.cpu().numpy(),
@@ -314,11 +316,11 @@ def _plot_inference(
     fig.tight_layout()
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    plt.show()
     # fig.savefig(output, dpi=dpi, bbox_inches="tight")
     print(f"Non-observer GT tracks drawn: {non_observer_tracks_drawn}")
     print(f"Observer reference tracks drawn: {observer_reference_tracks_drawn}")
-    print(f"Saved figure: {output}")
+    # print(f"Saved figure: {output}")
+    plt.show()
 
 
 @hydra.main(config_path="./configs", config_name="config", version_base=None)

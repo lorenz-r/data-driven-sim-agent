@@ -47,6 +47,8 @@ def run_preprocessing(
         import torch
         from kigras.kinematics.ctra import CTRAKinematics
 
+        torch.set_default_dtype(torch.float64)
+
         kinematics = CTRAKinematics(**kinematics_cfg)
 
     # elif kinematics_cfg.name == "kbm":
@@ -70,6 +72,9 @@ def run_preprocessing(
     processing_times = []
 
     for i in range(len(raw_dataset)):
+        # if i == 10:
+        #     quit()
+
         start_time = time.perf_counter()
         data = raw_dataset[i]
 
@@ -106,7 +111,7 @@ def run_preprocessing(
                 window_mask = state_window[..., 6] > 0  # Shape: (1, 62)
                 action_valid = window_mask[:, :-1] & window_mask[:, 1:]  # (1, 61)
 
-                obs_window_t = torch.from_numpy(obs_window).float()
+                obs_window_t = torch.from_numpy(obs_window).to(torch.float64)
                 window_mask_t = torch.from_numpy(window_mask).bool()
                 actions = kinematics.solve(
                     obs_window_t, quantize=True, valid_mask=window_mask_t
@@ -135,7 +140,7 @@ def run_preprocessing(
             #         axis=-1,
             #     )
             #     valid = state_window[0, :, 6] > 0
-            #     obs_window_t = torch.from_numpy(obs_window).float()
+            #     obs_window_t = torch.from_numpy(obs_window).to(torch.float64)
             #     actions = kinematics.solve(
             #         obs_window_t,
             #         quantize=True,
@@ -153,7 +158,7 @@ def run_preprocessing(
             # plt.axis("equal")
             # plt.legend()
             # plt.show()
-            # quit()
+
             # # ------------------------------------------------------------------------------------------
 
             data["agents"]["action_tokens"] = token_ids  # (N, 109)

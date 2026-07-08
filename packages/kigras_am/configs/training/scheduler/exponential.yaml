@@ -1,0 +1,5 @@
+name: exponential
+interval: epoch
+frequency: 1
+params:
+  gamma: 0.95
