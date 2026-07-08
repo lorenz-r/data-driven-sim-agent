@@ -143,7 +143,7 @@ class InteractiveSceneEncoder(nn.Module):
             dim_feedforward=d_model,
             batch_first=True,
             norm_first=True,
-            dropout=0.1, 
+            dropout=0.1,
         )
         self.interaction_transformer = nn.TransformerEncoder(
             interaction_layer, num_layers=3
