@@ -519,9 +519,9 @@ class KiGRAS_HA(pl.LightningModule):
 
                 if num_samples > 1:
                     probs = torch.softmax(logits / max(temperature, 1e-6), dim=-1)
-                    action_tokens = torch.multinomial(
-                        probs.view(B * N, -1), 1
-                    ).view(B, N)
+                    action_tokens = torch.multinomial(probs.view(B * N, -1), 1).view(
+                        B, N
+                    )
                 else:
                     action_tokens = logits.argmax(dim=-1)  # (B, N)
 
