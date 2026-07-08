@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 
@@ -106,6 +106,32 @@ class InteractiveMetricScores:
 
 
 @dataclass(frozen=True)
+class MapFeatures:
+    """Per-agent, per-step map-adherence features."""
+
+    distance_to_road_edge: np.ndarray
+    offroad_per_step: np.ndarray
+
+
+@dataclass(frozen=True)
+class MapMetricScores:
+    """WOMD-style map likelihood scores in the range [0, 1]."""
+
+    distance_to_road_edge_likelihood: float
+    offroad_indication_likelihood: float
+    simulated_offroad_rate: float
+
+    @property
+    def mean(self) -> float:
+        values = [
+            self.distance_to_road_edge_likelihood,
+            self.offroad_indication_likelihood,
+        ]
+        finite_values = [value for value in values if np.isfinite(value)]
+        return float(np.mean(finite_values)) if finite_values else float("nan")
+
+
+@dataclass(frozen=True)
 class ForecastingMetricScores:
     """Point-error trajectory forecasting metrics in meters."""
 
@@ -140,8 +166,23 @@ WOMD_INTERACTIVE_HISTOGRAMS = {
 }
 
 
+WOMD_MAP_HISTOGRAMS = {
+    "distance_to_road_edge": HistogramConfig(
+        min_val=-20.0,
+        max_val=40.0,
+        num_bins=10,
+    ),
+    "offroad_indication": HistogramConfig(
+        min_val=-0.5,
+        max_val=1.5,
+        num_bins=2,
+    ),
+}
+
+
 EXTREMELY_LARGE_DISTANCE = 1e10
 COLLISION_DISTANCE_THRESHOLD = 0.0
+OFFROAD_DISTANCE_THRESHOLD = 0.0
 CORNER_ROUNDING_FACTOR = 0.7
 MAX_HEADING_DIFF = np.deg2rad(75.0)
 MAX_HEADING_DIFF_FOR_SMALL_OVERLAP = np.deg2rad(10.0)
@@ -1358,6 +1399,72 @@ def compute_interactive_features(
     )
 
 
+def compute_map_features(
+    map_geometry: Any,
+    positions: ArrayLike,
+    headings: ArrayLike | None = None,
+    *,
+    lengths: ArrayLike | float | None = None,
+    widths: ArrayLike | float | None = None,
+    valid: np.ndarray | None = None,
+    evaluated_object_mask: np.ndarray | None = None,
+) -> MapFeatures:
+    """Compute map-adherence features from trajectories and AV2 map geometry.
+
+    ``map_geometry`` is expected to provide the interface implemented by
+    ``DrivableMapGeometry`` in ``map-helper.py``. The returned arrays are shaped
+    like the evaluated subset: ``(objects, steps)`` for one trajectory sample or
+    ``(samples, objects, steps)`` for rollout batches.
+    """
+
+    positions, headings, valid, has_sample_dim = _normalize_trajectories(
+        positions,
+        headings,
+        valid,
+    )
+    lengths = _broadcast_object_time_values(
+        lengths,
+        default=DEFAULT_OBJECT_LENGTH,
+        target_shape=positions.shape[:-1],
+        name="lengths",
+    )
+    widths = _broadcast_object_time_values(
+        widths,
+        default=DEFAULT_OBJECT_WIDTH,
+        target_shape=positions.shape[:-1],
+        name="widths",
+    )
+    if evaluated_object_mask is None:
+        evaluated_object_mask = np.ones(positions.shape[1], dtype=bool)
+    else:
+        evaluated_object_mask = np.asarray(evaluated_object_mask, dtype=bool)
+        if evaluated_object_mask.shape != (positions.shape[1],):
+            raise ValueError(
+                f"evaluated_object_mask must have shape ({positions.shape[1]},)"
+            )
+
+    distance_to_road_edge = map_geometry.distance_to_road_edge_for_boxes(
+        positions[..., :2],
+        lengths,
+        widths,
+        headings,
+        valid=valid,
+        invalid_distance=-EXTREMELY_LARGE_DISTANCE,
+    )
+    offroad_per_step = distance_to_road_edge > OFFROAD_DISTANCE_THRESHOLD
+
+    distance_to_road_edge = distance_to_road_edge[:, evaluated_object_mask]
+    offroad_per_step = offroad_per_step[:, evaluated_object_mask]
+    if not has_sample_dim:
+        distance_to_road_edge = distance_to_road_edge[0]
+        offroad_per_step = offroad_per_step[0]
+
+    return MapFeatures(
+        distance_to_road_edge=distance_to_road_edge,
+        offroad_per_step=offroad_per_step,
+    )
+
+
 def _ensure_feature_shapes(
     gt_values: np.ndarray,
     sim_values: np.ndarray,
@@ -1771,4 +1878,125 @@ def compute_womd_interactive_metric_scores(
         collision_indication_likelihood=collision_indication,
         time_to_collision_likelihood=time_to_collision,
         simulated_collision_rate=simulated_collision_rate,
+    )
+
+
+def compute_womd_map_metric_scores(
+    gt_positions: ArrayLike,
+    sim_positions: ArrayLike,
+    map_geometry: Any,
+    gt_headings: ArrayLike | None = None,
+    sim_headings: ArrayLike | None = None,
+    *,
+    gt_lengths: ArrayLike | float | None = None,
+    gt_widths: ArrayLike | float | None = None,
+    sim_lengths: ArrayLike | float | None = None,
+    sim_widths: ArrayLike | float | None = None,
+    valid: np.ndarray | None = None,
+    sim_valid: np.ndarray | None = None,
+    evaluated_object_mask: np.ndarray | None = None,
+) -> MapMetricScores:
+    """Compute WOMD-style map likelihood metrics.
+
+    The implemented map bucket contains the two geometry-only partial metrics:
+
+    * ``distance_to_road_edge``: signed distance of each evaluated object's
+      most off-road box corner to the drivable-area boundary.
+    * ``offroad_indication``: whether an evaluated object is off-road at least
+      once over the GT-valid evaluation timesteps.
+
+    Red-light behavior is intentionally omitted because it requires traffic
+    signal state and lane-control semantics.
+    """
+
+    gt_positions, sim_positions = _prepare_metric_positions(gt_positions, sim_positions)
+    n_objects, n_steps = gt_positions.shape[:-1]
+
+    if valid is None:
+        valid = np.ones((n_objects, n_steps), dtype=bool)
+    else:
+        valid = np.asarray(valid, dtype=bool)
+        if valid.ndim == 1:
+            valid = valid[np.newaxis, :]
+        if valid.shape != (n_objects, n_steps):
+            raise ValueError(
+                f"valid shape {valid.shape} must match {(n_objects, n_steps)}"
+            )
+
+    if sim_valid is None:
+        sim_valid = np.ones(sim_positions.shape[:-1], dtype=bool)
+    else:
+        sim_valid = np.asarray(sim_valid, dtype=bool)
+        if sim_valid.ndim == 2:
+            sim_valid = sim_valid[np.newaxis, ...]
+        if sim_valid.shape != sim_positions.shape[:-1]:
+            raise ValueError(
+                f"sim_valid shape {sim_valid.shape} must match "
+                f"{sim_positions.shape[:-1]}"
+            )
+
+    if evaluated_object_mask is None:
+        evaluated_object_mask = np.ones(n_objects, dtype=bool)
+    else:
+        evaluated_object_mask = np.asarray(evaluated_object_mask, dtype=bool)
+        if evaluated_object_mask.shape != (n_objects,):
+            raise ValueError(
+                f"evaluated_object_mask shape {evaluated_object_mask.shape} "
+                f"must match {(n_objects,)}"
+            )
+
+    if sim_lengths is None:
+        sim_lengths = gt_lengths
+    if sim_widths is None:
+        sim_widths = gt_widths
+
+    gt_features = compute_map_features(
+        map_geometry,
+        gt_positions,
+        gt_headings,
+        lengths=gt_lengths,
+        widths=gt_widths,
+        valid=valid,
+        evaluated_object_mask=evaluated_object_mask,
+    )
+    sim_features = compute_map_features(
+        map_geometry,
+        sim_positions,
+        sim_headings,
+        lengths=sim_lengths,
+        widths=sim_widths,
+        valid=sim_valid,
+        evaluated_object_mask=evaluated_object_mask,
+    )
+
+    eval_valid = valid[evaluated_object_mask]
+
+    distance_to_road_edge = histogram_likelihood_score(
+        gt_features.distance_to_road_edge,
+        sim_features.distance_to_road_edge,
+        WOMD_MAP_HISTOGRAMS["distance_to_road_edge"],
+        valid=eval_valid,
+    )
+
+    gt_offroad_indication = np.any(
+        np.logical_and(gt_features.offroad_per_step, eval_valid),
+        axis=1,
+    )
+    sim_offroad_indication = np.any(
+        np.logical_and(sim_features.offroad_per_step, eval_valid[np.newaxis]),
+        axis=2,
+    )
+    offroad_indication = histogram_scenario_likelihood_score(
+        gt_offroad_indication,
+        sim_offroad_indication,
+        WOMD_MAP_HISTOGRAMS["offroad_indication"],
+        valid=np.any(eval_valid, axis=1),
+    )
+
+    simulated_offroad_rate = float(np.mean(sim_offroad_indication))
+
+    return MapMetricScores(
+        distance_to_road_edge_likelihood=distance_to_road_edge,
+        offroad_indication_likelihood=offroad_indication,
+        simulated_offroad_rate=simulated_offroad_rate,
     )

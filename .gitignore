@@ -57,3 +57,4 @@ example_command.sh
 
 example_command.sh
 av2_data/
+scripts/run_kigras_ha_small_pipeline.sh
