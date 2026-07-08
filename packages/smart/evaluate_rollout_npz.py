@@ -24,6 +24,7 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 METRICS_PATH = REPO_ROOT / "core" / "data-stuff" / "meta-metrics.py"
+MAP_HELPER_PATH = REPO_ROOT / "core" / "data-stuff" / "map-helper.py"
 
 SMART_TYPE_VEHICLE = 0
 SMART_TYPE_PEDESTRIAN = 1
@@ -75,6 +76,16 @@ def _load_meta_metrics():
     spec = importlib.util.spec_from_file_location("meta_metrics", METRICS_PATH)
     if spec is None or spec.loader is None:
         raise ImportError(f"Could not load metrics module from {METRICS_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_map_helper():
+    spec = importlib.util.spec_from_file_location("map_helper", MAP_HELPER_PATH)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load map helper module from {MAP_HELPER_PATH}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -254,12 +265,89 @@ def _compact_inference_metadata(metadata: dict[str, Any] | None) -> Any:
     return compact
 
 
+def _raw_data_folder_from_metadata(metadata: dict[str, Any] | None) -> Path | None:
+    if not isinstance(metadata, dict):
+        return None
+    cli = metadata.get("cli")
+    if not isinstance(cli, dict):
+        return None
+    raw_data_folder = cli.get("raw_data_folder")
+    if raw_data_folder in (None, "", "None"):
+        return None
+    return Path(str(raw_data_folder)).expanduser()
+
+
+def _find_raw_scenario_dir(raw_data_folder: Path, scenario_id: str) -> Path:
+    candidates = [
+        raw_data_folder / scenario_id,
+        raw_data_folder / "train" / scenario_id,
+        raw_data_folder / "val" / scenario_id,
+        raw_data_folder / "validation" / scenario_id,
+        raw_data_folder / "test" / scenario_id,
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return raw_data_folder / scenario_id
+
+
+def _find_single_file(folder: Path, pattern: str, description: str) -> Path:
+    matches = sorted(folder.glob(pattern))
+    if not matches:
+        raise FileNotFoundError(
+            f"No {description} found in {folder} matching {pattern}"
+        )
+    return matches[0]
+
+
+def _resolve_map_json_path(raw_data_folder: Path, scenario_id: str) -> Path:
+    raw_scenario_dir = _find_raw_scenario_dir(raw_data_folder, scenario_id)
+    return _find_single_file(raw_scenario_dir, "log_map_archive_*.json", "map json")
+
+
+def _load_map_geometry(
+    *,
+    scenario_id: str,
+    raw_data_folder: Path | None,
+    map_helper: Any | None,
+    map_geometry_cache: dict[Path, Any],
+) -> tuple[Any | None, dict[str, Any] | None, str | None]:
+    if raw_data_folder is None:
+        return None, None, "No raw AV2 data folder was provided or stored in metadata"
+    if map_helper is None:
+        return None, None, "Map helper module is not available"
+
+    try:
+        map_json_path = _resolve_map_json_path(raw_data_folder, scenario_id)
+        cache_key = map_json_path.resolve()
+        if cache_key not in map_geometry_cache:
+            map_geometry_cache[cache_key] = map_helper.DrivableMapGeometry.from_av2_json(
+                map_json_path
+            )
+        map_geometry = map_geometry_cache[cache_key]
+        return (
+            map_geometry,
+            {
+                "map_json": str(map_json_path),
+                "geometry_source": getattr(map_geometry, "source", None),
+                "polygon_count": getattr(map_geometry, "polygon_count", None),
+            },
+            None,
+        )
+    except Exception as exc:
+        return None, None, str(exc)
+
+
 def _compute_scenario_metrics_from_data(
     data: Any,
     *,
     input_label: str,
     metrics,
+    map_helper: Any | None,
+    map_geometry_cache: dict[Path, Any],
+    raw_data_folder: Path | None,
     no_interactive: bool,
+    no_map: bool,
     no_headings: bool,
     seconds_per_step: float,
 ) -> dict[str, Any]:
@@ -317,10 +405,11 @@ def _compute_scenario_metrics_from_data(
         valid=scored_eval_valid,
     )
 
+    agent_type = _agent_type(data, num_agents)
+    lengths, widths = _default_lengths_widths(agent_type)
+
     interactive = None
     if not no_interactive:
-        agent_type = _agent_type(data, num_agents)
-        lengths, widths = _default_lengths_widths(agent_type)
         interactive = metrics.compute_womd_interactive_metric_scores(
             gt_positions=gt,
             sim_positions=pred_traj,
@@ -337,10 +426,67 @@ def _compute_scenario_metrics_from_data(
             is_vehicle=agent_type == SMART_TYPE_VEHICLE,
         )
 
+    map_metric = None
+    scenario_raw_data_folder = raw_data_folder or _raw_data_folder_from_metadata(
+        inference_metadata
+    )
+    map_metadata = {
+        "available": False,
+        "raw_data_folder": (
+            str(scenario_raw_data_folder)
+            if scenario_raw_data_folder is not None
+            else None
+        ),
+        "map_json": None,
+        "geometry_source": None,
+        "polygon_count": None,
+        "error": None,
+    }
+    if not no_map:
+        map_geometry, loaded_map_metadata, map_error = _load_map_geometry(
+            scenario_id=scenario_id,
+            raw_data_folder=scenario_raw_data_folder,
+            map_helper=map_helper,
+            map_geometry_cache=map_geometry_cache,
+        )
+        if map_error is not None:
+            map_metadata["error"] = map_error
+            print(
+                f"Warning: skipping map metrics for scenario {scenario_id}: "
+                f"{map_error}",
+                file=sys.stderr,
+            )
+        else:
+            try:
+                map_metric = metrics.compute_womd_map_metric_scores(
+                    gt_positions=gt,
+                    sim_positions=pred_traj,
+                    map_geometry=map_geometry,
+                    gt_headings=gt_head if use_headings else None,
+                    sim_headings=pred_head if use_headings else None,
+                    gt_lengths=lengths,
+                    gt_widths=widths,
+                    sim_lengths=lengths,
+                    sim_widths=widths,
+                    valid=gt_valid_mask,
+                    sim_valid=pred_valid_mask,
+                    evaluated_object_mask=target_mask,
+                )
+                map_metadata.update(cast(dict[str, Any], loaded_map_metadata))
+                map_metadata["available"] = True
+            except Exception as exc:
+                map_metadata["error"] = str(exc)
+                print(
+                    f"Warning: failed to compute map metrics for scenario "
+                    f"{scenario_id}: {exc}",
+                    file=sys.stderr,
+                )
+
     return {
         "scenario_id": scenario_id,
         "input_npz": input_label,
         "inference_metadata": _compact_inference_metadata(inference_metadata),
+        "map_metadata": map_metadata,
         "counts": {
             "agents": int(num_agents),
             "target_agents": int(np.sum(target_mask)),
@@ -353,6 +499,7 @@ def _compute_scenario_metrics_from_data(
             "forecasting": _score_summary(forecasting),
             "kinematic": _score_summary(kinematic),
             "interactive": _score_summary(interactive),
+            "map": _score_summary(map_metric),
         },
     }
 
@@ -361,7 +508,11 @@ def _compute_scenario_metrics(
     npz_path: Path,
     *,
     metrics,
+    map_helper: Any | None,
+    map_geometry_cache: dict[Path, Any],
+    raw_data_folder: Path | None,
     no_interactive: bool,
+    no_map: bool,
     no_headings: bool,
     seconds_per_step: float,
 ) -> dict[str, Any]:
@@ -370,7 +521,11 @@ def _compute_scenario_metrics(
             data,
             input_label=str(npz_path),
             metrics=metrics,
+            map_helper=map_helper,
+            map_geometry_cache=map_geometry_cache,
+            raw_data_folder=raw_data_folder,
             no_interactive=no_interactive,
+            no_map=no_map,
             no_headings=no_headings,
             seconds_per_step=seconds_per_step,
         )
@@ -390,7 +545,11 @@ def _batch_scenarios(
     npz_path: Path,
     *,
     metrics,
+    map_helper: Any | None,
+    map_geometry_cache: dict[Path, Any],
+    raw_data_folder: Path | None,
     no_interactive: bool,
+    no_map: bool,
     no_headings: bool,
     seconds_per_step: float,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
@@ -405,6 +564,9 @@ def _batch_scenarios(
             raise ValueError(f"No scenarios found in batch file: {npz_path}")
 
         batch_metadata = _load_inference_metadata(data)
+        batch_raw_data_folder = raw_data_folder or _raw_data_folder_from_metadata(
+            batch_metadata
+        )
         scenarios = []
         for scenario_key, scenario_id in zip(scenario_keys, scenario_ids):
             scenarios.append(
@@ -412,7 +574,11 @@ def _batch_scenarios(
                     ScenarioNpzView(data, scenario_key),
                     input_label=f"{npz_path}::{scenario_id}",
                     metrics=metrics,
+                    map_helper=map_helper,
+                    map_geometry_cache=map_geometry_cache,
+                    raw_data_folder=batch_raw_data_folder,
                     no_interactive=no_interactive,
+                    no_map=no_map,
                     no_headings=no_headings,
                     seconds_per_step=seconds_per_step,
                 )
@@ -424,7 +590,11 @@ def _input_scenarios(
     npz_path: Path,
     *,
     metrics,
+    map_helper: Any | None,
+    map_geometry_cache: dict[Path, Any],
+    raw_data_folder: Path | None,
     no_interactive: bool,
+    no_map: bool,
     no_headings: bool,
     seconds_per_step: float,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
@@ -434,7 +604,11 @@ def _input_scenarios(
         return _batch_scenarios(
             npz_path,
             metrics=metrics,
+            map_helper=map_helper,
+            map_geometry_cache=map_geometry_cache,
+            raw_data_folder=raw_data_folder,
             no_interactive=no_interactive,
+            no_map=no_map,
             no_headings=no_headings,
             seconds_per_step=seconds_per_step,
         )
@@ -442,7 +616,11 @@ def _input_scenarios(
         _compute_scenario_metrics(
             npz_path,
             metrics=metrics,
+            map_helper=map_helper,
+            map_geometry_cache=map_geometry_cache,
+            raw_data_folder=raw_data_folder,
             no_interactive=no_interactive,
+            no_map=no_map,
             no_headings=no_headings,
             seconds_per_step=seconds_per_step,
         )
@@ -464,11 +642,16 @@ def _resolve_npz_inputs(path: Path) -> list[Path]:
 
 
 def _summary(
-    scenarios: list[dict[str, Any]], *, include_interactive: bool
+    scenarios: list[dict[str, Any]], *, include_interactive: bool, include_map: bool
 ) -> dict[str, Any]:
     forecasting = [item["metrics"]["forecasting"] for item in scenarios]
     kinematic = [item["metrics"]["kinematic"] for item in scenarios]
     interactive = [item["metrics"]["interactive"] for item in scenarios]
+    map_metrics = [
+        item["metrics"]["map"]
+        for item in scenarios
+        if isinstance(item["metrics"].get("map"), dict)
+    ]
     result = {
         "num_scenarios": len(scenarios),
         "counts": {
@@ -520,6 +703,27 @@ def _summary(
             ),
             "mean": _metric_mean([item["mean"] for item in interactive]),
         }
+    if include_map:
+        result["counts"]["map_metric_scenarios"] = len(map_metrics)
+        result["counts"]["map_metric_missing_scenarios"] = len(scenarios) - len(
+            map_metrics
+        )
+        result["map"] = (
+            {
+                "distance_to_road_edge_likelihood": _metric_mean(
+                    [item["distance_to_road_edge_likelihood"] for item in map_metrics]
+                ),
+                "offroad_indication_likelihood": _metric_mean(
+                    [item["offroad_indication_likelihood"] for item in map_metrics]
+                ),
+                "simulated_offroad_rate": _metric_mean(
+                    [item["simulated_offroad_rate"] for item in map_metrics]
+                ),
+                "mean": _metric_mean([item["mean"] for item in map_metrics]),
+            }
+            if map_metrics
+            else None
+        )
     return result
 
 
@@ -552,6 +756,21 @@ def main() -> None:
         help="Skip WOMD-style interactive metrics.",
     )
     parser.add_argument(
+        "--raw-data-folder",
+        type=Path,
+        default=None,
+        help=(
+            "Raw AV2 data folder containing scenario folders with "
+            "log_map_archive_*.json. If omitted, the evaluator uses the "
+            "raw_data_folder stored in inference metadata when available."
+        ),
+    )
+    parser.add_argument(
+        "--no-map",
+        action="store_true",
+        help="Skip WOMD-style map metrics.",
+    )
+    parser.add_argument(
         "--include-scenario-metrics",
         action="store_true",
         help="Include the full per-scenario metric log in the output JSON.",
@@ -560,13 +779,31 @@ def main() -> None:
 
     npz_files = _resolve_npz_inputs(args.input)
     metrics = _load_meta_metrics()
+    map_helper = None
+    if not args.no_map:
+        try:
+            map_helper = _load_map_helper()
+        except Exception as exc:
+            print(
+                f"Warning: map metrics will be skipped because map-helper "
+                f"could not be loaded: {exc}",
+                file=sys.stderr,
+            )
+    map_geometry_cache: dict[Path, Any] = {}
+    raw_data_folder = (
+        args.raw_data_folder.expanduser() if args.raw_data_folder is not None else None
+    )
     scenarios: list[dict[str, Any]] = []
     input_metadata: list[dict[str, Any]] = []
     for npz_path in npz_files:
         input_scenarios, batch_metadata = _input_scenarios(
             npz_path,
             metrics=metrics,
+            map_helper=map_helper,
+            map_geometry_cache=map_geometry_cache,
+            raw_data_folder=raw_data_folder,
             no_interactive=args.no_interactive,
+            no_map=args.no_map,
             no_headings=args.no_headings,
             seconds_per_step=args.seconds_per_step,
         )
@@ -594,6 +831,8 @@ def main() -> None:
                 "seconds_per_step": args.seconds_per_step,
                 "no_headings": args.no_headings,
                 "no_interactive": args.no_interactive,
+                "raw_data_folder": str(raw_data_folder) if raw_data_folder else None,
+                "no_map": args.no_map,
                 "include_scenario_metrics": args.include_scenario_metrics,
             },
             "input_metadata": input_metadata,
@@ -603,13 +842,17 @@ def main() -> None:
                 "kinematic_valid": "same selected target-agent forecasting_valid mask",
                 "interactive_gt_valid": "gt_valid_mask",
                 "interactive_sim_valid": "pred_valid_mask per rollout",
+                "map_gt_valid": "gt_valid_mask & target_agent",
+                "map_sim_valid": "pred_valid_mask per rollout",
             },
             "metrics_module": str(METRICS_PATH),
+            "map_helper_module": str(MAP_HELPER_PATH),
             "numba_available": bool(getattr(metrics, "NUMBA_AVAILABLE", False)),
         },
         "summary_metrics": _summary(
             scenarios,
             include_interactive=not args.no_interactive,
+            include_map=not args.no_map,
         ),
     }
     if args.include_scenario_metrics:
