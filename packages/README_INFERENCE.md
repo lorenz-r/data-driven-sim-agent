@@ -131,7 +131,9 @@ Example:
 
 ```bash
 uv run python packages/smart/evaluate_rollout_npz.py \
-  packages/smart/data/preds/batch_predictions_20260627T111519Z_92b646d6.npz
+  packages/smart/data/preds/batch_predictions_20260627T111519Z_92b646d6.npz \
+  --raw-data-folder av2_data/val \
+  --workers 8
 ```
 
 The default output path is:
@@ -143,6 +145,11 @@ The default output path is:
 Use `--include-scenario-metrics` to include the full per-scenario metric log in
 the JSON output.
 
+Evaluation shows a `tqdm` progress bar over processed scenarios. Use `--quiet` to
+hide it. `--workers` controls process-level parallelism for scenario evaluation;
+use `--workers 1` for sequential evaluation. Map metrics are enabled by default
+when raw AV2 map JSON files can be found; use `--no-map` to skip them.
+
 ### What Is Currently Evaluated
 
 The evaluator is tied to the `infer2.py` `.npz` schema. It computes:
@@ -150,7 +157,8 @@ The evaluator is tied to the `infer2.py` `.npz` schema. It computes:
 - forecasting metrics from ground-truth and simulated xy positions;
 - kinematic likelihood metrics from positions and headings when headings are
   available;
-- WOMD-style interactive metrics unless `--no-interactive` is passed.
+- WOMD-style interactive metrics unless `--no-interactive` is passed;
+- WOMD-style map metrics unless `--no-map` is passed.
 
 Only target/scored agents are included in the main forecasting and kinematic
 metrics. In the stored SMART data, this currently means:

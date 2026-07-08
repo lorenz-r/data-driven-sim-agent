@@ -12,21 +12,27 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import sys
-import time
 from collections.abc import Mapping
-from dataclasses import asdict, is_dataclass
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
+from tqdm import tqdm
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 METRICS_PATH = REPO_ROOT / "core" / "data-stuff" / "meta-metrics.py"
 MAP_HELPER_PATH = REPO_ROOT / "core" / "data-stuff" / "map-helper.py"
-PROGRESS_ENABLED = True
+DEFAULT_WORKERS = max(1, min(8, os.cpu_count() or 1))
+MAP_GEOMETRY_CACHE_LIMIT = 64
+_WORKER_METRICS: Any | None = None
+_WORKER_MAP_HELPER: Any | None = None
+_WORKER_MAP_GEOMETRY_CACHE: dict[Path, Any] | None = None
 
 SMART_TYPE_VEHICLE = 0
 SMART_TYPE_PEDESTRIAN = 1
@@ -41,15 +47,16 @@ SMART_TYPE_DEFAULT_BOX = {
 }
 
 
-def _progress(message: str) -> None:
-    if not PROGRESS_ENABLED:
-        return
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"[{timestamp}] {message}", file=sys.stderr, flush=True)
-
-
-def _elapsed(start: float) -> str:
-    return f"{time.monotonic() - start:.1f}s"
+@dataclass(frozen=True)
+class EvaluationTask:
+    npz_path: Path
+    input_label: str
+    scenario_key: str | None
+    raw_data_folder: str | None
+    no_interactive: bool
+    no_map: bool
+    no_headings: bool
+    seconds_per_step: float
 
 
 class ScenarioNpzView(Mapping):
@@ -334,6 +341,8 @@ def _load_map_geometry(
         map_json_path = _resolve_map_json_path(raw_data_folder, scenario_id)
         cache_key = map_json_path.resolve()
         if cache_key not in map_geometry_cache:
+            if len(map_geometry_cache) >= MAP_GEOMETRY_CACHE_LIMIT:
+                map_geometry_cache.clear()
             map_geometry_cache[cache_key] = (
                 map_helper.DrivableMapGeometry.from_av2_json(map_json_path)
             )
@@ -364,9 +373,7 @@ def _compute_scenario_metrics_from_data(
     no_headings: bool,
     seconds_per_step: float,
 ) -> dict[str, Any]:
-    scenario_start = time.monotonic()
     scenario_id = _scenario_id(data, Path(input_label).stem)
-    _progress(f"{scenario_id}: loading rollout arrays")
     inference_metadata = _load_inference_metadata(data)
     pred_traj = _ensure_rollout_positions(_require_key(data, "pred_traj"))
     pred_head = _ensure_rollout_headings(_optional_key(data, "pred_head"))
@@ -406,8 +413,6 @@ def _compute_scenario_metrics_from_data(
         pred_head[:, target_mask] if pred_head is not None and use_headings else None
     )
 
-    phase_start = time.monotonic()
-    _progress(f"{scenario_id}: computing forecasting and kinematic metrics")
     forecasting = metrics.compute_forecasting_metric_scores(
         gt_positions=scored_gt,
         sim_positions=scored_pred,
@@ -421,18 +426,12 @@ def _compute_scenario_metrics_from_data(
         seconds_per_step=seconds_per_step,
         valid=scored_eval_valid,
     )
-    _progress(
-        f"{scenario_id}: forecasting and kinematic metrics done in "
-        f"{_elapsed(phase_start)}"
-    )
 
     agent_type = _agent_type(data, num_agents)
     lengths, widths = _default_lengths_widths(agent_type)
 
     interactive = None
     if not no_interactive:
-        phase_start = time.monotonic()
-        _progress(f"{scenario_id}: computing interactive metrics")
         interactive = metrics.compute_womd_interactive_metric_scores(
             gt_positions=gt,
             sim_positions=pred_traj,
@@ -448,7 +447,6 @@ def _compute_scenario_metrics_from_data(
             evaluated_object_mask=target_mask,
             is_vehicle=agent_type == SMART_TYPE_VEHICLE,
         )
-        _progress(f"{scenario_id}: interactive metrics done in {_elapsed(phase_start)}")
 
     map_metric = None
     scenario_raw_data_folder = raw_data_folder or _raw_data_folder_from_metadata(
@@ -467,8 +465,6 @@ def _compute_scenario_metrics_from_data(
         "error": None,
     }
     if not no_map:
-        phase_start = time.monotonic()
-        _progress(f"{scenario_id}: loading map geometry")
         map_geometry, loaded_map_metadata, map_error = _load_map_geometry(
             scenario_id=scenario_id,
             raw_data_folder=scenario_raw_data_folder,
@@ -486,16 +482,6 @@ def _compute_scenario_metrics_from_data(
         else:
             try:
                 map_metadata.update(cast(dict[str, Any], loaded_map_metadata))
-                polygon_count = map_metadata.get("polygon_count")
-                target_gt_boxes = int(np.sum(gt_valid_mask & target_mask[:, None]))
-                target_sim_boxes = int(np.sum(pred_valid_mask[:, target_mask, :]))
-                box_count = target_gt_boxes + target_sim_boxes
-                _progress(
-                    f"{scenario_id}: map geometry ready in {_elapsed(phase_start)} "
-                    f"({polygon_count} polygon(s)); computing map metrics for "
-                    f"{box_count} valid boxes / {box_count * 4} corner queries"
-                )
-                phase_start = time.monotonic()
                 map_metric = metrics.compute_womd_map_metric_scores(
                     gt_positions=gt,
                     sim_positions=pred_traj,
@@ -511,7 +497,6 @@ def _compute_scenario_metrics_from_data(
                     evaluated_object_mask=target_mask,
                 )
                 map_metadata["available"] = True
-                _progress(f"{scenario_id}: map metrics done in {_elapsed(phase_start)}")
             except Exception as exc:
                 map_metadata["error"] = str(exc)
                 print(
@@ -541,35 +526,7 @@ def _compute_scenario_metrics_from_data(
             "map": _score_summary(map_metric),
         },
     }
-    _progress(f"{scenario_id}: scenario done in {_elapsed(scenario_start)}")
     return result
-
-
-def _compute_scenario_metrics(
-    npz_path: Path,
-    *,
-    metrics,
-    map_helper: Any | None,
-    map_geometry_cache: dict[Path, Any],
-    raw_data_folder: Path | None,
-    no_interactive: bool,
-    no_map: bool,
-    no_headings: bool,
-    seconds_per_step: float,
-) -> dict[str, Any]:
-    with np.load(npz_path, allow_pickle=False) as data:
-        return _compute_scenario_metrics_from_data(
-            data,
-            input_label=str(npz_path),
-            metrics=metrics,
-            map_helper=map_helper,
-            map_geometry_cache=map_geometry_cache,
-            raw_data_folder=raw_data_folder,
-            no_interactive=no_interactive,
-            no_map=no_map,
-            no_headings=no_headings,
-            seconds_per_step=seconds_per_step,
-        )
 
 
 def _is_batch_npz(data: np.lib.npyio.NpzFile) -> bool:
@@ -582,19 +539,35 @@ def _is_batch_npz(data: np.lib.npyio.NpzFile) -> bool:
     )
 
 
-def _batch_scenarios(
+def _task_raw_data_folder(raw_data_folder: Path | None) -> str | None:
+    return str(raw_data_folder) if raw_data_folder is not None else None
+
+
+def _input_tasks(
     npz_path: Path,
     *,
-    metrics,
-    map_helper: Any | None,
-    map_geometry_cache: dict[Path, Any],
     raw_data_folder: Path | None,
     no_interactive: bool,
     no_map: bool,
     no_headings: bool,
     seconds_per_step: float,
-) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+) -> tuple[list[EvaluationTask], dict[str, Any] | None]:
     with np.load(npz_path, allow_pickle=False) as data:
+        is_batch = _is_batch_npz(data)
+        if not is_batch:
+            return [
+                EvaluationTask(
+                    npz_path=npz_path,
+                    input_label=str(npz_path),
+                    scenario_key=None,
+                    raw_data_folder=_task_raw_data_folder(raw_data_folder),
+                    no_interactive=no_interactive,
+                    no_map=no_map,
+                    no_headings=no_headings,
+                    seconds_per_step=seconds_per_step,
+                )
+            ], None
+
         scenario_keys = [str(key) for key in np.asarray(data["scenario_keys"]).tolist()]
         scenario_ids = (
             [str(item) for item in np.asarray(data["scenario_ids"]).tolist()]
@@ -604,77 +577,112 @@ def _batch_scenarios(
         if not scenario_keys:
             raise ValueError(f"No scenarios found in batch file: {npz_path}")
 
-        _progress(f"{npz_path}: evaluating batch with {len(scenario_keys)} scenario(s)")
         batch_metadata = _load_inference_metadata(data)
         batch_raw_data_folder = raw_data_folder or _raw_data_folder_from_metadata(
             batch_metadata
         )
-        scenarios = []
-        for index, (scenario_key, scenario_id) in enumerate(
-            zip(scenario_keys, scenario_ids),
-            start=1,
-        ):
-            _progress(
-                f"{npz_path}: scenario {index}/{len(scenario_keys)} "
-                f"({scenario_id})"
+        task_raw_data_folder = _task_raw_data_folder(batch_raw_data_folder)
+        return [
+            EvaluationTask(
+                npz_path=npz_path,
+                input_label=f"{npz_path}::{scenario_id}",
+                scenario_key=scenario_key,
+                raw_data_folder=task_raw_data_folder,
+                no_interactive=no_interactive,
+                no_map=no_map,
+                no_headings=no_headings,
+                seconds_per_step=seconds_per_step,
             )
-            scenarios.append(
-                _compute_scenario_metrics_from_data(
-                    ScenarioNpzView(data, scenario_key),
-                    input_label=f"{npz_path}::{scenario_id}",
-                    metrics=metrics,
-                    map_helper=map_helper,
-                    map_geometry_cache=map_geometry_cache,
-                    raw_data_folder=batch_raw_data_folder,
-                    no_interactive=no_interactive,
-                    no_map=no_map,
-                    no_headings=no_headings,
-                    seconds_per_step=seconds_per_step,
-                )
-            )
-    return scenarios, batch_metadata
+            for scenario_key, scenario_id in zip(scenario_keys, scenario_ids)
+        ], batch_metadata
 
 
-def _input_scenarios(
-    npz_path: Path,
+def _init_worker(load_map_helper: bool) -> None:
+    global _WORKER_MAP_GEOMETRY_CACHE, _WORKER_MAP_HELPER, _WORKER_METRICS
+    _WORKER_METRICS = _load_meta_metrics()
+    _WORKER_MAP_HELPER = _load_map_helper() if load_map_helper else None
+    _WORKER_MAP_GEOMETRY_CACHE = {}
+
+
+def _worker_state(load_map_helper: bool) -> tuple[Any, Any | None, dict[Path, Any]]:
+    global _WORKER_MAP_GEOMETRY_CACHE, _WORKER_MAP_HELPER, _WORKER_METRICS
+    if _WORKER_METRICS is None:
+        _WORKER_METRICS = _load_meta_metrics()
+    if _WORKER_MAP_HELPER is None and load_map_helper:
+        _WORKER_MAP_HELPER = _load_map_helper()
+    if _WORKER_MAP_GEOMETRY_CACHE is None:
+        _WORKER_MAP_GEOMETRY_CACHE = {}
+    return _WORKER_METRICS, _WORKER_MAP_HELPER, _WORKER_MAP_GEOMETRY_CACHE
+
+
+def _evaluate_task(task: EvaluationTask, *, load_map_helper: bool) -> dict[str, Any]:
+    metrics, map_helper, map_geometry_cache = _worker_state(load_map_helper)
+    raw_data_folder = (
+        Path(task.raw_data_folder).expanduser() if task.raw_data_folder else None
+    )
+    with np.load(task.npz_path, allow_pickle=False) as data:
+        scenario_data = (
+            ScenarioNpzView(data, task.scenario_key)
+            if task.scenario_key is not None
+            else data
+        )
+        return _compute_scenario_metrics_from_data(
+            scenario_data,
+            input_label=task.input_label,
+            metrics=metrics,
+            map_helper=map_helper,
+            map_geometry_cache=map_geometry_cache,
+            raw_data_folder=raw_data_folder,
+            no_interactive=task.no_interactive,
+            no_map=task.no_map,
+            no_headings=task.no_headings,
+            seconds_per_step=task.seconds_per_step,
+        )
+
+
+def _evaluate_task_worker(args: tuple[EvaluationTask, bool]) -> dict[str, Any]:
+    task, load_map_helper = args
+    return _evaluate_task(task, load_map_helper=load_map_helper)
+
+
+def _evaluate_tasks(
+    tasks: list[EvaluationTask],
     *,
-    metrics,
-    map_helper: Any | None,
-    map_geometry_cache: dict[Path, Any],
-    raw_data_folder: Path | None,
-    no_interactive: bool,
-    no_map: bool,
-    no_headings: bool,
-    seconds_per_step: float,
-) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    _progress(f"Reading input: {npz_path}")
-    with np.load(npz_path, allow_pickle=False) as data:
-        is_batch = _is_batch_npz(data)
-    if is_batch:
-        return _batch_scenarios(
-            npz_path,
-            metrics=metrics,
-            map_helper=map_helper,
-            map_geometry_cache=map_geometry_cache,
-            raw_data_folder=raw_data_folder,
-            no_interactive=no_interactive,
-            no_map=no_map,
-            no_headings=no_headings,
-            seconds_per_step=seconds_per_step,
-        )
-    return [
-        _compute_scenario_metrics(
-            npz_path,
-            metrics=metrics,
-            map_helper=map_helper,
-            map_geometry_cache=map_geometry_cache,
-            raw_data_folder=raw_data_folder,
-            no_interactive=no_interactive,
-            no_map=no_map,
-            no_headings=no_headings,
-            seconds_per_step=seconds_per_step,
-        )
-    ], None
+    workers: int,
+    load_map_helper: bool,
+    quiet: bool,
+) -> list[dict[str, Any]]:
+    if not tasks:
+        return []
+
+    desc = "Evaluating scenarios"
+    if workers <= 1 or len(tasks) == 1:
+        _init_worker(load_map_helper)
+        return [
+            _evaluate_task(task, load_map_helper=load_map_helper)
+            for task in tqdm(tasks, desc=desc, unit="scenario", disable=quiet)
+        ]
+
+    results: list[dict[str, Any] | None] = [None] * len(tasks)
+    with ProcessPoolExecutor(
+        max_workers=workers,
+        initializer=_init_worker,
+        initargs=(load_map_helper,),
+    ) as executor:
+        future_to_index = {
+            executor.submit(_evaluate_task_worker, (task, load_map_helper)): index
+            for index, task in enumerate(tasks)
+        }
+        for future in tqdm(
+            as_completed(future_to_index),
+            total=len(future_to_index),
+            desc=desc,
+            unit="scenario",
+            disable=quiet,
+        ):
+            results[future_to_index[future]] = future.result()
+
+    return [cast(dict[str, Any], result) for result in results]
 
 
 def _resolve_npz_inputs(path: Path) -> list[Path]:
@@ -828,25 +836,29 @@ def main() -> None:
     parser.add_argument(
         "--quiet",
         action="store_true",
-        help="Suppress progress messages.",
+        help="Suppress the scenario progress bar.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help=(
+            "Number of worker processes for scenario evaluation "
+            f"(default: {DEFAULT_WORKERS}; use 1 for sequential evaluation)."
+        ),
     )
     args = parser.parse_args()
 
-    global PROGRESS_ENABLED
-    PROGRESS_ENABLED = not args.quiet
+    if args.workers < 1:
+        raise ValueError("--workers must be at least 1")
 
-    run_start = time.monotonic()
     npz_files = _resolve_npz_inputs(args.input)
-    _progress(
-        f"Found {len(npz_files)} .npz input file(s); "
-        f"map metrics={'off' if args.no_map else 'on'}, "
-        f"interactive metrics={'off' if args.no_interactive else 'on'}"
-    )
     metrics = _load_meta_metrics()
-    map_helper = None
+    load_map_helper = False
     if not args.no_map:
         try:
-            map_helper = _load_map_helper()
+            _load_map_helper()
+            load_map_helper = True
         except Exception as exc:
             print(
                 f"Warning: map metrics will be skipped because map-helper "
@@ -854,26 +866,21 @@ def main() -> None:
                 file=sys.stderr,
                 flush=True,
             )
-    map_geometry_cache: dict[Path, Any] = {}
     raw_data_folder = (
         args.raw_data_folder.expanduser() if args.raw_data_folder is not None else None
     )
-    scenarios: list[dict[str, Any]] = []
+    tasks: list[EvaluationTask] = []
     input_metadata: list[dict[str, Any]] = []
-    for index, npz_path in enumerate(npz_files, start=1):
-        _progress(f"Input file {index}/{len(npz_files)}: {npz_path}")
-        input_scenarios, batch_metadata = _input_scenarios(
+    for npz_path in npz_files:
+        input_tasks, batch_metadata = _input_tasks(
             npz_path,
-            metrics=metrics,
-            map_helper=map_helper,
-            map_geometry_cache=map_geometry_cache,
             raw_data_folder=raw_data_folder,
             no_interactive=args.no_interactive,
             no_map=args.no_map,
             no_headings=args.no_headings,
             seconds_per_step=args.seconds_per_step,
         )
-        scenarios.extend(input_scenarios)
+        tasks.extend(input_tasks)
         if batch_metadata is not None:
             input_metadata.append(
                 {
@@ -881,6 +888,14 @@ def main() -> None:
                     "inference_metadata": _compact_inference_metadata(batch_metadata),
                 }
             )
+
+    effective_workers = min(args.workers, len(tasks)) if tasks else 1
+    scenarios = _evaluate_tasks(
+        tasks,
+        workers=effective_workers,
+        load_map_helper=load_map_helper,
+        quiet=args.quiet,
+    )
 
     output_path = args.output
     if output_path is None:
@@ -901,6 +916,8 @@ def main() -> None:
                 "no_map": args.no_map,
                 "include_scenario_metrics": args.include_scenario_metrics,
                 "quiet": args.quiet,
+                "workers": effective_workers,
+                "requested_workers": args.workers,
             },
             "input_metadata": input_metadata,
             "masking_policy": {
@@ -925,11 +942,9 @@ def main() -> None:
     if args.include_scenario_metrics:
         report["scenario_metrics"] = scenarios
 
-    _progress(f"Writing metrics report to: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as file:
         json.dump(_jsonable(report), file, indent=2, sort_keys=True)
-    _progress(f"Evaluation finished in {_elapsed(run_start)}")
     print(f"Wrote metrics report to: {output_path}")
 
 
