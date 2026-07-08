@@ -108,6 +108,12 @@ def build_overrides(
         # Grid fixed for the coarse pass (avoids per-trial re-preprocessing).
         f"model.architecture.num_action_bins={args.num_action_bins}",
         f"model.kinematics.grid_power={args.grid_power}",
+        # Batch size + checkpointing are compute knobs, fixed (not searched):
+        # LR absorbs the batch-scale effect, and checkpointing lets the largest
+        # sampled config fit on 16 GB so big models aren't silently pruned by OOM.
+        f"training.dataloader.train_batch_size={args.train_batch_size}",
+        f"training.dataloader.val_batch_size={args.val_batch_size}",
+        f"model.architecture.gradient_checkpointing={str(not args.no_grad_checkpointing).lower()}",
         f"training.trainer.max_epochs={args.max_epochs}",
         f"training.checkpointing.dirpath={trial_dir / 'ckpts'}",
         "resume.checkpoint_path=null",
@@ -273,6 +279,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--download-size", type=str, default="small")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--cpu", action="store_true", help="Force CPU training.")
+    # Compute knobs (fixed across trials, not part of the search space).
+    p.add_argument("--train-batch-size", type=int, default=8)
+    p.add_argument("--val-batch-size", type=int, default=16)
+    p.add_argument(
+        "--no-grad-checkpointing",
+        action="store_true",
+        help="Disable gradient checkpointing (faster, higher VRAM; may OOM big configs).",
+    )
     # Grid fixed for the coarse pass (changing it re-preprocesses per trial).
     p.add_argument("--num-action-bins", type=int, default=63)
     p.add_argument("--grid-power", type=float, default=1.0)
