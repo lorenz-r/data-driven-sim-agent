@@ -29,6 +29,12 @@ class KiGRAS_HA(pl.LightningModule):
         grid_power: float = 1.0,
         k_neighbors: int = 16,
         fusion_chunk_size: int = 15,
+        embedding_dim: int = 64,
+        num_head: int = 4,
+        encoder_num_layers: int = 3,
+        decoder_num_layers: int = 3,
+        dropout: float = 0.1,
+        scheduler_config: dict | None = None,
     ):
         if vocab_size is None:
             vocab_size = num_accel_bins * num_steer_bins
@@ -39,9 +45,24 @@ class KiGRAS_HA(pl.LightningModule):
         self.encoder = InteractiveSceneEncoder(
             num_semantic_classes=num_semantic_classes,
             vocab_size=vocab_size,
+            d_model=embedding_dim,
+            nhead=num_head,
+            num_layers=encoder_num_layers,
+            dropout=dropout,
         )
         # Causal temporal decoder over the 60-step future sequence
-        self.decoder = ActionDecoder(num_action_bins=vocab_size, seq_len=60)
+        self.decoder = ActionDecoder(
+            num_action_bins=vocab_size,
+            seq_len=60,
+            d_model=embedding_dim,
+            nhead=num_head,
+            num_layers=decoder_num_layers,
+            dropout=dropout,
+        )
+
+        # Optional LR-scheduler override (see configure_optimizers); None keeps
+        # the default OneCycleLR behaviour.
+        self.scheduler_config = scheduler_config
 
         # SOS token index — one past the last real action bin
         self.start_token_idx = vocab_size
@@ -412,16 +433,38 @@ class KiGRAS_HA(pl.LightningModule):
             lr=self.hparams.lr,
             weight_decay=self.hparams.weight_decay,
         )
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer,
-            max_lr=self.hparams.lr,
-            total_steps=self.trainer.estimated_stepping_batches,
-            pct_start=0.3,
-            anneal_strategy="cos",
-        )
+
+        # Default: step-wise OneCycleLR (max_lr = lr, 30% warmup, cosine anneal).
+        # A scheduler_config dict {name, interval, params} overrides it so the
+        # schedule is tunable (mirrors kigras_am's registry approach).
+        cfg = dict(self.scheduler_config or {})
+        name = str(cfg.pop("name", "onecycle")).lower()
+        interval = str(cfg.pop("interval", "step"))
+        params = dict(cfg.pop("params", {}))
+
+        if name == "none":
+            return optimizer
+
+        if name == "onecycle":
+            params.setdefault("max_lr", self.hparams.lr)
+            params.setdefault("total_steps", self.trainer.estimated_stepping_batches)
+            params.setdefault("pct_start", 0.3)
+            params.setdefault("anneal_strategy", "cos")
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, **params)
+        elif name == "cosine":
+            params.setdefault(
+                "T_max",
+                self.trainer.estimated_stepping_batches
+                if interval == "step"
+                else self.trainer.max_epochs,
+            )
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **params)
+        else:
+            raise ValueError(f"Unsupported scheduler '{name}'. Use onecycle|cosine|none.")
+
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+            "lr_scheduler": {"scheduler": scheduler, "interval": interval},
         }
 
     # ------------------------------------------------------------------

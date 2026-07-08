@@ -15,3 +15,7 @@ defaults:
 
 resume:
   checkpoint_path: auto
+
+# Global RNG seed (pl.seed_everything in run_training). Fix it for reproducible
+# runs and for fair hyperparameter-search trials.
+seed: 0

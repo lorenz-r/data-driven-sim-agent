@@ -1,9 +1,13 @@
 # KiGRAS Architecture Params
 embedding_dim: 64
-num_head: 4
+num_head: 4           # must divide embedding_dim
 encoder_num_layers: 3
 decoder_num_layers: 3
 dropout: 0.1
 num_actions: 2
 num_action_bins: 63
 max_agents: 0         # cap on agents per scene during training; 0 = keep all (no filtering)
+k_neighbors: 16       # nearest agents each observer pools for interaction
+fusion_chunk_size: 15 # teacher-forcing time chunk (perf only); 0 = all 60 at once
+require_complete_history: false  # only used when max_agents > 0
+gradient_checkpointing: false    # trade compute for lower peak VRAM

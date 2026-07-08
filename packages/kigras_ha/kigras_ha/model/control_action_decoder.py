@@ -40,6 +40,7 @@ class ActionDecoder(nn.Module):
         seq_len: int = 60,
         nhead: int = 4,
         num_layers: int = 3,
+        dropout: float = 0.1,
     ):
         super().__init__()
 
@@ -51,7 +52,7 @@ class ActionDecoder(nn.Module):
             dim_feedforward=d_model,  # matches paper's ~0.7M param budget
             batch_first=True,
             norm_first=True,
-            dropout=0.1,  # Change back to 0.1
+            dropout=dropout,
         )
         self.causal_transformer = nn.TransformerEncoder(
             decoder_layer, num_layers=num_layers

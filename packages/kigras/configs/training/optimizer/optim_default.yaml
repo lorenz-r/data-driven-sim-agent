@@ -12,3 +12,13 @@ scheduler_params:
   gamma: 0.1
   eta_min: 1e-6
   warmup_epochs: 0
+
+# LR scheduler actually used by KiGRAS_HA.configure_optimizers.
+# name: onecycle | cosine | none.  Defaults reproduce the previous hardcoded
+# OneCycleLR (max_lr=learning_rate, 30% warmup, cosine anneal, per-step).
+lr_scheduler:
+  name: onecycle
+  interval: step
+  params:
+    pct_start: 0.3
+    anneal_strategy: cos

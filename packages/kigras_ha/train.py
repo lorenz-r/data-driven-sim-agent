@@ -14,15 +14,23 @@ from pathlib import Path
 
 
 class _EpochLossTracker(pl.Callback):
-    """Records train_loss_epoch after each epoch to compute loss_decrease."""
+    """Records per-epoch train/val loss for the metrics summary + sweep objective."""
 
     def __init__(self):
         self.epoch_losses: list[float] = []
+        self.val_losses: list[float] = []
 
     def on_train_epoch_end(self, trainer, pl_module):
         loss = trainer.callback_metrics.get("train_loss_epoch")
         if loss is not None:
             self.epoch_losses.append(float(loss))
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        loss = trainer.callback_metrics.get("val_loss_epoch")
+        if loss is None:
+            loss = trainer.callback_metrics.get("val_loss")
+        if loss is not None:
+            self.val_losses.append(float(loss))
 
     @property
     def start_loss(self) -> Optional[float]:
@@ -37,6 +45,10 @@ class _EpochLossTracker(pl.Callback):
         if self.start_loss is not None and self.end_loss is not None:
             return self.start_loss - self.end_loss
         return None
+
+    @property
+    def best_val_loss(self) -> Optional[float]:
+        return min(self.val_losses) if self.val_losses else None
 
 
 def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -> dict:
@@ -57,6 +69,10 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
     dict
         Training metrics (currently empty, reserved for future use).
     """
+    # Reproducibility: seed everything so a config's result is deterministic and
+    # hparam-search trials are not confounded by random-init variance.
+    pl.seed_everything(int(cfg.get("seed", 0)), workers=True)
+
     dl_cfg = cfg.training.dataloader
     optim_cfg = cfg.training.optimizer
     ckpt_cfg = cfg.training.checkpointing
@@ -80,6 +96,10 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
     # Model
     # ------------------------------------------------------------------
     kin_cfg = cfg.model.get("kinematics", None)
+    sched_cfg = optim_cfg.get("lr_scheduler", None)
+    scheduler_config = (
+        OmegaConf.to_container(sched_cfg, resolve=True) if sched_cfg is not None else None
+    )
     model = KiGRAS_HA(
         lr=optim_cfg["learning_rate"],
         weight_decay=optim_cfg["weight_decay"],
@@ -91,6 +111,12 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
         grid_power=kin_cfg.get("grid_power", 1.0) if kin_cfg is not None else 1.0,
         k_neighbors=model_cfg.get("k_neighbors", 16),
         fusion_chunk_size=model_cfg.get("fusion_chunk_size", 15),
+        embedding_dim=model_cfg.get("embedding_dim", 64),
+        num_head=model_cfg.get("num_head", 4),
+        encoder_num_layers=model_cfg.get("encoder_num_layers", 3),
+        decoder_num_layers=model_cfg.get("decoder_num_layers", 3),
+        dropout=model_cfg.get("dropout", 0.1),
+        scheduler_config=scheduler_config,
     )
 
     # ------------------------------------------------------------------
@@ -166,6 +192,7 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
         "start_loss": loss_tracker.start_loss,
         "end_loss": loss_tracker.end_loss,
         "loss_decrease": loss_tracker.loss_decrease,
+        "best_val_loss": loss_tracker.best_val_loss,
     }
 
     if return_metrics_path:

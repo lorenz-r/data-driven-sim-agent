@@ -126,7 +126,14 @@ class InteractiveSceneEncoder(nn.Module):
     """
 
     def __init__(
-        self, d_model=64, num_semantic_classes=10, vocab_size=3969, feat_dim=7
+        self,
+        d_model=64,
+        num_semantic_classes=10,
+        vocab_size=3969,
+        feat_dim=7,
+        nhead=4,
+        num_layers=3,
+        dropout=0.1,
     ):
         super().__init__()
 
@@ -139,14 +146,14 @@ class InteractiveSceneEncoder(nn.Module):
 
         interaction_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
-            nhead=4,
+            nhead=nhead,
             dim_feedforward=d_model,
             batch_first=True,
             norm_first=True,
-            dropout=0.1,
+            dropout=dropout,
         )
         self.interaction_transformer = nn.TransformerEncoder(
-            interaction_layer, num_layers=3
+            interaction_layer, num_layers=num_layers
         )
 
     def encode_history(self, feats, h0=None):
