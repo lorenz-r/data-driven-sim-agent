@@ -652,7 +652,7 @@ def _summary(
         for item in scenarios
         if isinstance(item["metrics"].get("map"), dict)
     ]
-    result = {
+    result: dict[str, Any] = {
         "num_scenarios": len(scenarios),
         "counts": {
             "target_agents": int(
