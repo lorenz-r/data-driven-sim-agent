@@ -321,8 +321,8 @@ def _load_map_geometry(
         map_json_path = _resolve_map_json_path(raw_data_folder, scenario_id)
         cache_key = map_json_path.resolve()
         if cache_key not in map_geometry_cache:
-            map_geometry_cache[cache_key] = map_helper.DrivableMapGeometry.from_av2_json(
-                map_json_path
+            map_geometry_cache[cache_key] = (
+                map_helper.DrivableMapGeometry.from_av2_json(map_json_path)
             )
         map_geometry = map_geometry_cache[cache_key]
         return (

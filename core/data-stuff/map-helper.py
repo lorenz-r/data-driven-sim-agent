@@ -44,8 +44,7 @@ def _as_xy_polygon(coords: Any) -> Any | None:
     xy = np.asarray(coords, dtype=float)
     if xy.ndim != 2 or xy.shape[1] < 2:
         raise ValueError(
-            "polygon coordinates must have shape (points, 2|3), "
-            f"got {xy.shape}"
+            f"polygon coordinates must have shape (points, 2|3), got {xy.shape}"
         )
     xy = xy[:, :2]
     finite = np.all(np.isfinite(xy), axis=1)
@@ -169,16 +168,14 @@ class DrivableMapGeometry:
         """Build geometry from an ``ArgoverseStaticMap``-like object."""
 
         polygons = [
-            _as_xy_polygon(coords)
-            for coords in _iter_av2_drivable_polygons(static_map)
+            _as_xy_polygon(coords) for coords in _iter_av2_drivable_polygons(static_map)
         ]
         polygons = [polygon for polygon in polygons if polygon is not None]
         geometry_source = source or "av2_static_map:drivable_areas"
 
         if not polygons and allow_lane_fallback:
             polygons = [
-                _as_xy_polygon(coords)
-                for coords in _iter_av2_lane_polygons(static_map)
+                _as_xy_polygon(coords) for coords in _iter_av2_lane_polygons(static_map)
             ]
             polygons = [polygon for polygon in polygons if polygon is not None]
             geometry_source = source or "av2_static_map:lane_polygons"
@@ -412,13 +409,10 @@ class DrivableMapGeometry:
         if points.ndim == 1:
             if points.shape != (2,):
                 raise ValueError(
-                    "points_xy must end with coordinate dim 2, "
-                    f"got {points.shape}"
+                    f"points_xy must end with coordinate dim 2, got {points.shape}"
                 )
             return points.reshape(1, 2), ()
         if points.ndim < 2 or points.shape[-1] != 2:
-            raise ValueError(
-                f"points_xy must have shape (..., 2), got {points.shape}"
-            )
+            raise ValueError(f"points_xy must have shape (..., 2), got {points.shape}")
         original_shape = points.shape[:-1]
         return points.reshape(-1, 2), original_shape
