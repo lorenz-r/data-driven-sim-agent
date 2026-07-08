@@ -428,129 +428,153 @@ class KiGRAS_HA(pl.LightningModule):
     # Autoregressive rollout (inference)
     # ------------------------------------------------------------------
     @torch.no_grad()
-    def rollout_simulator(self, batch, ik_module, steps=60):
-        """
-        Autoregressive physical simulator.
+    def rollout_simulator(
+        self,
+        history: torch.Tensor,  # (B, N, obs_len, 7)
+        graph_pos: torch.Tensor,  # (B, M, 2)
+        graph_dir: torch.Tensor,  # (B, M, 2)
+        semantics: torch.Tensor,  # (B, N) long
+        *,
+        num_samples: int = 1,
+        temperature: float = 1.0,
+        steps: int = 60,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Autoregressive physical rollout — the single inference path.
 
-        The GRU hidden state is warmed up ONCE on the observed history and then
-        carried across rollout steps — each new predicted frame is folded in
-        with a single GRU step instead of re-encoding the whole 50-frame
-        window (O(1) history encoding per step).
+        The history GRU is warmed up ONCE on the observed window and then carried
+        across rollout steps, each new frame folded in with a single GRU step
+        (O(1) history encoding per step) — the incremental equivalent of the
+        teacher-forced encoding in ``_shared_step``.
 
         At each step:
-          1. Fuse the carried history embedding with the current scene context
-             into a scene token, using the model's own previous prediction as
-             the U-embedding.
-          2. Append the token to the growing sequence and run the causal decoder
-             over the full sequence — the last position gives the current action.
-          3. Decode the chosen token into physical deltas, advance the world,
-             and update the GRU hidden state with the new frame.
+          1. Fuse the carried GRU readout with the current-frame scene context
+             (k nearest neighbours + local map) and the previous action token.
+          2. Append the token, run the causal decoder over the growing sequence,
+             and take the last position's logits.
+          3. Pick the action — greedy argmax when ``num_samples == 1``, otherwise
+             a temperature-scaled softmax sample.
+          4. Decode the token on the model's own CTRA grid (``self._ctra``) and
+             advance the world one step, then fold the new frame into the GRU.
 
-        The causal decoder is re-run over the full (growing) sequence at each
-        step, which is correct but O(T²). For long horizons, KV-caching can be
-        added as an optimisation without changing the semantics.
+        The decoder is re-run over the full growing sequence each step (O(T²));
+        KV-caching could be added later without changing the semantics.
+
+        Args:
+            history: observed states per agent, (B, N, obs_len, 7).
+            graph_pos, graph_dir: lane graph, (B, M, 2).
+            semantics: agent type ids, (B, N).
+            num_samples: independent rollouts per scene (1 = greedy).
+            temperature: softmax temperature when ``num_samples > 1``.
+            steps: future horizon to roll out.
+
+        Returns:
+            pred_states: (num_samples, B, N, steps, 7) full future states.
+            pred_tokens: (num_samples, B, N, steps) chosen action-token ids.
         """
-        trajectories = batch["trajectories"].clone()  # (B, N, 50, 7)
-        graph_pos = batch["graph_position"]  # (B, M, 2)
-        graph_dir = batch["graph_direction"]  # (B, M, 2)
-        semantics = batch["agent_type_ids"]  # (B, N)
+        if num_samples < 1:
+            raise ValueError("num_samples must be at least 1")
 
-        B, N = semantics.shape
+        ctra = self._ctra
+        device = history.device
+        num_yaw = ctra.NUM_YAW
+        accel_bins = ctra.accel_bins.to(device)
+        yaw_bins = ctra.yaw_rate_bins.to(device)
+        B, N, obs_len, _ = history.shape
 
-        # SOS as the U-embedding for step 0
-        prev_action_tokens = torch.full(
-            (B, N), self.start_token_idx, dtype=torch.long, device=self.device
-        )
+        state_samples: list[torch.Tensor] = []
+        token_samples: list[torch.Tensor] = []
 
-        # Warm up the causal GRU on the observed history — done exactly once
-        hist_feats = frame_invariant_features(trajectories)  # (B, N, 50, F)
-        hist_outputs, gru_state = self.encoder.encode_history(hist_feats)
-        history_embedding = hist_outputs[:, :, -1, :]  # (B, N, d_model)
+        for _ in range(num_samples):
+            traj = history.clone()  # grows to (B, N, obs_len + t, 7)
+            prev_actions = torch.full(
+                (B, N), self.start_token_idx, dtype=torch.long, device=device
+            )
+            scene_tokens: list[torch.Tensor] = []
+            step_tokens: list[torch.Tensor] = []
 
-        scene_token_history = []
-        predictions = []
+            # Warm up the causal history GRU once; carry the hidden state.
+            hist_feats = frame_invariant_features(traj)  # (B, N, obs_len, F)
+            hist_outputs, gru_state = self.encoder.encode_history(hist_feats)
+            history_embedding = hist_outputs[:, :, -1, :]  # (B, N, d) — readout @ now
 
-        for _ in range(steps):
-            # ----------------------------------------------------------------
-            # A. Fuse the carried history embedding with current scene context
-            # ----------------------------------------------------------------
-            present = trajectories[:, :, -1, :]  # (B, N, 7)
-
-            neighbor_states, local_map_pos, local_map_dir, padding_mask = (
-                transform_batch(
+            for _step in range(steps):
+                present = traj[:, :, -1, :]  # (B, N, 7)
+                nbr, lmp, lmd, pmask = transform_batch(
                     present, graph_pos, graph_dir, k_neighbors=self.k_neighbors
                 )
-            )
+                token = self.encoder(
+                    semantics,
+                    lmp,
+                    lmd,
+                    history_embedding,
+                    nbr,
+                    prev_actions,
+                    padding_mask=pmask,
+                )
+                scene_tokens.append(token)
 
-            scene_token = self.encoder(
-                semantics,
-                local_map_pos,
-                local_map_dir,
-                history_embedding,
-                neighbor_states,
-                prev_action_tokens,
-                padding_mask=padding_mask,
-            )  # (B, N, d_model)
-            scene_token_history.append(scene_token)
+                # Causal decode over the growing sequence; keep the last step.
+                seq = torch.stack(scene_tokens, dim=2)  # (B, N, step+1, d)
+                logits = self.decoder(seq)[:, :, -1, :]  # (B, N, vocab)
 
-            # ----------------------------------------------------------------
-            # B. Causal decode over the accumulated sequence; take the last step
-            # ----------------------------------------------------------------
-            scene_seq = torch.stack(
-                scene_token_history, dim=2
-            )  # (B, N, step+1, d_model)
-            logits = self.decoder(scene_seq)  # (B, N, step+1, num_bins)
+                if num_samples > 1:
+                    probs = torch.softmax(logits / max(temperature, 1e-6), dim=-1)
+                    action_tokens = torch.multinomial(
+                        probs.view(B * N, -1), 1
+                    ).view(B, N)
+                else:
+                    action_tokens = logits.argmax(dim=-1)  # (B, N)
 
-            next_action_tokens = logits[:, :, -1, :].argmax(dim=-1)  # (B, N)
-            predictions.append(next_action_tokens)
-            prev_action_tokens = next_action_tokens
+                step_tokens.append(action_tokens)
+                prev_actions = action_tokens
 
-            # ----------------------------------------------------------------
-            # C. Physics engine — advance the world state
-            # ----------------------------------------------------------------
-            local_dx, local_dy, d_yaw, d_vel = ik_module.decode(next_action_tokens)
+                # Token → (accel, yaw_rate) on the model's own CTRA grid, then
+                # advance one physics step from the current state.
+                a = accel_bins[action_tokens // num_yaw]  # (B, N)
+                omega = yaw_bins[action_tokens % num_yaw]  # (B, N)
+                last = traj[:, :, -1, :]  # (B, N, 7)
+                v = torch.hypot(last[..., 4], last[..., 5])  # (B, N)
+                init_state = torch.stack(
+                    [last[..., 0], last[..., 1], last[..., 2], last[..., 3], v],
+                    dim=-1,
+                )  # (B, N, 5)
+                next_state = ctra.forward(
+                    init_state,
+                    torch.stack([a, omega], dim=-1).unsqueeze(-2),  # (B, N, 1, 2)
+                )[:, :, 1, :]  # (B, N, 5)
 
-            last_state = trajectories[:, :, -1, :]
-            curr_x, curr_y = last_state[..., 0], last_state[..., 1]
-            curr_cos, curr_sin = last_state[..., 2], last_state[..., 3]
-            curr_vx, curr_vy = last_state[..., 4], last_state[..., 5]
-            valid = last_state[..., 6]
+                cos_h, sin_h, v_new = (
+                    next_state[..., 2],
+                    next_state[..., 3],
+                    next_state[..., 4],
+                )
+                new_row = torch.stack(
+                    [
+                        next_state[..., 0],
+                        next_state[..., 1],
+                        cos_h,
+                        sin_h,
+                        v_new * cos_h,
+                        v_new * sin_h,
+                        last[..., 6],  # carry the valid flag forward
+                    ],
+                    dim=-1,
+                ).unsqueeze(2)  # (B, N, 1, 7)
+                traj = torch.cat([traj, new_row], dim=2)
 
-            global_dx = local_dx * curr_cos - local_dy * curr_sin
-            global_dy = local_dx * curr_sin + local_dy * curr_cos
+                # Fold the new frame into the carried GRU state (single step).
+                step_feats = frame_invariant_features(traj[:, :, -2:, :])
+                step_out, gru_state = self.encoder.encode_history(
+                    step_feats[:, :, -1:, :], gru_state
+                )
+                history_embedding = step_out[:, :, -1, :]  # (B, N, d)
 
-            new_x = curr_x + global_dx
-            new_y = curr_y + global_dy
+            state_samples.append(traj[:, :, obs_len:, :])  # (B, N, steps, 7)
+            token_samples.append(torch.stack(step_tokens, dim=2))  # (B, N, steps)
 
-            current_yaw = torch.atan2(curr_sin, curr_cos)
-            new_yaw = current_yaw + d_yaw
-            new_cos = torch.cos(new_yaw)
-            new_sin = torch.sin(new_yaw)
-
-            speed = torch.hypot(curr_vx, curr_vy) + d_vel
-            new_vx = speed * new_cos
-            new_vy = speed * new_sin
-
-            new_state = torch.stack(
-                [new_x, new_y, new_cos, new_sin, new_vx, new_vy, valid], dim=-1
-            )  # (B, N, 7)
-
-            trajectories = torch.cat([trajectories, new_state.unsqueeze(2)], dim=2)
-
-            # ----------------------------------------------------------------
-            # D. Fold the new frame into the carried GRU state (single step).
-            #    The last two frames give the (t-1, t) pair the per-step
-            #    features need; only the newest step is fed to the GRU.
-            # ----------------------------------------------------------------
-            step_feats = frame_invariant_features(trajectories[:, :, -2:, :])
-            step_outputs, gru_state = self.encoder.encode_history(
-                step_feats[:, :, -1:, :], gru_state
-            )
-            history_embedding = step_outputs[:, :, -1, :]  # (B, N, d_model)
-
-        predicted_tokens = torch.stack(predictions, dim=-1)  # (B, N, 60)
-        predicted_paths = trajectories[:, :, 50:, :]  # (B, N, 60, 7)
-        return predicted_tokens, predicted_paths
+        pred_states = torch.stack(state_samples, dim=0)  # (K, B, N, steps, 7)
+        pred_tokens = torch.stack(token_samples, dim=0)  # (K, B, N, steps)
+        return pred_states, pred_tokens
 
     def to_tensor(self, x, dtype=torch.float32):
         return torch.as_tensor(x, dtype=dtype, device=self.device)

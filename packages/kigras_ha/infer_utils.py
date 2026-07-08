@@ -26,7 +26,6 @@ from kigras_ha.utils.scenario_reconstruction import (
     predictions_to_scenario,
     save_scenario,
 )
-from kigras_ha.utils.train_utils import transform_batch
 
 # Observed / predicted horizon — matches the dataset and model conventions.
 OBS_LEN = 50
@@ -149,89 +148,26 @@ def rollout(
         pred_xy     : (K, N, 60, 2)  global XY (view of pred_states)
         pred_tokens : (K, N, 60)     chosen action-token id per step
     """
-    if num_samples < 1:
-        raise ValueError("num_samples must be at least 1")
+    # The autoregressive rollout itself lives on the model (single source of
+    # truth shared with training's encoding), so it can never drift from the
+    # encoder API. Here we just drive it and reshape to this pipeline's arrays.
+    pred_states, pred_tokens = model.rollout_simulator(
+        history,
+        graph_pos,
+        graph_dir,
+        semantics,
+        num_samples=num_samples,
+        temperature=temperature,
+        steps=PRED_LEN,
+    )  # (K, B, N, 60, 7) and (K, B, N, 60)
 
-    ctra = model._ctra
-    device = history.device
-    num_yaw = ctra.NUM_YAW
-    accel_bins = ctra.accel_bins.to(device)
-    yaw_bins = ctra.yaw_rate_bins.to(device)
-    B, N = history.shape[:2]
-
-    states_samples: list[np.ndarray] = []
-    token_samples: list[np.ndarray] = []
-
-    for _ in range(num_samples):
-        traj = history.clone()  # grows to (1, N, 50 + t, 7)
-        prev_actions = torch.full(
-            (B, N), model.start_token_idx, dtype=torch.long, device=device
-        )
-        scene_tokens: list[torch.Tensor] = []
-        step_tokens: list[np.ndarray] = []
-
-        for _step in range(PRED_LEN):
-            window = traj[:, :, -OBS_LEN:, :]  # sliding 50-step window
-            own, nbr, lmp, lmd = transform_batch(window, graph_pos, graph_dir)
-            token = model.encoder(semantics, lmp, lmd, own, nbr, prev_actions)
-            scene_tokens.append(token)
-
-            # Causal decode over the growing token sequence; keep the last step.
-            seq = torch.stack(scene_tokens, dim=2)  # (1, N, step + 1, d)
-            logits = model.decoder(seq)[:, :, -1, :]  # (1, N, vocab)
-
-            if num_samples > 1:
-                probs = torch.softmax(logits / max(temperature, 1e-6), dim=-1)
-                action_tokens = torch.multinomial(probs.view(B * N, -1), 1).view(B, N)
-            else:
-                action_tokens = logits.argmax(dim=-1)  # (1, N)
-
-            step_tokens.append(action_tokens[0].cpu().numpy())
-            prev_actions = action_tokens
-
-            # Token → (accel, yaw_rate) via the CTRA grid.
-            a = accel_bins[action_tokens // num_yaw]  # (1, N)
-            omega = yaw_bins[action_tokens % num_yaw]  # (1, N)
-
-            # CTRA physics: advance one step from the last state.
-            last = traj[:, :, -1, :]  # (1, N, 7)
-            v = torch.hypot(last[..., 4], last[..., 5])  # (1, N)
-            init_state = torch.stack(
-                [last[..., 0], last[..., 1], last[..., 2], last[..., 3], v], dim=-1
-            )  # (1, N, 5)
-            next_state = ctra.forward(
-                init_state,
-                torch.stack([a, omega], dim=-1).unsqueeze(-2),  # (1, N, 1, 2)
-            )[:, :, 1, :]  # t = 1 result → (1, N, 5)
-
-            cos_h, sin_h, v_new = (
-                next_state[..., 2],
-                next_state[..., 3],
-                next_state[..., 4],
-            )
-            new_row = torch.stack(
-                [
-                    next_state[..., 0],
-                    next_state[..., 1],
-                    cos_h,
-                    sin_h,
-                    v_new * cos_h,
-                    v_new * sin_h,
-                    last[..., 6],  # carry the valid flag forward
-                ],
-                dim=-1,
-            ).unsqueeze(2)  # (1, N, 1, 7)
-            traj = torch.cat([traj, new_row], dim=2)
-
-        pred_states = traj[0, :, OBS_LEN:, :].cpu().numpy()  # (N, 60, 7)
-        states_samples.append(pred_states)
-        token_samples.append(np.stack(step_tokens, axis=0).T)  # (N, 60)
-
-    pred_states = np.stack(states_samples, axis=0)  # (K, N, 60, 7)
+    # This pipeline processes one scenario at a time (B == 1); drop the batch dim.
+    pred_states_np = pred_states[:, 0].cpu().numpy()  # (K, N, 60, 7)
+    pred_tokens_np = pred_tokens[:, 0].cpu().numpy()  # (K, N, 60)
     return {
-        "pred_states": pred_states,
-        "pred_xy": pred_states[..., :2],  # (K, N, 60, 2)
-        "pred_tokens": np.stack(token_samples, axis=0),  # (K, N, 60)
+        "pred_states": pred_states_np,
+        "pred_xy": pred_states_np[..., :2],  # (K, N, 60, 2)
+        "pred_tokens": pred_tokens_np,
     }
 
 
