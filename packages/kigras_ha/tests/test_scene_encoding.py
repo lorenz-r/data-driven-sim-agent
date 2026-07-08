@@ -59,7 +59,10 @@ class TestFrameInvariantFeatures:
     def test_global_transform_invariance(self):
         traj = _random_trajectories()
         moved = _apply_global_transform(
-            traj, angle=torch.tensor(1.234), tx=torch.tensor(512.0), ty=torch.tensor(-77.0)
+            traj,
+            angle=torch.tensor(1.234),
+            tx=torch.tensor(512.0),
+            ty=torch.tensor(-77.0),
         )
         f_a = frame_invariant_features(traj)
         f_b = frame_invariant_features(moved)
