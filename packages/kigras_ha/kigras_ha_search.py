@@ -86,8 +86,7 @@ def sample_params(trial: Any) -> dict[str, Any]:
         "num_head": trial.suggest_categorical("num_head", [2, 4, 8]),
         "encoder_num_layers": trial.suggest_int("encoder_num_layers", 2, 4),
         "decoder_num_layers": trial.suggest_int("decoder_num_layers", 2, 4),
-        "k_neighbors": trial.suggest_categorical("k_neighbors", [8, 16, 32]),
-        "max_agents": trial.suggest_categorical("max_agents", [0, 16, 32]),
+        "k_neighbors": trial.suggest_categorical("k_neighbors", [8, 16]),
     }
 
 
@@ -104,7 +103,8 @@ def build_overrides(
         f"model.architecture.encoder_num_layers={params['encoder_num_layers']}",
         f"model.architecture.decoder_num_layers={params['decoder_num_layers']}",
         f"model.architecture.k_neighbors={params['k_neighbors']}",
-        f"model.architecture.max_agents={params['max_agents']}",
+        # Always keep all agents (no proximity filtering).
+        "model.architecture.max_agents=0",
         # Grid fixed for the coarse pass (avoids per-trial re-preprocessing).
         f"model.architecture.num_action_bins={args.num_action_bins}",
         f"model.kinematics.grid_power={args.grid_power}",
@@ -171,7 +171,9 @@ def objective(trial: Any, args: argparse.Namespace) -> float:
     except Exception as exc:  # noqa: BLE001 — record and prune, keep the study alive
         trial_dir = args.results_dir / f"trial_{trial.number:04d}"
         trial_dir.mkdir(parents=True, exist_ok=True)
-        (trial_dir / "failure.json").write_text(json.dumps({"error": str(exc)}, indent=2))
+        (trial_dir / "failure.json").write_text(
+            json.dumps({"error": str(exc)}, indent=2)
+        )
         print(f"Trial {trial.number}: FAILED — {exc}")
         import optuna
 
@@ -232,8 +234,12 @@ def evaluate_min_fde(
 
         # Consolidated single rollout path: (K, B, N, 60, 7)
         pred_states, _ = model.rollout_simulator(
-            history, gpos, gdir, semantics,
-            num_samples=args.eval_samples, temperature=args.eval_temperature,
+            history,
+            gpos,
+            gdir,
+            semantics,
+            num_samples=args.eval_samples,
+            temperature=args.eval_temperature,
         )
         pred_xy = pred_states[:, 0, fidx, :, :2].cpu().numpy()  # (K, 60, 2)
 
@@ -256,19 +262,29 @@ def evaluate_min_fde(
 # ──────────────────────────────────────────────────────────────────────────────
 def write_study_summary(study: Any, path: Path) -> None:
     trials = [
-        {"number": t.number, "state": t.state.name, "val_loss": t.value,
-         "params": dict(t.params)}
+        {
+            "number": t.number,
+            "state": t.state.name,
+            "val_loss": t.value,
+            "params": dict(t.params),
+        }
         for t in study.trials
     ]
-    path.write_text(json.dumps({
-        "objective": "best_val_loss (minimize)",
-        "best_trial": {
-            "number": study.best_trial.number,
-            "val_loss": study.best_trial.value,
-            "params": dict(study.best_trial.params),
-        },
-        "trials": trials,
-    }, indent=2, sort_keys=True))
+    path.write_text(
+        json.dumps(
+            {
+                "objective": "best_val_loss (minimize)",
+                "best_trial": {
+                    "number": study.best_trial.number,
+                    "val_loss": study.best_trial.value,
+                    "params": dict(study.best_trial.params),
+                },
+                "trials": trials,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -292,15 +308,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--grid-power", type=float, default=1.0)
     # Stage-2 rollout eval
     p.add_argument("--top-k", type=int, default=5, help="Configs re-ranked by minFDE.")
-    p.add_argument("--eval-samples", type=int, default=6, help="Rollout samples (minFDE@K).")
+    p.add_argument(
+        "--eval-samples", type=int, default=6, help="Rollout samples (minFDE@K)."
+    )
     p.add_argument("--eval-temperature", type=float, default=1.0)
-    p.add_argument("--eval-limit", type=int, default=0, help="Max val scenarios (0=all).")
+    p.add_argument(
+        "--eval-limit", type=int, default=0, help="Max val scenarios (0=all)."
+    )
     p.add_argument(
         "--eval-device",
         default=None,
         help="Device for stage-2 rollouts (default: cuda if available else cpu).",
     )
-    p.add_argument("--skip-stage2", action="store_true", help="Coarse val_loss search only.")
+    p.add_argument(
+        "--skip-stage2", action="store_true", help="Coarse val_loss search only."
+    )
     args = p.parse_args()
 
     if args.eval_device is None:
@@ -329,16 +351,20 @@ def main() -> None:
 
     study_summary = args.results_dir / "study_summary.json"
     write_study_summary(study, study_summary)
-    print(f"\nStage 1 done. Best val_loss={study.best_trial.value:.6f} "
-          f"(trial {study.best_trial.number}). Summary: {study_summary}")
+    print(
+        f"\nStage 1 done. Best val_loss={study.best_trial.value:.6f} "
+        f"(trial {study.best_trial.number}). Summary: {study_summary}"
+    )
 
     if args.skip_stage2:
         return
 
     # ── Stage 2: re-rank the top-K by rollout minFDE ────────────────────────────
     top = sorted(completed, key=lambda t: t.value)[: args.top_k]
-    print(f"\nStage 2: re-ranking top {len(top)} configs by minFDE@{args.eval_samples} "
-          f"on the '{args.download_size}' val split ({args.eval_device})…")
+    print(
+        f"\nStage 2: re-ranking top {len(top)} configs by minFDE@{args.eval_samples} "
+        f"on the '{args.download_size}' val split ({args.eval_device})…"
+    )
 
     ranked: list[dict[str, Any]] = []
     for t in top:
@@ -348,29 +374,43 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"  trial {t.number}: eval failed — {exc}")
             ade, fde = float("nan"), float("nan")
-        print(f"  trial {t.number}: val_loss={t.value:.4f}  minADE={ade:.3f}  minFDE={fde:.3f}")
-        ranked.append({
-            "trial_number": t.number,
-            "val_loss": t.value,
-            "min_ade": ade,
-            "min_fde": fde,
-            "params": dict(t.params),
-            "checkpoint_dir": str(ckpt_dir),
-        })
+        print(
+            f"  trial {t.number}: val_loss={t.value:.4f}  minADE={ade:.3f}  minFDE={fde:.3f}"
+        )
+        ranked.append(
+            {
+                "trial_number": t.number,
+                "val_loss": t.value,
+                "min_ade": ade,
+                "min_fde": fde,
+                "params": dict(t.params),
+                "checkpoint_dir": str(ckpt_dir),
+            }
+        )
 
     valid = [r for r in ranked if r["min_fde"] == r["min_fde"]]  # drop NaN
     ranked_sorted = sorted(valid, key=lambda r: r["min_fde"]) or ranked
     best = ranked_sorted[0]
     final = args.results_dir / "final_summary.json"
-    final.write_text(json.dumps({
-        "objective": "mean focal minFDE (minimize), re-ranked from top val_loss",
-        "best": best,
-        "ranked": ranked_sorted,
-    }, indent=2, sort_keys=True))
+    final.write_text(
+        json.dumps(
+            {
+                "objective": "mean focal minFDE (minimize), re-ranked from top val_loss",
+                "best": best,
+                "ranked": ranked_sorted,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
-    print("\n==============================\nBEST CONFIG (by minFDE)\n==============================")
-    print(f"  trial {best['trial_number']}  minFDE={best['min_fde']:.3f}  "
-          f"minADE={best['min_ade']:.3f}  val_loss={best['val_loss']:.4f}")
+    print(
+        "\n==============================\nBEST CONFIG (by minFDE)\n=============================="
+    )
+    print(
+        f"  trial {best['trial_number']}  minFDE={best['min_fde']:.3f}  "
+        f"minADE={best['min_ade']:.3f}  val_loss={best['val_loss']:.4f}"
+    )
     for k, v in best["params"].items():
         print(f"    {k}: {v}")
     print(f"\nFinal summary: {final}")
