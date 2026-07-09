@@ -2,7 +2,7 @@
 """Count raw AV2 agent collisions in scenario parquet files.
 
 A collision is counted once per unordered agent pair per scenario if their
-footprints overlap at any timestep.
+WOMD-style rounded footprints collide at any timestep.
 """
 
 from __future__ import annotations
@@ -46,17 +46,22 @@ REQUIRED_COLUMNS = {
     "heading",
 }
 
-# Matches the fallback boxes used by packages/smart-preprocess/src/agent.rs.
+# Matches the SMART/meta-metric box model used by packages/smart/evaluate_rollout_npz.py.
 DEFAULT_BOXES_M = {
     "vehicle": (4.50, 2.00),
-    "bus": (12.00, 2.50),
+    "bus": (4.50, 2.00),
     "pedestrian": (0.50, 0.50),
-    "motorcyclist": (2.20, 0.70),
+    "motorcyclist": (1.80, 0.60),
     "cyclist": (1.80, 0.60),
     "riderless_bicycle": (1.80, 0.60),
-    "construction": (1.50, 1.50),
+    "construction": (1.00, 1.00),
+    "static": (1.00, 1.00),
+    "background": (1.00, 1.00),
+    "unknown": (1.00, 1.00),
 }
 FALLBACK_BOX_M = (1.00, 1.00)
+CORNER_ROUNDING_FACTOR = 0.7
+COLLISION_DISTANCE_THRESHOLD = 0.0
 
 LENGTH_COLUMNS = ("length", "extent_x", "size_x", "box_length")
 WIDTH_COLUMNS = ("width", "extent_y", "size_y", "box_width")
@@ -83,7 +88,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Count raw AV2 collisions. Each unordered agent pair is counted once "
-            "per scenario if their oriented footprints overlap at any timestep."
+            "per scenario if their WOMD-style rounded footprints collide at any "
+            "timestep."
         )
     )
     parser.add_argument(
@@ -265,41 +271,159 @@ def prepare_arrays(
 
 
 @njit(cache=True)
-def _overlap_1d(center_distance, ahx, ahy, ac, a_s, bhx, bhy, bc, bs, axis_c, axis_s):
-    ra = ahx * abs(ac * axis_c + a_s * axis_s) + ahy * abs(-a_s * axis_c + ac * axis_s)
-    rb = bhx * abs(bc * axis_c + bs * axis_s) + bhy * abs(-bs * axis_c + bc * axis_s)
-    return abs(center_distance) <= ra + rb
+def _rectangle_corners(center_x, center_y, length, width, heading, corners):
+    length = max(length, 0.0)
+    width = max(width, 0.0)
+    half_l = length * 0.5
+    half_w = width * 0.5
+    cos_h = math.cos(heading)
+    sin_h = math.sin(heading)
+
+    local_x = (half_l, half_l, -half_l, -half_l)
+    local_y = (half_w, -half_w, -half_w, half_w)
+    for i in range(4):
+        x_i = local_x[i]
+        y_i = local_y[i]
+        corners[i, 0] = x_i * cos_h - y_i * sin_h + center_x
+        corners[i, 1] = x_i * sin_h + y_i * cos_h + center_y
 
 
 @njit(cache=True)
-def _boxes_overlap_fast(ax, ay, ah, al, aw, bx, by, bh, bl, bw):
-    ahx = al * 0.5
-    ahy = aw * 0.5
-    bhx = bl * 0.5
-    bhy = bw * 0.5
+def _project_polygon(polygon, axis_x, axis_y):
+    first = polygon[0, 0] * axis_x + polygon[0, 1] * axis_y
+    min_projection = first
+    max_projection = first
+    for i in range(1, 4):
+        projection = polygon[i, 0] * axis_x + polygon[i, 1] * axis_y
+        min_projection = min(min_projection, projection)
+        max_projection = max(max_projection, projection)
+    return min_projection, max_projection
 
+
+@njit(cache=True)
+def _orientation(ax, ay, bx, by, cx, cy):
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+
+
+@njit(cache=True)
+def _on_segment(ax, ay, bx, by, cx, cy):
+    return min(ax, cx) <= bx <= max(ax, cx) and min(ay, cy) <= by <= max(ay, cy)
+
+
+@njit(cache=True)
+def _segments_intersect(p1x, p1y, p2x, p2y, q1x, q1y, q2x, q2y):
+    eps = 1e-9
+    o1 = _orientation(p1x, p1y, p2x, p2y, q1x, q1y)
+    o2 = _orientation(p1x, p1y, p2x, p2y, q2x, q2y)
+    o3 = _orientation(q1x, q1y, q2x, q2y, p1x, p1y)
+    o4 = _orientation(q1x, q1y, q2x, q2y, p2x, p2y)
+    if o1 * o2 < 0.0 and o3 * o4 < 0.0:
+        return True
+    if abs(o1) <= eps and _on_segment(p1x, p1y, q1x, q1y, p2x, p2y):
+        return True
+    if abs(o2) <= eps and _on_segment(p1x, p1y, q2x, q2y, p2x, p2y):
+        return True
+    if abs(o3) <= eps and _on_segment(q1x, q1y, p1x, p1y, q2x, q2y):
+        return True
+    if abs(o4) <= eps and _on_segment(q1x, q1y, p2x, p2y, q2x, q2y):
+        return True
+    return False
+
+
+@njit(cache=True)
+def _point_segment_distance(px, py, ax, ay, bx, by):
+    sx = bx - ax
+    sy = by - ay
+    denom = sx * sx + sy * sy
+    if denom == 0.0:
+        dx = px - ax
+        dy = py - ay
+        return math.sqrt(dx * dx + dy * dy)
+    t = ((px - ax) * sx + (py - ay) * sy) / denom
+    t = min(max(t, 0.0), 1.0)
+    dx = px - (ax + t * sx)
+    dy = py - (ay + t * sy)
+    return math.sqrt(dx * dx + dy * dy)
+
+
+@njit(cache=True)
+def _polygon_edge_distance(poly_a, poly_b):
+    min_distance = math.inf
+    for i in range(4):
+        next_i = (i + 1) % 4
+        a1x = poly_a[i, 0]
+        a1y = poly_a[i, 1]
+        a2x = poly_a[next_i, 0]
+        a2y = poly_a[next_i, 1]
+        for j in range(4):
+            next_j = (j + 1) % 4
+            b1x = poly_b[j, 0]
+            b1y = poly_b[j, 1]
+            b2x = poly_b[next_j, 0]
+            b2y = poly_b[next_j, 1]
+            if _segments_intersect(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y):
+                return 0.0
+            min_distance = min(
+                min_distance,
+                _point_segment_distance(a1x, a1y, b1x, b1y, b2x, b2y),
+                _point_segment_distance(a2x, a2y, b1x, b1y, b2x, b2y),
+                _point_segment_distance(b1x, b1y, a1x, a1y, a2x, a2y),
+                _point_segment_distance(b2x, b2y, a1x, a1y, a2x, a2y),
+            )
+    return min_distance
+
+
+@njit(cache=True)
+def _signed_distance_between_rectangles(ax, ay, al, aw, ah, bx, by, bl, bw, bh):
+    poly_a = np.empty((4, 2), dtype=np.float64)
+    poly_b = np.empty((4, 2), dtype=np.float64)
+    _rectangle_corners(ax, ay, al, aw, ah, poly_a)
+    _rectangle_corners(bx, by, bl, bw, bh, poly_b)
+
+    min_overlap = math.inf
+    for polygon_index in range(2):
+        polygon = poly_a if polygon_index == 0 else poly_b
+        for i in range(4):
+            next_i = (i + 1) % 4
+            edge_x = polygon[next_i, 0] - polygon[i, 0]
+            edge_y = polygon[next_i, 1] - polygon[i, 1]
+            norm = math.sqrt(edge_x * edge_x + edge_y * edge_y)
+            if norm <= 0.0:
+                continue
+            axis_x = -edge_y / norm
+            axis_y = edge_x / norm
+            min_a, max_a = _project_polygon(poly_a, axis_x, axis_y)
+            min_b, max_b = _project_polygon(poly_b, axis_x, axis_y)
+            overlap = min(max_a, max_b) - max(min_a, min_b)
+            if overlap < 0.0:
+                return _polygon_edge_distance(poly_a, poly_b)
+            min_overlap = min(min_overlap, overlap)
+    return -min_overlap
+
+
+@njit(cache=True)
+def _boxes_collide_fast(ax, ay, ah, al, aw, bx, by, bh, bl, bw):
+    max_radius = math.sqrt(al * al + aw * aw) * 0.5 + math.sqrt(bl * bl + bw * bw) * 0.5
     dx = bx - ax
     dy = by - ay
-    max_radius = math.sqrt(al * al + aw * aw) * 0.5 + math.sqrt(bl * bl + bw * bw) * 0.5
     if dx * dx + dy * dy > max_radius * max_radius:
         return False
 
-    ac = math.cos(ah)
-    a_s = math.sin(ah)
-    bc = math.cos(bh)
-    bs = math.sin(bh)
-
-    if not _overlap_1d(
-        dx * ac + dy * a_s, ahx, ahy, ac, a_s, bhx, bhy, bc, bs, ac, a_s
-    ):
-        return False
-    if not _overlap_1d(
-        dx * -a_s + dy * ac, ahx, ahy, ac, a_s, bhx, bhy, bc, bs, -a_s, ac
-    ):
-        return False
-    if not _overlap_1d(dx * bc + dy * bs, ahx, ahy, ac, a_s, bhx, bhy, bc, bs, bc, bs):
-        return False
-    return _overlap_1d(dx * -bs + dy * bc, ahx, ahy, ac, a_s, bhx, bhy, bc, bs, -bs, bc)
+    shrink_a = min(al, aw) * CORNER_ROUNDING_FACTOR * 0.5
+    shrink_b = min(bl, bw) * CORNER_ROUNDING_FACTOR * 0.5
+    signed_distance = _signed_distance_between_rectangles(
+        ax,
+        ay,
+        al - 2.0 * shrink_a,
+        aw - 2.0 * shrink_a,
+        ah,
+        bx,
+        by,
+        bl - 2.0 * shrink_b,
+        bw - 2.0 * shrink_b,
+        bh,
+    )
+    return signed_distance - shrink_a - shrink_b < COLLISION_DISTANCE_THRESHOLD
 
 
 @njit(cache=True)
@@ -314,7 +438,7 @@ def _find_collisions_numba(track_codes, x, y, heading, length, width):
         for j in range(i + 1, n):
             if track_codes[i] == track_codes[j]:
                 continue
-            if _boxes_overlap_fast(
+            if _boxes_collide_fast(
                 x[i],
                 y[i],
                 heading[i],
@@ -333,7 +457,7 @@ def _find_collisions_numba(track_codes, x, y, heading, length, width):
     return out_a[:count], out_b[:count]
 
 
-def boxes_overlap_python(
+def boxes_collide_python(
     ax: float,
     ay: float,
     ah: float,
@@ -345,7 +469,7 @@ def boxes_overlap_python(
     bl: float,
     bw: float,
 ) -> bool:
-    overlap_func = getattr(_boxes_overlap_fast, "py_func", _boxes_overlap_fast)
+    overlap_func = getattr(_boxes_collide_fast, "py_func", _boxes_collide_fast)
     return bool(overlap_func(ax, ay, ah, al, aw, bx, by, bh, bl, bw))
 
 
@@ -363,7 +487,7 @@ def find_collisions_python(
         for j in range(i + 1, len(track_codes)):
             if track_codes[i] == track_codes[j]:
                 continue
-            if boxes_overlap_python(
+            if boxes_collide_python(
                 x[i],
                 y[i],
                 heading[i],
@@ -542,6 +666,7 @@ def main() -> int:
 
     all_collisions: list[Collision] = []
     failed = 0
+    scenarios_with_collisions = 0
     for result in results:
         if result.error is not None:
             failed += 1
@@ -549,6 +674,8 @@ def main() -> int:
             continue
 
         all_collisions.extend(result.collisions)
+        if result.collisions:
+            scenarios_with_collisions += 1
         if not args.quiet:
             print(f"{result.scenario}: {len(result.collisions)} collision(s)")
 
@@ -562,6 +689,7 @@ def main() -> int:
         print()
         print(f"Scenarios scanned: {len(parquet_files)}")
         print(f"Scenarios failed:  {failed}")
+        print(f"Scenarios with collisions: {scenarios_with_collisions}")
         print(f"Total collisions: {total}")
         if args.details_csv is not None:
             print(f"Details CSV:      {args.details_csv}")
