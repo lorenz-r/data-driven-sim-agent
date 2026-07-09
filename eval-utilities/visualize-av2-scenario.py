@@ -45,6 +45,13 @@ TRACK_COLORS = {
     TrackCategory.UNSCORED_TRACK: "#579ecb",
 }
 COLLISION_HIGHLIGHT_COLOR = "#18a058"
+COLLISION_HIGHLIGHT_COLORS = (
+    "#0b7d3b",
+    "#18a058",
+    "#43b66f",
+    "#71c992",
+    "#9bd9b1",
+)
 
 OBJECT_COLORS = {
     ObjectType.VEHICLE: "#2f3437",
@@ -144,7 +151,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-collision-highlight",
         action="store_true",
-        help="Do not color the vehicle with the most collisions green.",
+        help="Do not color vehicles with the most collisions green.",
+    )
+    parser.add_argument(
+        "--top-k-collision-vehicles",
+        type=int,
+        default=1,
+        help=("Number of most-colliding vehicle tracks to color green. Default: 1."),
     )
     return parser.parse_args()
 
@@ -187,12 +200,16 @@ def load_collision_module() -> Any:
     return module
 
 
-def find_most_colliding_vehicle_id(
+def find_top_colliding_vehicle_ids(
     scenario: ArgoverseScenario,
     parquet_path: Path,
     *,
     overlap_tolerance: float,
-) -> tuple[str | None, int]:
+    top_k: int,
+) -> dict[str, tuple[int, int]]:
+    if top_k <= 0:
+        return {}
+
     collision_module = load_collision_module()
     collisions = collision_module.count_scenario_collisions(
         parquet_path,
@@ -218,17 +235,26 @@ def find_most_colliding_vehicle_id(
         track_id: count for track_id, count in collision_counts.items() if count > 0
     }
     if not colliding_vehicle_counts:
-        return None, 0
+        return {}
 
-    best_track_id, best_count = min(
+    ranked = sorted(
         colliding_vehicle_counts.items(),
         key=lambda item: (-item[1], item[0]),
     )
-    return best_track_id, best_count
+    return {
+        track_id: (rank, count)
+        for rank, (track_id, count) in enumerate(ranked[:top_k], start=1)
+    }
 
 
 def track_color(track: Track) -> str:
     return TRACK_COLORS.get(track.category, "#579ecb")
+
+
+def highlight_color(rank: int) -> str:
+    return COLLISION_HIGHLIGHT_COLORS[
+        min(max(rank, 1), len(COLLISION_HIGHLIGHT_COLORS)) - 1
+    ]
 
 
 def box_corners(position: Any, heading: float, object_type: ObjectType) -> np.ndarray:
@@ -307,14 +333,17 @@ def draw_track(
     timestep: int | None,
     show_boxes: bool,
     show_trails: bool,
-    highlighted_track_id: str | None,
+    highlighted_tracks: dict[str, tuple[int, int]],
 ) -> None:
     states = sorted(track.object_states, key=lambda state: state.timestep)
     if not states:
         return
 
-    is_highlighted = track.track_id == highlighted_track_id
-    color = COLLISION_HIGHLIGHT_COLOR if is_highlighted else track_color(track)
+    highlight = highlighted_tracks.get(track.track_id)
+    is_highlighted = highlight is not None
+    color = (
+        highlight_color(highlight[0]) if highlight is not None else track_color(track)
+    )
     is_focal = track.category == TrackCategory.FOCAL_TRACK
     is_scored = track.category == TrackCategory.SCORED_TRACK
     linewidth = (
@@ -349,11 +378,9 @@ def draw_track(
             mpatches.Polygon(
                 corners,
                 closed=True,
-                facecolor=(
-                    COLLISION_HIGHLIGHT_COLOR
-                    if is_highlighted
-                    else OBJECT_COLORS.get(track.object_type, "#8f9699")
-                ),
+                facecolor=color
+                if is_highlighted
+                else OBJECT_COLORS.get(track.object_type, "#8f9699"),
                 edgecolor=color,
                 linewidth=2.4
                 if is_highlighted
@@ -409,15 +436,20 @@ def set_axis_limits(
     ax.set_ylim(float(ymin - padding), float(ymax + padding))
 
 
-def add_legend(ax: plt.Axes, highlighted_track_id: str | None) -> None:
+def add_legend(ax: plt.Axes, highlighted_tracks: dict[str, tuple[int, int]]) -> None:
     handles = [
         mpatches.Patch(color=TRACK_COLORS[TrackCategory.FOCAL_TRACK], label="Focal"),
         mpatches.Patch(color=TRACK_COLORS[TrackCategory.SCORED_TRACK], label="Scored"),
         mpatches.Patch(color=TRACK_COLORS[TrackCategory.UNSCORED_TRACK], label="Other"),
     ]
-    if highlighted_track_id is not None:
+    for track_id, (rank, count) in sorted(
+        highlighted_tracks.items(), key=lambda item: item[1][0]
+    ):
         handles.append(
-            mpatches.Patch(color=COLLISION_HIGHLIGHT_COLOR, label="Most collisions")
+            mpatches.Patch(
+                color=highlight_color(rank),
+                label=f"#{rank} collisions ({count})",
+            )
         )
     ax.legend(handles=handles, loc="lower left", frameon=True, fontsize=8)
 
@@ -430,7 +462,7 @@ def draw_scenario(
     show_map: bool,
     show_boxes: bool,
     show_trails: bool,
-    highlighted_track_id: str | None,
+    highlighted_tracks: dict[str, tuple[int, int]],
 ) -> plt.Figure:
     fig, ax = plt.subplots(figsize=(12, 10), facecolor="white")
     ax.set_aspect("equal", adjustable="box")
@@ -446,7 +478,7 @@ def draw_scenario(
             timestep=timestep,
             show_boxes=show_boxes,
             show_trails=show_trails,
-            highlighted_track_id=highlighted_track_id,
+            highlighted_tracks=highlighted_tracks,
         )
 
     set_axis_limits(ax, scenario, static_map if show_map else None)
@@ -455,7 +487,7 @@ def draw_scenario(
     ax.set_xlabel("x [m]")
     ax.set_ylabel("y [m]")
     ax.grid(color="#e7e7e7", linewidth=0.4)
-    add_legend(ax, highlighted_track_id)
+    add_legend(ax, highlighted_tracks)
     fig.tight_layout()
     return fig
 
@@ -478,7 +510,7 @@ def save_animation(
     show_map: bool,
     show_boxes: bool,
     show_trails: bool,
-    highlighted_track_id: str | None,
+    highlighted_tracks: dict[str, tuple[int, int]],
 ) -> None:
     fig, ax = plt.subplots(figsize=(12, 10), facecolor="white")
     set_axis_limits(ax, scenario, static_map if show_map else None)
@@ -500,7 +532,7 @@ def save_animation(
                 timestep=frame,
                 show_boxes=show_boxes,
                 show_trails=show_trails,
-                highlighted_track_id=highlighted_track_id,
+                highlighted_tracks=highlighted_tracks,
             )
         ax.set_title(f"AV2 Scenario {scenario.scenario_id} (t={frame})")
         ax.set_xlabel("x [m]")
@@ -535,15 +567,13 @@ def main() -> int:
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     overlap_tolerance = max(0.0, args.overlap_tolerance)
-    highlighted_track_id = None
-    highlighted_collision_count = 0
+    highlighted_tracks: dict[str, tuple[int, int]] = {}
     if not args.no_collision_highlight:
-        highlighted_track_id, highlighted_collision_count = (
-            find_most_colliding_vehicle_id(
-                scenario,
-                parquet_path,
-                overlap_tolerance=overlap_tolerance,
-            )
+        highlighted_tracks = find_top_colliding_vehicle_ids(
+            scenario,
+            parquet_path,
+            overlap_tolerance=overlap_tolerance,
+            top_k=max(0, args.top_k_collision_vehicles),
         )
 
     print(f"Loaded scenario: {scenario.scenario_id}")
@@ -551,13 +581,14 @@ def main() -> int:
     print(
         f"Map:             {'yes' if static_map is not None and not args.no_map else 'no'}"
     )
-    if highlighted_track_id is None:
-        print("Most-colliding vehicle: none")
+    if not highlighted_tracks:
+        print("Highlighted collision vehicles: none")
     else:
-        print(
-            f"Most-colliding vehicle: {highlighted_track_id} "
-            f"({highlighted_collision_count} collision pair(s))"
-        )
+        print("Highlighted collision vehicles:")
+        for track_id, (rank, count) in sorted(
+            highlighted_tracks.items(), key=lambda item: item[1][0]
+        ):
+            print(f"  #{rank}: {track_id} ({count} collision pair(s))")
 
     timestep = None if args.full else args.timestep
     if args.animate:
@@ -569,7 +600,7 @@ def main() -> int:
             show_map=not args.no_map,
             show_boxes=not args.no_boxes,
             show_trails=not args.no_trails,
-            highlighted_track_id=highlighted_track_id,
+            highlighted_tracks=highlighted_tracks,
         )
     else:
         fig = draw_scenario(
@@ -579,7 +610,7 @@ def main() -> int:
             show_map=not args.no_map,
             show_boxes=not args.no_boxes,
             show_trails=not args.no_trails,
-            highlighted_track_id=highlighted_track_id,
+            highlighted_tracks=highlighted_tracks,
         )
         fig.savefig(output_path, dpi=args.dpi, bbox_inches="tight")
         plt.close(fig)
