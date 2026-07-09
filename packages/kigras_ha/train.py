@@ -73,6 +73,24 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
     # hparam-search trials are not confounded by random-init variance.
     pl.seed_everything(int(cfg.get("seed", 0)), workers=True)
 
+    # DataLoader workers share sample tensors via shared memory. The default
+    # "file_descriptor" strategy opens one FD per shared tensor; this dataset's
+    # samples are dicts of many arrays, so with several workers the process hits
+    # "Too many open files". "file_system" shares by name instead of FD, and we
+    # also raise the open-file soft limit toward the hard limit.
+    try:
+        torch.multiprocessing.set_sharing_strategy("file_system")
+    except RuntimeError:
+        pass
+    try:
+        import resource
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft < hard:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+    except Exception:
+        pass
+
     dl_cfg = cfg.training.dataloader
     optim_cfg = cfg.training.optimizer
     ckpt_cfg = cfg.training.checkpointing

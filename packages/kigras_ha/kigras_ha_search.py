@@ -115,6 +115,10 @@ def build_overrides(
         # sampled config fit on 16 GB so big models aren't silently pruned by OOM.
         f"training.dataloader.train_batch_size={args.train_batch_size}",
         f"training.dataloader.val_batch_size={args.val_batch_size}",
+        # Parallel data loading; run_training sets the "file_system" sharing
+        # strategy + raises the FD limit so multiple workers don't hit
+        # "Too many open files".
+        f"training.dataloader.data_workers={args.data_workers}",
         f"model.architecture.gradient_checkpointing={str(not args.no_grad_checkpointing).lower()}",
         f"training.trainer.max_epochs={args.max_epochs}",
         # Single GPU per trial: DDP's subprocess relaunch drops the programmatic
@@ -384,6 +388,14 @@ def parse_args() -> argparse.Namespace:
     # Compute knobs (fixed across trials, not part of the search space).
     p.add_argument("--train-batch-size", type=int, default=8)
     p.add_argument("--val-batch-size", type=int, default=16)
+    p.add_argument(
+        "--data-workers",
+        type=int,
+        default=4,
+        help="DataLoader worker processes (parallel loading). The 'file_system' "
+        "sharing strategy set in run_training keeps this from hitting the open-file "
+        "limit; 0 loads on the main thread.",
+    )
     p.add_argument(
         "--no-grad-checkpointing",
         action="store_true",
