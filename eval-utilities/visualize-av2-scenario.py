@@ -9,7 +9,9 @@ Input is a scenario directory containing:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -42,6 +44,7 @@ TRACK_COLORS = {
     TrackCategory.SCORED_TRACK: "#e89b3f",
     TrackCategory.UNSCORED_TRACK: "#579ecb",
 }
+COLLISION_HIGHLIGHT_COLOR = "#18a058"
 
 OBJECT_COLORS = {
     ObjectType.VEHICLE: "#2f3437",
@@ -129,6 +132,20 @@ def parse_args() -> argparse.Namespace:
         default=180,
         help="DPI for static image output. Default: 180.",
     )
+    parser.add_argument(
+        "--overlap-tolerance",
+        type=float,
+        default=0.0,
+        help=(
+            "Collision penetration tolerance in meters for choosing the highlighted "
+            "vehicle. Matches count-collisions.py. Default: 0.0."
+        ),
+    )
+    parser.add_argument(
+        "--no-collision-highlight",
+        action="store_true",
+        help="Do not color the vehicle with the most collisions green.",
+    )
     return parser.parse_args()
 
 
@@ -143,7 +160,7 @@ def find_single_file(scenario_dir: Path, pattern: str, label: str) -> Path:
 
 def load_inputs(
     scenario_dir: Path,
-) -> tuple[ArgoverseScenario, ArgoverseStaticMap | None]:
+) -> tuple[ArgoverseScenario, ArgoverseStaticMap | None, Path]:
     if not scenario_dir.is_dir():
         raise NotADirectoryError(f"Scenario path is not a directory: {scenario_dir}")
 
@@ -156,7 +173,58 @@ def load_inputs(
     static_map = ArgoverseStaticMap.from_json(map_files[0]) if map_files else None
     if static_map is None:
         print(f"No map archive found in {scenario_dir}; drawing tracks only.")
-    return scenario, static_map
+    return scenario, static_map, parquet_path
+
+
+def load_collision_module() -> Any:
+    module_path = Path(__file__).with_name("count-collisions.py")
+    spec = importlib.util.spec_from_file_location("eval_count_collisions", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load collision utility from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def find_most_colliding_vehicle_id(
+    scenario: ArgoverseScenario,
+    parquet_path: Path,
+    *,
+    overlap_tolerance: float,
+) -> tuple[str | None, int]:
+    collision_module = load_collision_module()
+    collisions = collision_module.count_scenario_collisions(
+        parquet_path,
+        observed_only=False,
+        allowed_types=None,
+        use_numba=collision_module.NUMBA_AVAILABLE,
+        overlap_tolerance=overlap_tolerance,
+    )
+    vehicle_track_ids = {
+        track.track_id
+        for track in scenario.tracks
+        if track.object_type in (ObjectType.VEHICLE, ObjectType.BUS)
+    }
+    collision_counts = {track_id: 0 for track_id in vehicle_track_ids}
+
+    for collision in collisions:
+        if collision.track_id_a in collision_counts:
+            collision_counts[collision.track_id_a] += 1
+        if collision.track_id_b in collision_counts:
+            collision_counts[collision.track_id_b] += 1
+
+    colliding_vehicle_counts = {
+        track_id: count for track_id, count in collision_counts.items() if count > 0
+    }
+    if not colliding_vehicle_counts:
+        return None, 0
+
+    best_track_id, best_count = min(
+        colliding_vehicle_counts.items(),
+        key=lambda item: (-item[1], item[0]),
+    )
+    return best_track_id, best_count
 
 
 def track_color(track: Track) -> str:
@@ -239,16 +307,20 @@ def draw_track(
     timestep: int | None,
     show_boxes: bool,
     show_trails: bool,
+    highlighted_track_id: str | None,
 ) -> None:
     states = sorted(track.object_states, key=lambda state: state.timestep)
     if not states:
         return
 
-    color = track_color(track)
+    is_highlighted = track.track_id == highlighted_track_id
+    color = COLLISION_HIGHLIGHT_COLOR if is_highlighted else track_color(track)
     is_focal = track.category == TrackCategory.FOCAL_TRACK
     is_scored = track.category == TrackCategory.SCORED_TRACK
-    linewidth = 2.4 if is_focal else (1.8 if is_scored else 0.9)
-    alpha = 1.0 if is_focal else (0.85 if is_scored else 0.35)
+    linewidth = (
+        3.0 if is_highlighted else (2.4 if is_focal else (1.8 if is_scored else 0.9))
+    )
+    alpha = 1.0 if is_highlighted or is_focal else (0.85 if is_scored else 0.35)
 
     if timestep is None:
         visible_states = states
@@ -277,10 +349,18 @@ def draw_track(
             mpatches.Polygon(
                 corners,
                 closed=True,
-                facecolor=OBJECT_COLORS.get(track.object_type, "#8f9699"),
+                facecolor=(
+                    COLLISION_HIGHLIGHT_COLOR
+                    if is_highlighted
+                    else OBJECT_COLORS.get(track.object_type, "#8f9699")
+                ),
                 edgecolor=color,
-                linewidth=1.8 if (is_focal or is_scored) else 0.8,
-                alpha=0.78 if (is_focal or is_scored) else 0.45,
+                linewidth=2.4
+                if is_highlighted
+                else (1.8 if (is_focal or is_scored) else 0.8),
+                alpha=0.9
+                if is_highlighted
+                else (0.78 if (is_focal or is_scored) else 0.45),
                 zorder=15,
             )
         )
@@ -329,12 +409,16 @@ def set_axis_limits(
     ax.set_ylim(float(ymin - padding), float(ymax + padding))
 
 
-def add_legend(ax: plt.Axes) -> None:
+def add_legend(ax: plt.Axes, highlighted_track_id: str | None) -> None:
     handles = [
         mpatches.Patch(color=TRACK_COLORS[TrackCategory.FOCAL_TRACK], label="Focal"),
         mpatches.Patch(color=TRACK_COLORS[TrackCategory.SCORED_TRACK], label="Scored"),
         mpatches.Patch(color=TRACK_COLORS[TrackCategory.UNSCORED_TRACK], label="Other"),
     ]
+    if highlighted_track_id is not None:
+        handles.append(
+            mpatches.Patch(color=COLLISION_HIGHLIGHT_COLOR, label="Most collisions")
+        )
     ax.legend(handles=handles, loc="lower left", frameon=True, fontsize=8)
 
 
@@ -346,6 +430,7 @@ def draw_scenario(
     show_map: bool,
     show_boxes: bool,
     show_trails: bool,
+    highlighted_track_id: str | None,
 ) -> plt.Figure:
     fig, ax = plt.subplots(figsize=(12, 10), facecolor="white")
     ax.set_aspect("equal", adjustable="box")
@@ -361,6 +446,7 @@ def draw_scenario(
             timestep=timestep,
             show_boxes=show_boxes,
             show_trails=show_trails,
+            highlighted_track_id=highlighted_track_id,
         )
 
     set_axis_limits(ax, scenario, static_map if show_map else None)
@@ -369,7 +455,7 @@ def draw_scenario(
     ax.set_xlabel("x [m]")
     ax.set_ylabel("y [m]")
     ax.grid(color="#e7e7e7", linewidth=0.4)
-    add_legend(ax)
+    add_legend(ax, highlighted_track_id)
     fig.tight_layout()
     return fig
 
@@ -392,6 +478,7 @@ def save_animation(
     show_map: bool,
     show_boxes: bool,
     show_trails: bool,
+    highlighted_track_id: str | None,
 ) -> None:
     fig, ax = plt.subplots(figsize=(12, 10), facecolor="white")
     set_axis_limits(ax, scenario, static_map if show_map else None)
@@ -413,6 +500,7 @@ def save_animation(
                 timestep=frame,
                 show_boxes=show_boxes,
                 show_trails=show_trails,
+                highlighted_track_id=highlighted_track_id,
             )
         ax.set_title(f"AV2 Scenario {scenario.scenario_id} (t={frame})")
         ax.set_xlabel("x [m]")
@@ -441,17 +529,35 @@ def default_output_path(
 def main() -> int:
     args = parse_args()
     scenario_dir = args.scenario_dir.expanduser().resolve()
-    scenario, static_map = load_inputs(scenario_dir)
+    scenario, static_map, parquet_path = load_inputs(scenario_dir)
     output_path = args.output or default_output_path(
         scenario_dir, scenario, args.animate
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    overlap_tolerance = max(0.0, args.overlap_tolerance)
+    highlighted_track_id = None
+    highlighted_collision_count = 0
+    if not args.no_collision_highlight:
+        highlighted_track_id, highlighted_collision_count = (
+            find_most_colliding_vehicle_id(
+                scenario,
+                parquet_path,
+                overlap_tolerance=overlap_tolerance,
+            )
+        )
 
     print(f"Loaded scenario: {scenario.scenario_id}")
     print(f"Tracks:          {len(scenario.tracks)}")
     print(
         f"Map:             {'yes' if static_map is not None and not args.no_map else 'no'}"
     )
+    if highlighted_track_id is None:
+        print("Most-colliding vehicle: none")
+    else:
+        print(
+            f"Most-colliding vehicle: {highlighted_track_id} "
+            f"({highlighted_collision_count} collision pair(s))"
+        )
 
     timestep = None if args.full else args.timestep
     if args.animate:
@@ -463,6 +569,7 @@ def main() -> int:
             show_map=not args.no_map,
             show_boxes=not args.no_boxes,
             show_trails=not args.no_trails,
+            highlighted_track_id=highlighted_track_id,
         )
     else:
         fig = draw_scenario(
@@ -472,6 +579,7 @@ def main() -> int:
             show_map=not args.no_map,
             show_boxes=not args.no_boxes,
             show_trails=not args.no_trails,
+            highlighted_track_id=highlighted_track_id,
         )
         fig.savefig(output_path, dpi=args.dpi, bbox_inches="tight")
         plt.close(fig)
