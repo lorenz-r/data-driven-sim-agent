@@ -126,6 +126,15 @@ def parse_args() -> argparse.Namespace:
         help="Disable the numba collision kernel and use the pure-Python fallback.",
     )
     parser.add_argument(
+        "--overlap-tolerance",
+        type=float,
+        default=0.0,
+        help=(
+            "Minimum rounded-footprint penetration depth in meters required to count "
+            "a collision. Example: 0.10 ignores overlaps up to 10 cm. Default: 0.0."
+        ),
+    )
+    parser.add_argument(
         "--details-csv",
         type=Path,
         default=None,
@@ -402,12 +411,12 @@ def _signed_distance_between_rectangles(ax, ay, al, aw, ah, bx, by, bl, bw, bh):
 
 
 @njit(cache=True)
-def _boxes_collide_fast(ax, ay, ah, al, aw, bx, by, bh, bl, bw):
+def _rounded_box_penetration_depth(ax, ay, ah, al, aw, bx, by, bh, bl, bw):
     max_radius = math.sqrt(al * al + aw * aw) * 0.5 + math.sqrt(bl * bl + bw * bw) * 0.5
     dx = bx - ax
     dy = by - ay
     if dx * dx + dy * dy > max_radius * max_radius:
-        return False
+        return 0.0
 
     shrink_a = min(al, aw) * CORNER_ROUNDING_FACTOR * 0.5
     shrink_b = min(bl, bw) * CORNER_ROUNDING_FACTOR * 0.5
@@ -423,11 +432,16 @@ def _boxes_collide_fast(ax, ay, ah, al, aw, bx, by, bh, bl, bw):
         bw - 2.0 * shrink_b,
         bh,
     )
-    return signed_distance - shrink_a - shrink_b < COLLISION_DISTANCE_THRESHOLD
+    signed_rounded_distance = signed_distance - shrink_a - shrink_b
+    if signed_rounded_distance < COLLISION_DISTANCE_THRESHOLD:
+        return -signed_rounded_distance
+    return 0.0
 
 
 @njit(cache=True)
-def _find_collisions_numba(track_codes, x, y, heading, length, width):
+def _find_collisions_numba(
+    track_codes, x, y, heading, length, width, overlap_tolerance
+):
     n = track_codes.shape[0]
     max_pairs = n * (n - 1) // 2
     out_a = np.empty(max_pairs, dtype=np.int64)
@@ -438,17 +452,20 @@ def _find_collisions_numba(track_codes, x, y, heading, length, width):
         for j in range(i + 1, n):
             if track_codes[i] == track_codes[j]:
                 continue
-            if _boxes_collide_fast(
-                x[i],
-                y[i],
-                heading[i],
-                length[i],
-                width[i],
-                x[j],
-                y[j],
-                heading[j],
-                length[j],
-                width[j],
+            if (
+                _rounded_box_penetration_depth(
+                    x[i],
+                    y[i],
+                    heading[i],
+                    length[i],
+                    width[i],
+                    x[j],
+                    y[j],
+                    heading[j],
+                    length[j],
+                    width[j],
+                )
+                > overlap_tolerance
             ):
                 out_a[count] = track_codes[i]
                 out_b[count] = track_codes[j]
@@ -468,9 +485,16 @@ def boxes_collide_python(
     bh: float,
     bl: float,
     bw: float,
+    overlap_tolerance: float,
 ) -> bool:
-    overlap_func = getattr(_boxes_collide_fast, "py_func", _boxes_collide_fast)
-    return bool(overlap_func(ax, ay, ah, al, aw, bx, by, bh, bl, bw))
+    overlap_func = getattr(
+        _rounded_box_penetration_depth,
+        "py_func",
+        _rounded_box_penetration_depth,
+    )
+    return bool(
+        overlap_func(ax, ay, ah, al, aw, bx, by, bh, bl, bw) > overlap_tolerance
+    )
 
 
 def find_collisions_python(
@@ -480,6 +504,7 @@ def find_collisions_python(
     heading: np.ndarray,
     length: np.ndarray,
     width: np.ndarray,
+    overlap_tolerance: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     out_a: list[int] = []
     out_b: list[int] = []
@@ -498,6 +523,7 @@ def find_collisions_python(
                 heading[j],
                 length[j],
                 width[j],
+                overlap_tolerance,
             ):
                 out_a.append(int(track_codes[i]))
                 out_b.append(int(track_codes[j]))
@@ -510,6 +536,7 @@ def count_scenario_collisions(
     observed_only: bool,
     allowed_types: set[str] | None,
     use_numba: bool,
+    overlap_tolerance: float,
 ) -> tuple[Collision, ...]:
     df, length_col, width_col = read_scenario_frame(
         parquet_path,
@@ -548,6 +575,7 @@ def count_scenario_collisions(
             heading[start:end],
             length[start:end],
             width[start:end],
+            overlap_tolerance,
         )
 
         for code_a, code_b in zip(collided_a, collided_b):
@@ -571,9 +599,9 @@ def count_scenario_collisions(
 
 
 def process_one_scenario(
-    args: tuple[Path, bool, set[str] | None, bool],
+    args: tuple[Path, bool, set[str] | None, bool, float],
 ) -> ScenarioResult:
-    parquet_path, observed_only, allowed_types, use_numba = args
+    parquet_path, observed_only, allowed_types, use_numba, overlap_tolerance = args
     try:
         return ScenarioResult(
             scenario=parquet_path,
@@ -582,6 +610,7 @@ def process_one_scenario(
                 observed_only=observed_only,
                 allowed_types=allowed_types,
                 use_numba=use_numba,
+                overlap_tolerance=overlap_tolerance,
             ),
         )
     except Exception as exc:
@@ -596,9 +625,11 @@ def process_scenarios(
     observed_only: bool,
     allowed_types: set[str] | None,
     use_numba: bool,
+    overlap_tolerance: float,
 ) -> list[ScenarioResult]:
     worker_args = [
-        (path, observed_only, allowed_types, use_numba) for path in parquet_files
+        (path, observed_only, allowed_types, use_numba, overlap_tolerance)
+        for path in parquet_files
     ]
     if workers <= 1 or len(worker_args) <= 1:
         return [process_one_scenario(arg) for arg in worker_args]
@@ -646,6 +677,7 @@ def main() -> int:
 
     workers = max(1, args.workers)
     chunksize = max(1, args.chunksize)
+    overlap_tolerance = max(0.0, args.overlap_tolerance)
     allowed_types = set(args.types) if args.types is not None else None
     use_numba = NUMBA_AVAILABLE and not args.no_numba
 
@@ -653,6 +685,7 @@ def main() -> int:
         print(f"Scenarios found: {len(parquet_files)}")
         print(f"Workers:         {min(workers, len(parquet_files))}")
         print(f"Numba kernel:    {'on' if use_numba else 'off'}")
+        print(f"Overlap tolerance: {overlap_tolerance:.3f} m")
         print()
 
     results = process_scenarios(
@@ -662,6 +695,7 @@ def main() -> int:
         observed_only=args.observed_only,
         allowed_types=allowed_types,
         use_numba=use_numba,
+        overlap_tolerance=overlap_tolerance,
     )
 
     all_collisions: list[Collision] = []
