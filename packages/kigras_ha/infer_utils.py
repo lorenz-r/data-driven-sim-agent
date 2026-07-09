@@ -172,6 +172,108 @@ def rollout(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Batched rollout (multiple scenarios per forward pass)
+# ──────────────────────────────────────────────────────────────────────────────
+def collate_rollout_batch(
+    samples: list[dict], device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[dict]]:
+    """Pad a list of raw scenario dicts into batched rollout tensors.
+
+    Scenes have different agent counts (N) and map sizes (M), so this mirrors the
+    ``pad_sequence`` collation in ``KiGRAS_HA._shared_step`` — padded agents keep
+    valid=0 (masked inside the rollout) and padded map nodes are zero-filled —
+    so batched inference is consistent with batched training.
+
+    Returns ``(history, graph_pos, graph_dir, semantics, metas)`` where the
+    tensors are ``(B, N_max, 50, 7) / (B, M_max, 2) / (B, M_max, 2) / (B, N_max)``
+    and ``metas[b]`` carries each scene's real ``num_agents``, ``focal_idx``,
+    ``track_ids``, ``gt_future`` and ``scenario_id`` for unpadding.
+    """
+    from torch.nn.utils.rnn import pad_sequence
+
+    hist_list, sem_list, pos_list, dir_list, metas = [], [], [], [], []
+    for order, data in enumerate(samples):
+        agents = data["agents"]
+        hist = torch.as_tensor(_to_numpy(agents["history"]), dtype=torch.float32)
+        hist_list.append(hist)
+        sem_list.append(
+            torch.as_tensor(_to_numpy(agents["agent_type_ids"]), dtype=torch.long)
+        )
+        pos_list.append(
+            torch.as_tensor(_to_numpy(data["graph"]["position"]), dtype=torch.float32)
+        )
+        dir_list.append(
+            torch.as_tensor(
+                _to_numpy(data["graph"]["direction_vector"]), dtype=torch.float32
+            )
+        )
+        track_ids = list(agents["track_ids"])
+        metas.append(
+            {
+                "num_agents": int(hist.shape[0]),
+                "focal_idx": _focal_index(track_ids, data["focal_track_id"]),
+                "track_ids": track_ids,
+                "gt_future": _to_numpy(agents["future"]),  # (N, 60, 7)
+                "scenario_id": str(data.get("scenario_id", f"scenario_{order:06d}")),
+            }
+        )
+
+    history = pad_sequence(hist_list, batch_first=True, padding_value=0.0).to(device)
+    semantics = pad_sequence(sem_list, batch_first=True, padding_value=0).to(device)
+    graph_pos = pad_sequence(pos_list, batch_first=True, padding_value=0.0).to(device)
+    graph_dir = pad_sequence(dir_list, batch_first=True, padding_value=0.0).to(device)
+    return history, graph_pos, graph_dir, semantics, metas
+
+
+def rollout_batch(
+    model: KiGRAS_HA,
+    samples: list[dict],
+    *,
+    num_samples: int,
+    temperature: float,
+    device: torch.device,
+) -> list[dict[str, Any]]:
+    """Roll out a whole list of scenarios in ONE batched forward pass.
+
+    Returns a list aligned with ``samples``; each entry has the same arrays as
+    :func:`rollout` (``pred_states`` / ``pred_xy`` / ``pred_tokens``) sliced back
+    to that scene's real agent count, plus ``focal_idx`` / ``track_ids`` /
+    ``gt_future`` / ``scenario_id``.
+    """
+    history, graph_pos, graph_dir, semantics, metas = collate_rollout_batch(
+        samples, device
+    )
+    pred_states, pred_tokens = model.rollout_simulator(
+        history,
+        graph_pos,
+        graph_dir,
+        semantics,
+        num_samples=num_samples,
+        temperature=temperature,
+        steps=PRED_LEN,
+    )  # (K, B, N_max, 60, 7) and (K, B, N_max, 60)
+    ps = pred_states.cpu().numpy()
+    pt = pred_tokens.cpu().numpy()
+
+    out: list[dict[str, Any]] = []
+    for b, meta in enumerate(metas):
+        n = meta["num_agents"]
+        states = ps[:, b, :n]  # (K, n, 60, 7) — drop padded agents
+        out.append(
+            {
+                "pred_states": states,
+                "pred_xy": states[..., :2],  # (K, n, 60, 2)
+                "pred_tokens": pt[:, b, :n],  # (K, n, 60)
+                "focal_idx": meta["focal_idx"],
+                "track_ids": meta["track_ids"],
+                "gt_future": meta["gt_future"],
+                "scenario_id": meta["scenario_id"],
+            }
+        )
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Metrics
 # ──────────────────────────────────────────────────────────────────────────────
 def agent_min_ade_fde(
@@ -421,42 +523,11 @@ def save_av2_prediction(
 # ──────────────────────────────────────────────────────────────────────────────
 # Per-scenario inference
 # ──────────────────────────────────────────────────────────────────────────────
-def run_scenario_inference(
-    *,
-    data: dict,
-    model: KiGRAS_HA,
-    device: torch.device,
-    num_samples: int,
-    temperature: float,
-) -> dict[str, Any]:
-    agents = data["agents"]
-    history = torch.as_tensor(
-        _to_numpy(agents["history"]), dtype=torch.float32, device=device
-    ).unsqueeze(0)
-    semantics = torch.as_tensor(
-        _to_numpy(agents["agent_type_ids"]), dtype=torch.long, device=device
-    ).unsqueeze(0)
-    graph_pos = torch.as_tensor(
-        _to_numpy(data["graph"]["position"]), dtype=torch.float32, device=device
-    ).unsqueeze(0)
-    graph_dir = torch.as_tensor(
-        _to_numpy(data["graph"]["direction_vector"]), dtype=torch.float32, device=device
-    ).unsqueeze(0)
-
-    rollout_output = rollout(
-        model,
-        history,
-        graph_pos,
-        graph_dir,
-        semantics,
-        num_samples=num_samples,
-        temperature=temperature,
-    )
-
-    track_ids = list(agents["track_ids"])
-    focal_idx = _focal_index(track_ids, data["focal_track_id"])
-    gt_future = _to_numpy(agents["future"])  # (N, 60, 7)
-    pred_xy = rollout_output["pred_xy"]
+def _scenario_metrics(res: dict[str, Any]) -> dict[str, Any]:
+    """Scene + focal minADE/minFDE from one scene's (unpadded) rollout result."""
+    gt_future = res["gt_future"]
+    focal_idx = res["focal_idx"]
+    pred_xy = res["pred_xy"]
 
     # Scene metrics span every agent, ignoring invalid / GT-less agents.
     scene = scene_min_ade_fde(pred_xy, gt_future)
@@ -470,16 +541,34 @@ def run_scenario_inference(
     focal_ade, focal_fde = (
         focal_metrics if focal_metrics is not None else (float("nan"), float("nan"))
     )
-
     return {
-        "rollout_output": rollout_output,
-        "track_ids": track_ids,
+        "rollout_output": {
+            "pred_states": res["pred_states"],
+            "pred_xy": pred_xy,
+            "pred_tokens": res["pred_tokens"],
+        },
+        "track_ids": res["track_ids"],
         "focal_idx": focal_idx,
         "gt_future": gt_future,
         "scene": scene,
         "focal_min_ade": focal_ade,
         "focal_min_fde": focal_fde,
     }
+
+
+def run_scenario_inference(
+    *,
+    data: dict,
+    model: KiGRAS_HA,
+    device: torch.device,
+    num_samples: int,
+    temperature: float,
+) -> dict[str, Any]:
+    """Single-scenario convenience wrapper over the batched rollout path."""
+    res = rollout_batch(
+        model, [data], num_samples=num_samples, temperature=temperature, device=device
+    )[0]
+    return _scenario_metrics(res)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -500,9 +589,11 @@ def run_inference_pipeline(
     visualization_limit: Optional[int],
     format_av2: bool,
     format_npz: bool,
+    batch_size: int = 1,
 ) -> list[dict[str, Any]]:
     if num_samples < 1:
         raise ValueError("--num-samples must be at least 1")
+    batch_size = max(1, batch_size)
 
     resolved_device = resolve_inference_device(device)
     output_path = Path(output_dir).expanduser()
@@ -560,18 +651,28 @@ def run_inference_pipeline(
 
     results: list[dict[str, Any]] = []
     visualized_count = 0
+    # Rollouts are batched (batch_size scenarios per forward pass); the per-scene
+    # post-processing below (metrics / npz / av2 / viz) stays per scenario.
+    chunk_samples: list[dict] = []
+    chunk_results: list[dict[str, Any]] = []
     for order, scenario_idx in enumerate(indices):
-        data = dataset[scenario_idx]
+        if not chunk_results:  # start of a new batch → roll it out in one pass
+            chunk_idx = indices[order : order + batch_size]
+            chunk_samples = [dataset[i] for i in chunk_idx]
+            batched = rollout_batch(
+                model,
+                chunk_samples,
+                num_samples=num_samples,
+                temperature=temperature,
+                device=resolved_device,
+            )
+            chunk_results = [_scenario_metrics(r) for r in batched]
+
+        data = chunk_samples.pop(0)
+        scenario_result = chunk_results.pop(0)
         scenario_id = str(data.get("scenario_id", f"scenario_{scenario_idx:06d}"))
         print(f"\n[{order + 1}/{len(indices)}] {scenario_id}")
 
-        scenario_result = run_scenario_inference(
-            data=data,
-            model=model,
-            device=resolved_device,
-            num_samples=num_samples,
-            temperature=temperature,
-        )
         rollout_output = scenario_result["rollout_output"]
         focal_idx = scenario_result["focal_idx"]
         scene = scenario_result["scene"]

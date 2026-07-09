@@ -115,6 +115,13 @@ def main() -> None:
         help="Softmax temperature for sampling (ignored when --num-samples=1).",
     )
     parser.add_argument(
+        "--batch-size",
+        "-b",
+        type=int,
+        default=1,
+        help="Scenarios rolled out per batched forward pass (default: 1).",
+    )
+    parser.add_argument(
         "--idx",
         type=int,
         nargs="+",
@@ -178,6 +185,7 @@ def main() -> None:
         visualization_limit=visualization_limit,
         format_av2=args.format in ("av2", "both"),
         format_npz=args.format in ("npz", "both"),
+        batch_size=args.batch_size,
     )
 
 

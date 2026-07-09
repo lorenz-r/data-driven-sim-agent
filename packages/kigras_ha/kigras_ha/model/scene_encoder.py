@@ -106,9 +106,18 @@ class FactorizedSceneEncoder(nn.Module):
         # 3. Own history — precomputed causal GRU readout
         e_h = history_embedding  # (B, N, d_model)
 
-        # 4. Neighbour snapshot — MLP over k current states, max-pool over neighbours
+        # 4. Neighbour snapshot — MLP over k current states, max-pool over neighbours.
+        #    Invalid neighbour slots (fewer than k valid agents, or batch padding)
+        #    are masked OUT of the max-pool: without this they enter as zeros and
+        #    can win the elementwise max, making the pooled feature depend on how
+        #    many padded slots exist (i.e. on the batch composition). The valid
+        #    flag rides along at index 6 of neighbor_states.
         n_feats = self.neighbor_mlp(neighbor_states)  # (B, N, k, d_model)
-        e_n, _ = n_feats.max(dim=2)  # (B, N, d_model)
+        neighbor_valid = neighbor_states[..., 6] > 0  # (B, N, k)
+        n_feats = n_feats.masked_fill(~neighbor_valid.unsqueeze(-1), float("-inf"))
+        e_n = n_feats.max(dim=2).values  # (B, N, d_model)
+        # Observers with no valid neighbour at all (only padded agents) → 0, not -inf.
+        e_n = torch.nan_to_num(e_n, neginf=0.0)
 
         # 5. U-embedding — previous action token
         e_u = self.action_embedding(prev_actions)  # (B, N, d_model)

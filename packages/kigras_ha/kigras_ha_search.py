@@ -195,11 +195,15 @@ def evaluate_min_fde(
     import numpy as np
     import torch
 
-    from kigras_ha.dataloader.dataset import ArgoDataset, collate_fn
+    from kigras_ha.dataloader.dataset import ArgoDataset
     from kigras_ha.model.kigras_ha import KiGRAS_HA
+    from infer_utils import rollout_batch
     from eval2 import min_ade_fde
 
     device = torch.device(args.eval_device)
+    # Seed the sampling RNG so a config's stochastic minFDE is reproducible
+    # (sampled rollouts draw from torch's global RNG).
+    torch.manual_seed(args.seed)
     ckpt = checkpoint_for_trial(checkpoint_dir)
     model = KiGRAS_HA.load_from_checkpoint(str(ckpt), map_location=device).eval()
 
@@ -211,46 +215,27 @@ def evaluate_min_fde(
     ades: list[float] = []
     fdes: list[float] = []
     n = len(dataset) if args.eval_limit <= 0 else min(args.eval_limit, len(dataset))
-    for i in range(n):
-        batch = collate_fn([dataset[i]])
-        agents, graph = batch["agents"][0], batch["graph"][0]
-        history = torch.as_tensor(
-            agents["history"], dtype=torch.float32, device=device
-        ).unsqueeze(0)
-        semantics = torch.as_tensor(
-            agents["agent_type_ids"], dtype=torch.long, device=device
-        ).unsqueeze(0)
-        gpos = torch.as_tensor(
-            graph["position"], dtype=torch.float32, device=device
-        ).unsqueeze(0)
-        gdir = torch.as_tensor(
-            graph["direction_vector"], dtype=torch.float32, device=device
-        ).unsqueeze(0)
-        future = torch.as_tensor(agents["future"], dtype=torch.float32).numpy()
-
-        track_ids = [str(t) for t in agents["track_ids"]]
-        focal = str(batch["focal_track_id"][0])
-        fidx = track_ids.index(focal) if focal in track_ids else 0
-
-        # Consolidated single rollout path: (K, B, N, 60, 7)
-        pred_states, _ = model.rollout_simulator(
-            history,
-            gpos,
-            gdir,
-            semantics,
+    bs = max(1, args.eval_batch_size)
+    for start in range(0, n, bs):
+        samples = [dataset[i] for i in range(start, min(start + bs, n))]
+        # One batched rollout for the whole chunk (shared batched inference path).
+        for res in rollout_batch(
+            model,
+            samples,
             num_samples=args.eval_samples,
             temperature=args.eval_temperature,
-        )
-        pred_xy = pred_states[:, 0, fidx, :, :2].cpu().numpy()  # (K, 60, 2)
-
-        gt = future[fidx, :, :2].copy()
-        gt[~(future[fidx, :, 6] > 0)] = np.nan  # mask invalid GT steps
-        if np.isnan(gt).all():
-            continue
-        ade, fde = min_ade_fde(pred_xy, gt)
-        if not (np.isnan(ade) or np.isnan(fde)):
-            ades.append(ade)
-            fdes.append(fde)
+            device=device,
+        ):
+            fidx = res["focal_idx"]
+            gt_future = res["gt_future"]
+            gt = gt_future[fidx, :, :2].copy()
+            gt[~(gt_future[fidx, :, 6] > 0)] = np.nan  # mask invalid GT steps
+            if np.isnan(gt).all():
+                continue
+            ade, fde = min_ade_fde(res["pred_xy"][:, fidx], gt)
+            if not (np.isnan(ade) or np.isnan(fde)):
+                ades.append(ade)
+                fdes.append(fde)
 
     if not fdes:
         return float("nan"), float("nan")
@@ -314,6 +299,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--eval-temperature", type=float, default=1.0)
     p.add_argument(
         "--eval-limit", type=int, default=0, help="Max val scenarios (0=all)."
+    )
+    p.add_argument(
+        "--eval-batch-size", type=int, default=16, help="Val scenarios per batched rollout."
     )
     p.add_argument(
         "--eval-device",
