@@ -215,81 +215,58 @@ class SceneEncoder(nn.Module):
         Shape legend:
             O_total: number of observer agents to predict.
             T: prediction horizon, currently 60.
-            E_agent: source-agent -> observer context edges.
-            E_map: source-map-node -> observer context edges.
+            N_agent_context: valid per-timestep source-agent context rows.
+            N_map_context: valid per-timestep source-map-node context rows.
 
         Inputs from process_sparse_batch:
-            agent_context: [E_agent, T, 7]
-                Normalized source-agent states transformed into each observer
-                frame. Last dim is [x, y, cos_h, sin_h, vx, vy, valid].
-                process_sparse_batch can optionally keep agent_context_raw in
-                physical units for rollout/debugging code.
-            map_context: [E_map, T, 2, 2]
-                Normalized map nodes transformed into each observer frame at every t.
-                map_context[..., 0, :] is local map-node position.
-                map_context[..., 1, :] is local map-node direction.
-                process_sparse_batch can optionally keep map_context_raw in
-                physical units.
-            agent_edge_obs_idx_standardized: [E_agent]
-                Standardized observer row receiving each agent edge.
-            map_edge_obs_idx_standardized: [E_map]
-                Standardized observer row receiving each map edge.
-            map_left_mark_type, map_right_mark_type: [E_map]
-                Lane-boundary mark types per map edge.
-            map_is_intersection, map_width: [E_map]
-                Intersection flag and normalized lane width per map edge.
+            agent_context: [N_agent_context, 6]
+                Normalized source-agent rows transformed into each observer frame.
+                Last dim is [x, y, cos_h, sin_h, vx, vy].
+            map_context: [N_map_context, 4]
+                Normalized map rows transformed into each observer frame.
+                Last dim is [x, y, dir_x, dir_y].
+            agent_group_idx, map_group_idx: [N_context]
+                Flattened observer-time id for each sparse row.
+            map_left_mark_type, map_right_mark_type: [N_map_context]
+                Lane-boundary mark types per sparse map row.
+            map_is_intersection, map_width: [N_map_context]
+                Intersection flag and normalized lane width per sparse map row.
             observer_velocity: [O_total, T, 2]
                 Normalized observer velocity in the observer heading frame.
 
         Flow:
-            1. Encode each local agent edge independently and add semantics:
-               [E_agent, T, 7] -> [E_agent, T, d_model].
-            2. Encode each local map edge independently and add semantics:
-               [E_map, T, 2, 2] -> [E_map, T, d_model].
-            3. Flatten valid agent/map rows into sparse context tokens:
-               [N_context, d_model], grouped by observer-time id. N_context = E_map*T
-            4. Update observer-time query tokens with sparse multi-head attention:
+            1. Encode already-filtered local agent/map context rows.
+            2. Concatenate sparse context tokens and their observer-time groups.
+            3. Update observer-time query tokens with sparse multi-head attention:
                [O_total * T, d_model] -> [O_total * T, d_model].
-            5. Reshape to [O_total, T, d_model] for the decoder.
+            4. Reshape to [O_total, T, d_model] for the decoder.
         """
         num_observers = processed_batch["num_observers"]
         horizon = processed_batch["horizon"]
         num_groups = num_observers * horizon
 
-        # Edge-level normalized agent context: one row per source-agent -> observer edge.
-        # agent_context: [E_agent, T, 7]
+        # Sparse normalized agent context: one row per valid source-agent/time.
+        # agent_context: [N_agent_context, 6]
         agent_context = processed_batch["agent_context"]
-        # agent_valid: [E_agent, T]
-        agent_valid = agent_context[..., 6].bool()
-        map_valid = processed_batch["map_valid"].to(
-            device=agent_context.device,
-            dtype=torch.bool,
-        )
-        # agent_emb: [E_agent, T, d_model]
-        agent_emb = self.agent_mlp(agent_context[..., :6])
-        # Add source-agent object-type semantics to every timestep on the edge.
-        # semantic_encoder(agent_type_ids): [E_agent, d_model]
-        agent_emb = agent_emb + self.semantic_encoder(
-            processed_batch["agent_type_ids"]
-        ).unsqueeze(1)
-        agent_emb = agent_emb + self.role_encoder.weight[_ROLE_AGENT].view(1, 1, -1)
+        # agent_emb: [N_agent_context, d_model]
+        agent_emb = self.agent_mlp(agent_context)
+        # semantic_encoder(agent_type_ids): [N_agent_context, d_model]
+        agent_emb = agent_emb + self.semantic_encoder(processed_batch["agent_type_ids"])
+        agent_emb = agent_emb + self.role_encoder.weight[_ROLE_AGENT].view(1, -1)
 
-        # Edge-level normalized map context: one row per source-map-node -> observer edge.
-        # map_context: [E_map, T, 2, 2]
-        map_context = processed_batch["map_context"].reshape(-1, horizon, 4)
-        # map_emb: [E_map, T, d_model]
+        # Sparse normalized map context: one row per valid map-node/time.
+        # map_context: [N_map_context, 4]
+        map_context = processed_batch["map_context"]
+        # map_emb: [N_map_context, d_model]
         map_emb = self.map_mlp(map_context)
-        # Add lane-type semantics to every timestep on the map edge.
-        # lane_type_encoder(map_lane_type): [E_map, d_model]
-        map_emb = map_emb + self.lane_type_encoder(
-            processed_batch["map_lane_type"]
-        ).unsqueeze(1)
+        # lane_type_encoder(map_lane_type): [N_map_context, d_model]
+        map_emb = map_emb + self.lane_type_encoder(processed_batch["map_lane_type"])
         map_emb = map_emb + self.left_mark_encoder(
             processed_batch["map_left_mark_type"]
-        ).unsqueeze(1)
+        )
         map_emb = map_emb + self.right_mark_encoder(
             processed_batch["map_right_mark_type"]
-        ).unsqueeze(1)
+        )
         map_scalar_features = torch.stack(
             [
                 processed_batch["map_width"].to(
@@ -303,8 +280,8 @@ class SceneEncoder(nn.Module):
             ],
             dim=-1,
         )
-        map_emb = map_emb + self.map_scalar_encoder(map_scalar_features).unsqueeze(1)
-        map_emb = map_emb + self.role_encoder.weight[_ROLE_MAP].view(1, 1, -1)
+        map_emb = map_emb + self.map_scalar_encoder(map_scalar_features)
+        map_emb = map_emb + self.role_encoder.weight[_ROLE_MAP].view(1, -1)
 
         # Attention queries = semantics + velocity in heading frame
         # observer_tokens: [O_total, T, d_model]
@@ -324,38 +301,11 @@ class SceneEncoder(nn.Module):
             _ROLE_OBSERVER
         ].view(1, 1, -1)
 
-        # Build sparse context rows.
-        # group_idx carries the observer-time membership for each valid row.
-        # agent_group/map_group: [E, T], context_group_idx: [N_context]
-        agent_group = self._observer_time_groups(
-            processed_batch["agent_edge_obs_idx_standardized"].to(agent_emb.device),
-            horizon,
-        )
-        map_group = self._observer_time_groups(
-            processed_batch["map_edge_obs_idx_standardized"].to(map_emb.device),
-            horizon,
-        )
-
-        context_tokens = torch.cat(
-            [
-                agent_emb.reshape(-1, agent_emb.shape[-1]),
-                map_emb.reshape(-1, map_emb.shape[-1]),
-            ],
-            dim=0,
-        )
-
+        context_tokens = torch.cat([agent_emb, map_emb], dim=0)
         context_group_idx = torch.cat(
-            [agent_group.reshape(-1), map_group.reshape(-1)],
+            [processed_batch["agent_group_idx"], processed_batch["map_group_idx"]],
             dim=0,
-        )
-
-        context_valid = torch.cat(
-            [agent_valid.reshape(-1), map_valid.reshape(-1)],
-            dim=0,
-        ).to(device=context_tokens.device, dtype=torch.bool)
-
-        context_tokens = context_tokens[context_valid]
-        context_group_idx = context_group_idx[context_valid]
+        ).to(device=context_tokens.device, dtype=torch.long)
 
         # Sparse observer-frame attention. Each row in observer_tokens_flat queries
         # only context rows whose group_idx equals that observer-time id.

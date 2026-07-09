@@ -125,29 +125,29 @@ def run_preprocessing(
 
             # # ------------- TRAJ RECONSTRUCTION QUALITY TESTING ----------------------------------------
             # import matplotlib.pyplot as plt
+
             # print(kinematics)
             # for agent_idx in graded_agent_idx:
-            #     state_window = states[agent_idx : agent_idx + 1, action_start : action_stop + 1]
-            #     speed = np.hypot(state_window[..., 4], state_window[..., 5])
-            #     obs_window = np.stack(
+            #     init_state_np = states[agent_idx, action_start, :]
+            #     init_speed = np.hypot(init_state_np[4], init_state_np[5])
+            #     init_state = torch.tensor([[*init_state_np[:4], init_speed]], dtype=torch.float64)
+            #     saved_tokens = torch.from_numpy(token_ids[agent_idx, action_start:action_stop])
+            #     valid_actions = saved_tokens >= 0
+            #     safe_tokens = saved_tokens.clamp(min=0)
+            #     accel_idx = safe_tokens // int(kinematics.NUM_YAW)
+            #     yaw_idx = safe_tokens % int(kinematics.NUM_YAW)
+            #     actions = torch.stack(
             #         [
-            #             state_window[..., 0],
-            #             state_window[..., 1],
-            #             state_window[..., 2],
-            #             state_window[..., 3],
-            #             speed,
+            #             kinematics.accel_bins[accel_idx],
+            #             kinematics.yaw_rate_bins[yaw_idx],
             #         ],
-            #         axis=-1,
-            #     )
-            #     valid = state_window[0, :, 6] > 0
-            #     obs_window_t = torch.from_numpy(obs_window).to(torch.float64)
-            #     actions = kinematics.solve(
-            #         obs_window_t,
-            #         quantize=True,
-            #         valid_mask=torch.from_numpy(valid[None]).bool(),
-            #     )
-            #     rec = kinematics.forward(obs_window_t[:, 0, :], actions)[0].detach().numpy()
-            #     gt_xy = obs_window[0, :, :2]
+            #         dim=-1,
+            #     ).unsqueeze(0)
+            #     rec = kinematics.forward(init_state, actions)[0].detach().numpy()
+
+            #     gt_xy = states[agent_idx, action_start : action_stop + 1, :2]
+            #     valid = states[agent_idx, action_start : action_stop + 1, 6] > 0
+            #     valid[1:] &= valid_actions.numpy()
             #     plt.plot(gt_xy[valid, 0], gt_xy[valid, 1], label=f"GT {agent_idx}")
             #     plt.plot(
             #         rec[valid, 0],
@@ -159,7 +159,7 @@ def run_preprocessing(
             # plt.legend()
             # plt.show()
 
-            # # ------------------------------------------------------------------------------------------
+            # # # ------------------------------------------------------------------------------------------
 
             data["agents"]["action_tokens"] = token_ids  # (N, 109)
 

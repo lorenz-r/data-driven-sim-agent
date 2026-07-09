@@ -11,15 +11,6 @@ def _processed_batch() -> dict:
     torch.manual_seed(7)
     horizon = 4
     num_observers = 2
-    num_agent_edges = 5
-    num_map_edges = 3
-
-    agent_context = torch.randn(num_agent_edges, horizon, 7)
-    agent_context[..., 6] = 1.0
-    agent_context[1, 2, 6] = 0.0
-
-    map_valid = torch.ones(num_map_edges, horizon, dtype=torch.bool)
-    map_valid[2, 1] = False
 
     observer_valid = torch.tensor(
         [
@@ -29,17 +20,16 @@ def _processed_batch() -> dict:
     )
 
     return {
-        "agent_context": agent_context,
-        "map_context": torch.randn(num_map_edges, horizon, 2, 2),
-        "agent_edge_obs_idx_standardized": torch.tensor([0, 0, 0, 1, 1]),
-        "map_edge_obs_idx_standardized": torch.tensor([0, 1, 1]),
-        "agent_type_ids": torch.tensor([0, 1, 2, 0, 3]),
-        "map_lane_type": torch.tensor([0, 1, 2]),
-        "map_left_mark_type": torch.tensor([0, 4, 8]),
-        "map_right_mark_type": torch.tensor([1, 5, 9]),
-        "map_is_intersection": torch.tensor([0.0, 1.0, 0.0]),
-        "map_width": torch.tensor([0.35, 0.4, 0.45]),
-        "map_valid": map_valid,
+        "agent_context": torch.randn(8, 6),
+        "map_context": torch.randn(5, 4),
+        "agent_group_idx": torch.tensor([0, 1, 2, 4, 6, 7, 0, 5]),
+        "map_group_idx": torch.tensor([0, 3, 4, 6, 7]),
+        "agent_type_ids": torch.tensor([0, 1, 2, 0, 3, 4, 0, 1]),
+        "map_lane_type": torch.tensor([0, 1, 2, 0, 1]),
+        "map_left_mark_type": torch.tensor([0, 4, 8, 1, 2]),
+        "map_right_mark_type": torch.tensor([1, 5, 9, 2, 3]),
+        "map_is_intersection": torch.tensor([0.0, 1.0, 0.0, 1.0, 0.0]),
+        "map_width": torch.tensor([0.35, 0.4, 0.45, 0.5, 0.55]),
         "observer_type_ids": torch.tensor([0, 1]),
         "observer_velocity": torch.randn(num_observers, horizon, 2),
         "observer_valid": observer_valid,
@@ -60,17 +50,15 @@ def test_sparse_scene_encoder_keeps_decoder_shape_and_masks_invalid_steps():
 
 def test_sparse_scene_encoder_handles_empty_map_context():
     batch = _processed_batch()
-    horizon = batch["horizon"]
     batch.update(
         {
-            "map_context": torch.empty(0, horizon, 2, 2),
-            "map_edge_obs_idx_standardized": torch.empty(0, dtype=torch.long),
+            "map_context": torch.empty(0, 4),
+            "map_group_idx": torch.empty(0, dtype=torch.long),
             "map_lane_type": torch.empty(0, dtype=torch.long),
             "map_left_mark_type": torch.empty(0, dtype=torch.long),
             "map_right_mark_type": torch.empty(0, dtype=torch.long),
             "map_is_intersection": torch.empty(0),
             "map_width": torch.empty(0),
-            "map_valid": torch.empty(0, horizon, dtype=torch.bool),
         }
     )
     encoder = SceneEncoder(d_model=16, nhead=4, num_layers=1, dropout=0.0)

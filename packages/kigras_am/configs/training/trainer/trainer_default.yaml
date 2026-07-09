@@ -1,7 +1,7 @@
 # Default condfigs for the trainer object
 accelerator: auto
-max_epochs: 10
+max_epochs: 200
 num_sanity_val_steps: 0
 gradient_clip_val: 0.5
-precision: 32
+precision: 16-mixed
 deterministic: false

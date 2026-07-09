@@ -7,3 +7,5 @@ monitor: "val_loss"
 mode: "min"
 dirpath: ${checkpoint_save_path}
 filename: "{epoch:02d}"
+lightning_ckpt: null # if you want to resume training
+model_ckpt: null # if you only want to load the state dict

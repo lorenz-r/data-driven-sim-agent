@@ -3,7 +3,7 @@ interval: step
 frequency: 1
 params:
   max_lr: ${training.optimizer.params.lr}
-  pct_start: 0.3
+  pct_start: 0.1
   anneal_strategy: cos
   div_factor: 25.0
   final_div_factor: 10000.0

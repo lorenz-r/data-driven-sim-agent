@@ -88,10 +88,18 @@ def test_process_sparse_batch_exposes_observer_velocity():
 
     expected_observer_velocity = torch.tensor([[[3.0, 0.0], [3.0, 0.0]]])
     assert torch.allclose(processed["observer_velocity"], expected_observer_velocity)
-    assert torch.allclose(processed["agent_context"][0, :, 4:6], torch.zeros(2, 2))
     assert torch.allclose(
-        processed["agent_context"][1, :, 4:6], torch.tensor([[1.0, 0.0], [1.0, 0.0]])
+        processed["agent_context"][:, 4:6],
+        torch.tensor(
+            [
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [1.0, 0.0],
+            ]
+        ),
     )
+    assert torch.equal(processed["agent_group_idx"], torch.tensor([0, 1, 0, 1]))
 
 
 def test_process_sparse_batch_applies_moving_context_radius():
@@ -134,18 +142,7 @@ def test_process_sparse_batch_applies_moving_context_radius():
         map_context_radius=10.0,
     )
 
-    assert torch.equal(
-        processed["agent_context"][0, :, 6].bool(), torch.tensor([True, True])
-    )
-    assert torch.equal(
-        processed["agent_context"][1, :, 6].bool(), torch.tensor([False, True])
-    )
-    assert torch.equal(
-        processed["map_valid"],
-        torch.tensor(
-            [
-                [True, False],
-                [False, True],
-            ]
-        ),
-    )
+    assert processed["agent_context"].shape == (3, 6)
+    assert torch.equal(processed["agent_group_idx"], torch.tensor([0, 1, 1]))
+    assert torch.equal(processed["map_group_idx"], torch.tensor([0, 1]))
+    assert processed["map_context"].shape == (2, 4)

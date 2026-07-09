@@ -286,7 +286,7 @@ tgt_states = trajectories_flat[tgt_idx]
 
 Both `tgt_idx` and `obs_idx` are global flattened indices into `agents.states`. The edge features are still edge rows; they have not been pooled yet.
 
-For each source-agent to observer edge, it computes source state in the observer's coordinate frame at each timestep:
+For each source-agent to observer edge, it first builds a per-timestep radius/validity mask in global coordinates. It only transforms rows that are valid for that specific observer timestep:
 
 ```text
 local_x, local_y
@@ -298,23 +298,25 @@ valid
 The output shape is:
 
 ```text
-agent_context: [E_agent, T, 7]
+agent_context: [N_agent_context, 6]
+agent_group_idx: [N_agent_context]
 ```
 
-For map edges, it transforms the static map node position and direction vector into the observer frame at every timestep:
+For map edges, it similarly filters by observer validity and map radius before transforming the static map node position and direction vector into the observer frame:
 
 ```text
-map_context: [E_map, T, 2, 2]
+map_context: [N_map_context, 4]
+map_group_idx: [N_map_context]
 ```
 
-The last two dimensions store:
+The map feature dimension stores:
 
 ```text
-map_context[..., 0, :] = local map-node position [x, y]
-map_context[..., 1, :] = local map direction [dx, dy]
+map_context[:, 0:2] = local map-node position [x, y]
+map_context[:, 2:4] = local map direction [dx, dy]
 ```
 
-Agent context validity requires both the source agent and observer to be valid. Map context validity follows observer validity, because the map itself is static.
+The group index is `observer_row * T + timestep`, which lets scatter attention collect variable-size neighborhoods without padding back to `[E, T, D]`.
 
 ### Normalization
 
@@ -327,7 +329,7 @@ The processor normalizes local features before the model sees them:
 | Map position | `POSITION_SCALE = 100.0` |
 | Map direction | `MAP_DIRECTION_SCALE = 10.0` |
 
-Heading unit vectors and validity flags are not scaled.
+Heading unit vectors are not scaled. Validity flags are used to create sparse rows and are not passed to the encoder as features.
 
 ### Standardized Observer Indices
 
@@ -341,30 +343,28 @@ edge_observer_global_idx  = [10, 4, 10]
 standardized edge indices = [1, 0, 1]
 ```
 
-The result is aligned with edge rows:
+The standardized observer rows are combined with timestep ids to build sparse attention groups:
 
 ```text
-agent_edge_obs_idx_standardized[e] = observer bucket for agent_context[e]
-map_edge_obs_idx_standardized[e]   = observer bucket for map_context[e]
+group_idx = observer_row * horizon + timestep
 ```
 
-These tensors do not index into `agent_context` or `map_context`. Instead, they tell scatter pooling where each edge row should be accumulated.
+These group ids tell scatter attention which observer-time query each sparse context row belongs to.
 
 The processed batch contains:
 
 | Processed key | Shape | Meaning |
 | --- | --- | --- |
-| `agent_context` | `[E_agent, T, 7]` | Normalized source-agent features in observer frames. |
-| `map_context` | `[E_map, T, 2, 2]` | Normalized map features in observer frames. |
-| `agent_edge_obs_idx_standardized` | `[E_agent]` | Observer row receiving each agent edge. |
-| `map_edge_obs_idx_standardized` | `[E_map]` | Observer row receiving each map edge. |
-| `agent_type_ids` | `[E_agent]` | Source-agent type per agent edge row. |
-| `map_lane_type` | `[E_map]` | Lane type per map edge row. |
-| `map_left_mark_type` | `[E_map]` | Left boundary mark type per map edge row. |
-| `map_right_mark_type` | `[E_map]` | Right boundary mark type per map edge row. |
-| `map_is_intersection` | `[E_map]` | Intersection flag per map edge row. |
-| `map_width` | `[E_map]` | Normalized lane width per map edge row. |
-| `map_valid` | `[E_map, T]` | Map edge validity mask. |
+| `agent_context` | `[N_agent_context, 6]` | Normalized source-agent sparse rows in observer frames. |
+| `map_context` | `[N_map_context, 4]` | Normalized map sparse rows in observer frames. |
+| `agent_group_idx` | `[N_agent_context]` | Observer-time attention group per agent row. |
+| `map_group_idx` | `[N_map_context]` | Observer-time attention group per map row. |
+| `agent_type_ids` | `[N_agent_context]` | Source-agent type per sparse agent row. |
+| `map_lane_type` | `[N_map_context]` | Lane type per sparse map row. |
+| `map_left_mark_type` | `[N_map_context]` | Left boundary mark type per sparse map row. |
+| `map_right_mark_type` | `[N_map_context]` | Right boundary mark type per sparse map row. |
+| `map_is_intersection` | `[N_map_context]` | Intersection flag per sparse map row. |
+| `map_width` | `[N_map_context]` | Normalized lane width per sparse map row. |
 | `observer_idx` | `[O_total]` | Global flattened agent index per observer row. |
 | `observer_type_ids` | `[O_total]` | Observer object type per observer row. |
 | `observer_valid` | `[O_total, T]` | Observer validity per scene timestep. |
@@ -400,37 +400,36 @@ With the default action grid, `vocab_size = 3969`.
 agent context edges + map context edges -> scene_tokens [O_total, T, d_model]
 ```
 
-The encoder is intentionally simple: it does not use attention. It embeds each edge independently, pools edge embeddings into observer rows, and returns an observer-centric scene timeline for the decoder.
+The encoder embeds sparse context rows and uses scatter attention to aggregate each variable-size observer-time neighborhood without padding.
 
 Encoder inputs:
 
 | Input | Shape | Meaning |
 | --- | --- | --- |
-| `agent_context` | `[E_agent, T, 7]` | Source-agent states in each observer frame. |
-| `map_context` | `[E_map, T, 2, 2]` | Map-node position/direction in each observer frame. |
-| `agent_edge_obs_idx_standardized` | `[E_agent]` | Observer bucket for each agent edge row. |
-| `map_edge_obs_idx_standardized` | `[E_map]` | Observer bucket for each map edge row. |
-| `agent_type_ids` | `[E_agent]` | Source-agent semantic type per agent edge. |
-| `map_lane_type` | `[E_map]` | Lane type per map edge. |
-| `map_left_mark_type` | `[E_map]` | Left boundary mark type per map edge. |
-| `map_right_mark_type` | `[E_map]` | Right boundary mark type per map edge. |
-| `map_is_intersection` | `[E_map]` | Intersection flag per map edge. |
-| `map_width` | `[E_map]` | Lane width per map edge. |
+| `agent_context` | `[N_agent_context, 6]` | Valid source-agent rows in each observer frame. |
+| `map_context` | `[N_map_context, 4]` | Valid map-node position/direction rows in each observer frame. |
+| `agent_group_idx` | `[N_agent_context]` | Observer-time group per agent row. |
+| `map_group_idx` | `[N_map_context]` | Observer-time group per map row. |
+| `agent_type_ids` | `[N_agent_context]` | Source-agent semantic type per sparse row. |
+| `map_lane_type` | `[N_map_context]` | Lane type per sparse map row. |
+| `map_left_mark_type` | `[N_map_context]` | Left boundary mark type per sparse map row. |
+| `map_right_mark_type` | `[N_map_context]` | Right boundary mark type per sparse map row. |
+| `map_is_intersection` | `[N_map_context]` | Intersection flag per sparse map row. |
+| `map_width` | `[N_map_context]` | Lane width per sparse map row. |
 | `observer_type_ids` | `[O_total]` | Semantic type of each predicted observer. |
 | `observer_valid` | `[O_total, T]` | Validity mask for observer timesteps. |
 
 Encoder behavior:
 
-1. Agent edge rows are embedded from local kinematic features and source-agent type.
-2. Map edge rows are embedded from local map position/direction, lane type, lane-boundary marks, intersection flag, and lane width.
-3. The standardized edge-to-observer indices assign each edge row to an observer bucket.
-4. Agent and map edge embeddings are mean-pooled separately into `[O_total, T, d_model]` summaries.
-5. The agent summary, map summary, and observer-type embedding are fused into final scene tokens.
-6. Invalid observer timesteps are masked to zero.
+1. Sparse agent rows are embedded from local kinematic features and source-agent type.
+2. Sparse map rows are embedded from local map position/direction, lane type, lane-boundary marks, intersection flag, and lane width.
+3. `agent_group_idx` and `map_group_idx` assign each context row to an observer-time query.
+4. Sparse scatter attention updates one token per observer timestep.
+5. Invalid observer timesteps are masked to zero.
 
-The key idea is that the encoder preserves sparse edge-level context until the last pooling step. It never pads each observer to a fixed number of neighboring agents or map nodes.
+The key idea is that the encoder preserves sparse context rows until attention. It never pads each observer to a fixed number of neighboring agents or map nodes.
 
-Mean pooling is edge-to-observer aggregation. If four edge embeddings have standardized observer indices:
+Scatter attention is grouped by flattened observer-time ids. If four context rows have group indices:
 
 ```text
 index = [0, 1, 1, 0]
@@ -439,11 +438,11 @@ index = [0, 1, 1, 0]
 then the pooled output groups them as:
 
 ```text
-observer 0 receives edges 0 and 3
-observer 1 receives edges 1 and 2
+observer 0 receives rows 0 and 3
+observer 1 receives rows 1 and 2
 ```
 
-For every observer and timestep, the encoder averages the valid edge embeddings assigned to that observer. Invalid edge/timestep pairs do not contribute to the sum or denominator. The output shape is always:
+For every observer and timestep, the encoder attends only to sparse rows assigned to that group. Invalid or out-of-radius edge/timestep pairs were never materialized as encoder rows. The output shape is always:
 
 ```text
 scene_tokens: [O_total, T, d_model]
@@ -458,7 +457,7 @@ scene_tokens [O_total, T, d_model] + prev_actions [O_total, T]
   -> logits [O_total, T, vocab_size]
 ```
 
-This is the only attention-based part of the model. It is a Transformer decoder where observer rows act like the batch dimension and the sequence dimension is time.
+This is the temporal autoregressive attention part of the model. Observer rows act like the batch dimension and the sequence dimension is time.
 
 Decoder inputs:
 

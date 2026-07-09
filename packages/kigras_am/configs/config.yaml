@@ -10,7 +10,7 @@ defaults:
   - training/dataloader: dataloader_default
   - training/reproducibility: default
   - training/optimizer: adamw
-  - training/scheduler: onecycle
+  - training/scheduler: cosine
   - training/checkpointing: checkpoints_default
   - training/early_stopping: default_es_behaviour
   - training/logging: wandb

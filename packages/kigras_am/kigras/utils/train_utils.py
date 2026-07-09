@@ -6,8 +6,8 @@ POSITION_SCALE = 100.0
 VELOCITY_SCALE = 30.0
 MAP_DIRECTION_SCALE = 10.0
 LANE_WIDTH_SCALE = 10.0
-AGENT_CONTEXT_RADIUS = 50.0
-MAP_CONTEXT_RADIUS = 50.0
+AGENT_CONTEXT_RADIUS = 25.0
+MAP_CONTEXT_RADIUS = 25.0
 
 
 def transform_batch_sparse(
@@ -143,9 +143,9 @@ def normalize_agent_context(
 ) -> torch.Tensor:
     """Normalize local agent features in-place for neural network input.
 
-    Input/output shape is [E_agent, T, 7]. The physical layout is
-    [x, y, cos_h, sin_h, vx, vy, valid]. Positions and velocities are scaled;
-    heading unit vectors and validity are left unchanged.
+    Supports dense [..., 7] rows with a trailing validity flag and sparse
+    [..., 6] rows without one. Positions and velocities are scaled; heading
+    unit vectors and validity are left unchanged.
     """
     local_agent_context[..., 0:2].div_(position_scale)
     local_agent_context[..., 4:6].div_(velocity_scale)
@@ -189,6 +189,150 @@ def observer_local_velocity(
     return torch.stack([local_vx, local_vy], dim=-1).div(velocity_scale)
 
 
+def _empty_context(
+    rows: int,
+    cols: int,
+    like: torch.Tensor,
+) -> torch.Tensor:
+    return torch.empty((rows, cols), dtype=like.dtype, device=like.device)
+
+
+def _sparse_agent_context_rows(
+    trajectories: torch.Tensor,
+    agent_edges: torch.Tensor,
+    agent_edge_obs_idx_standardized: torch.Tensor,
+    horizon: int,
+    agent_context_radius: float | None,
+    position_scale: float,
+    velocity_scale: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return valid per-timestep agent context rows in observer frames.
+
+    The dense edge list remains [source_agent, observer_agent], but the returned
+    rows are sparse over both edge and time. ``group_idx`` is the flattened
+    observer-time id consumed by scatter attention.
+    """
+    if agent_edges.shape[1] == 0:
+        return (
+            _empty_context(0, 6, trajectories),
+            torch.empty(0, dtype=torch.long, device=trajectories.device),
+            torch.empty(0, dtype=torch.long, device=trajectories.device),
+        )
+
+    tgt_idx, obs_idx = agent_edges[0], agent_edges[1]
+    obs_states = trajectories[obs_idx]
+    tgt_states = trajectories[tgt_idx]
+
+    dx = tgt_states[..., 0] - obs_states[..., 0]
+    dy = tgt_states[..., 1] - obs_states[..., 1]
+    valid = tgt_states[..., 6].bool() & obs_states[..., 6].bool()
+    if agent_context_radius is not None:
+        radius_sq = float(agent_context_radius) ** 2
+        valid &= dx.square() + dy.square() <= radius_sq
+
+    edge_row, time_row = valid.nonzero(as_tuple=True)
+    if edge_row.numel() == 0:
+        return (
+            _empty_context(0, 6, trajectories),
+            torch.empty(0, dtype=torch.long, device=trajectories.device),
+            torch.empty(0, dtype=torch.long, device=trajectories.device),
+        )
+
+    obs_selected = obs_states[edge_row, time_row]
+    tgt_selected = tgt_states[edge_row, time_row]
+    dx_selected = dx[edge_row, time_row]
+    dy_selected = dy[edge_row, time_row]
+
+    obs_c = obs_selected[:, 2]
+    obs_s = obs_selected[:, 3]
+    local_x = dx_selected * obs_c + dy_selected * obs_s
+    local_y = -dx_selected * obs_s + dy_selected * obs_c
+
+    tgt_c = tgt_selected[:, 2]
+    tgt_s = tgt_selected[:, 3]
+    local_c = tgt_c * obs_c + tgt_s * obs_s
+    local_s = tgt_s * obs_c - tgt_c * obs_s
+
+    dvx = tgt_selected[:, 4] - obs_selected[:, 4]
+    dvy = tgt_selected[:, 5] - obs_selected[:, 5]
+    local_vx = dvx * obs_c + dvy * obs_s
+    local_vy = -dvx * obs_s + dvy * obs_c
+
+    context = torch.stack(
+        [local_x, local_y, local_c, local_s, local_vx, local_vy],
+        dim=-1,
+    )
+    context = normalize_agent_context(
+        context,
+        position_scale=position_scale,
+        velocity_scale=velocity_scale,
+    )
+    group_idx = agent_edge_obs_idx_standardized[edge_row] * horizon + time_row
+    source_agent_idx = tgt_idx[edge_row]
+    return context, group_idx, source_agent_idx
+
+
+def _sparse_map_context_rows(
+    trajectories: torch.Tensor,
+    map_pos_flat: torch.Tensor,
+    map_dir_flat: torch.Tensor,
+    map_edges: torch.Tensor,
+    map_edge_obs_idx_standardized: torch.Tensor,
+    horizon: int,
+    map_context_radius: float | None,
+    position_scale: float,
+    map_direction_scale: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return valid per-timestep map context rows in observer frames."""
+    if map_edges.shape[1] == 0:
+        return (
+            _empty_context(0, 4, trajectories),
+            torch.empty(0, dtype=torch.long, device=trajectories.device),
+            torch.empty(0, dtype=torch.long, device=trajectories.device),
+        )
+
+    map_tgt_idx, map_obs_idx = map_edges[0], map_edges[1]
+    obs_states = trajectories[map_obs_idx]
+    map_pos = map_pos_flat[map_tgt_idx]
+
+    dx = map_pos[:, None, 0] - obs_states[..., 0]
+    dy = map_pos[:, None, 1] - obs_states[..., 1]
+    valid = obs_states[..., 6].bool()
+    if map_context_radius is not None:
+        radius_sq = float(map_context_radius) ** 2
+        valid &= dx.square() + dy.square() <= radius_sq
+
+    edge_row, time_row = valid.nonzero(as_tuple=True)
+    if edge_row.numel() == 0:
+        return (
+            _empty_context(0, 4, trajectories),
+            torch.empty(0, dtype=torch.long, device=trajectories.device),
+            torch.empty(0, dtype=torch.long, device=trajectories.device),
+        )
+
+    obs_selected = obs_states[edge_row, time_row]
+    dx_selected = dx[edge_row, time_row]
+    dy_selected = dy[edge_row, time_row]
+    obs_c = obs_selected[:, 2]
+    obs_s = obs_selected[:, 3]
+
+    local_x = dx_selected * obs_c + dy_selected * obs_s
+    local_y = -dx_selected * obs_s + dy_selected * obs_c
+
+    map_dir = map_dir_flat[map_tgt_idx[edge_row]]
+    dir_x = map_dir[:, 0]
+    dir_y = map_dir[:, 1]
+    local_dir_x = dir_x * obs_c + dir_y * obs_s
+    local_dir_y = -dir_x * obs_s + dir_y * obs_c
+
+    context = torch.stack([local_x, local_y, local_dir_x, local_dir_y], dim=-1)
+    context[..., 0:2].div_(position_scale)
+    context[..., 2:4].div_(map_direction_scale)
+    group_idx = map_edge_obs_idx_standardized[edge_row] * horizon + time_row
+    source_map_idx = map_tgt_idx[edge_row]
+    return context, group_idx, source_map_idx
+
+
 def process_sparse_batch(
     batch: dict,
     start_t: int = CURRENT_STEP,
@@ -200,11 +344,11 @@ def process_sparse_batch(
     agent_context_radius: float | None = AGENT_CONTEXT_RADIUS,
     map_context_radius: float | None = MAP_CONTEXT_RADIUS,
 ) -> dict:
-    """Build observer-local sparse context tensors from a collated KiGRAS batch.
+    """Build observer-local sparse context rows from a collated KiGRAS batch.
 
-    The returned tensors keep context at edge level. Model code can encode each
-    edge independently and scatter-pool by standardized observer rows without padding
-    variable-size agent/map neighborhoods.
+    Context rows are sparse over both edge and timestep. This avoids materializing
+    dense [num_edges, horizon, d_model] activations for agent/map pairs that are
+    outside the configured context radii at a given timestep.
     """
     states = batch["agents"]["states"]
     if start_t < 0 or horizon <= 0 or start_t + horizon > states.shape[1]:
@@ -216,36 +360,6 @@ def process_sparse_batch(
     agent_edges = batch["context_edges"]["agent_to_observer"]
     map_edges = batch["context_edges"]["map_to_observer"]
 
-    local_agent_context, local_map_context = transform_batch_sparse(
-        trajectories_flat=trajectories,
-        map_pos_flat=batch["graph"]["position"],
-        map_dir_flat=batch["graph"]["direction_vector"],
-        agent_to_observer_edges=agent_edges,
-        map_to_observer_edges=map_edges,
-    )
-
-    if agent_context_radius is not None:
-        agent_dist = torch.linalg.norm(local_agent_context[..., :2], dim=-1)
-        local_agent_context[..., 6] *= (agent_dist <= agent_context_radius).to(
-            local_agent_context.dtype
-        )
-
-    map_valid = trajectories[map_edges[1], :, 6].bool()
-    if map_context_radius is not None:
-        map_dist = torch.linalg.norm(local_map_context[..., 0, :], dim=-1)
-        map_valid &= map_dist <= map_context_radius
-
-    local_agent_context = normalize_agent_context(
-        local_agent_context,
-        position_scale=position_scale,
-        velocity_scale=velocity_scale,
-    )
-    local_map_context = normalize_map_context(
-        local_map_context,
-        position_scale=position_scale,
-        direction_scale=map_direction_scale,
-    )
-
     observer_idx = batch["observers"]["agent_idx"]
     observer_states = trajectories[observer_idx]
     agent_edge_obs_idx_standardized = _standardize_observer_indices(
@@ -255,30 +369,50 @@ def process_sparse_batch(
         observer_idx, map_edges[1], states.shape[0]
     )
 
+    local_agent_context, agent_group_idx, source_agent_idx = _sparse_agent_context_rows(
+        trajectories=trajectories,
+        agent_edges=agent_edges,
+        agent_edge_obs_idx_standardized=agent_edge_obs_idx_standardized,
+        horizon=trajectories.shape[1],
+        agent_context_radius=agent_context_radius,
+        position_scale=position_scale,
+        velocity_scale=velocity_scale,
+    )
+    local_map_context, map_group_idx, source_map_idx = _sparse_map_context_rows(
+        trajectories=trajectories,
+        map_pos_flat=batch["graph"]["position"],
+        map_dir_flat=batch["graph"]["direction_vector"],
+        map_edges=map_edges,
+        map_edge_obs_idx_standardized=map_edge_obs_idx_standardized,
+        horizon=trajectories.shape[1],
+        map_context_radius=map_context_radius,
+        position_scale=position_scale,
+        map_direction_scale=map_direction_scale,
+    )
+
     processed = {
-        "agent_context": local_agent_context,  # [E_agent, T, 7], source agents in observer frames.
-        "map_context": local_map_context,  # [E_map, T, 2, 2], map pos/dir in observer frames.
-        "agent_edge_obs_idx_standardized": agent_edge_obs_idx_standardized,  # [E_agent], observer row per agent edge.
-        "map_edge_obs_idx_standardized": map_edge_obs_idx_standardized,  # [E_map], observer row per map edge.
+        "agent_context": local_agent_context,  # [N_agent_context, 6], sparse source-agent rows in observer frames.
+        "map_context": local_map_context,  # [N_map_context, 4], sparse map pos/dir rows in observer frames.
+        "agent_group_idx": agent_group_idx,  # [N_agent_context], flattened observer-time group per row.
+        "map_group_idx": map_group_idx,  # [N_map_context], flattened observer-time group per row.
         "agent_type_ids": batch["agents"]["type_ids"][
-            agent_edges[0]
-        ],  # [E_agent], source-agent class per edge.
+            source_agent_idx
+        ],  # [N_agent_context], source-agent class per sparse row.
         "map_lane_type": batch["graph"]["lane_type"][
-            map_edges[0]
-        ],  # [E_map], lane type per map edge.
+            source_map_idx
+        ],  # [N_map_context], lane type per sparse row.
         "map_left_mark_type": batch["graph"]["left_mark_type"][
-            map_edges[0]
-        ],  # [E_map], left boundary mark per map edge.
+            source_map_idx
+        ],  # [N_map_context], left boundary mark per sparse row.
         "map_right_mark_type": batch["graph"]["right_mark_type"][
-            map_edges[0]
-        ],  # [E_map], right boundary mark per map edge.
+            source_map_idx
+        ],  # [N_map_context], right boundary mark per sparse row.
         "map_is_intersection": batch["graph"]["is_intersection"][
-            map_edges[0]
-        ],  # [E_map], intersection flag per map edge.
-        "map_width": batch["graph"]["width"][map_edges[0]].div(
+            source_map_idx
+        ],  # [N_map_context], intersection flag per sparse row.
+        "map_width": batch["graph"]["width"][source_map_idx].div(
             lane_width_scale
-        ),  # [E_map], lane width per map edge.
-        "map_valid": map_valid,  # [E_map, T], observer validity and radius mask.
+        ),  # [N_map_context], lane width per sparse row.
         "observer_idx": observer_idx,  # [O_total], global agent id per observer row.
         "observer_type_ids": batch["agents"]["type_ids"][
             observer_idx

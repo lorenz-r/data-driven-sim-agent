@@ -69,7 +69,14 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
     es_cfg = cfg.training.early_stopping
     trainer_cfg = OmegaConf.to_container(cfg.training.trainer, resolve=True)
     model_cfg = cfg.model.architecture
-    resume_from_checkpoint = ckpt_cfg.pop("resume_from_checkpoint", None)
+    lightning_checkpoint = ckpt_cfg.pop("lightning_ckpt", None)
+    model_checkpoint = ckpt_cfg.pop("model_ckpt", None)
+
+    if lightning_checkpoint and model_checkpoint:
+        raise ValueError(
+            "Use only one of training.checkpointing.lightning_ckpt or "
+            "training.checkpointing.model_ckpt."
+        )
 
     _set_reproducibility(cfg)
     saved_config_path = _save_resolved_config(cfg)
@@ -103,6 +110,11 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
         dropout=model_cfg.dropout,
         vocab_size=model_cfg.num_action_bins**model_cfg.num_actions,
     )
+    if model_checkpoint:
+        checkpoint = torch.load(
+            model_checkpoint, map_location="cpu", weights_only=False
+        )
+        model.load_state_dict(checkpoint["state_dict"], strict=True)
 
     # callbacks during training
     callbacks = []
@@ -138,7 +150,7 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
         **trainer_cfg,
     )
 
-    ckpt_path = str(Path(resume_from_checkpoint)) if resume_from_checkpoint else None
+    ckpt_path = str(Path(lightning_checkpoint)) if lightning_checkpoint else None
     trainer.fit(model, datamodule, ckpt_path=ckpt_path)
 
     return {"end_loss": trainer.callback_metrics.get("val_loss", None)}
