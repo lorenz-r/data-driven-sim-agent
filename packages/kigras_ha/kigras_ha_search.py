@@ -139,19 +139,25 @@ def run_trial(trial: Any, args: argparse.Namespace) -> float:
     trial_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = trial_dir / "train_metrics.json"
 
-    cmd = [
-        sys.executable,
-        str(REPO_ROOT / "train.py"),
-        "--model",
-        "kigras_ha",
-        "--download-first",
+    # Download only when the processed cache is missing. Dev-mode download wipes
+    # and re-streams the raw data every time, so passing --download-first on every
+    # trial would re-fetch the whole split per trial (preprocessing is skipped once
+    # the .npy exists, so the re-download would be pure waste). Train+val caches are
+    # written together, so the val cache is a sufficient "data ready" probe.
+    need_download = not args.skip_download and not val_split_npy(args).exists()
+    cmd = [sys.executable, str(REPO_ROOT / "train.py"), "--model", "kigras_ha"]
+    if need_download:
+        cmd.append("--download-first")
+    cmd += [
         "--download-size",
-        args.download_size,
+        args.download_size,  # also names the cache file, so always pass it
         "--return_metrics",
         str(metrics_path),
         "--",
         *build_overrides(params, trial_dir, args),
     ]
+    if need_download:
+        print(f"Trial {trial.number}: processed cache missing → downloading + preprocessing once.")
 
     print(f"\nTrial {trial.number}: training  {params}")
     run_command(cmd, trial_dir / "train.log")
@@ -190,7 +196,12 @@ def objective(trial: Any, args: argparse.Namespace) -> float:
 # Stage 2: rollout minADE / minFDE over the validation split
 # ──────────────────────────────────────────────────────────────────────────────
 def val_split_npy(args: argparse.Namespace) -> Path:
-    name = f"{args.download_size}_val_split_b{args.num_action_bins}_p{float(args.grid_power)}.npy"
+    # ctra: the search fixes the kinematic module to CTRA (the only one the model
+    # decodes); the tag must match the cache the trainer writes.
+    name = (
+        f"{args.download_size}_val_split_ctra"
+        f"_b{args.num_action_bins}_p{float(args.grid_power)}.npy"
+    )
     return REPO_ROOT / "av2_data" / "kigras_processed" / "val" / name
 
 
@@ -364,6 +375,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--download-size", type=str, default="small")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--cpu", action="store_true", help="Force CPU training.")
+    p.add_argument(
+        "--skip-download",
+        action="store_true",
+        help="Never download/preprocess (assume the cache is already prepared). "
+        "Use when the data is prepared upfront, e.g. for parallel studies.",
+    )
     # Compute knobs (fixed across trials, not part of the search space).
     p.add_argument("--train-batch-size", type=int, default=8)
     p.add_argument("--val-batch-size", type=int, default=16)

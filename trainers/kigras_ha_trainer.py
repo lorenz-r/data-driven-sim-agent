@@ -32,11 +32,29 @@ class Kigras_HA_Trainer(BaseTrainer):
         # num_bins prevents silently reusing a cache from a different bin count.
         grid_power = cfg.model.kinematics.get("grid_power", 1.0)
         num_bins = cfg.model.kinematics.get("num_accel_bins", None)
+        # The kinematic module is recorded in the split filename and thus determines
+        # which cache is loaded. KiGRAS_HA's rollout/decode is CTRA-only, so refuse a
+        # non-CTRA cache rather than silently decode its tokens on a CTRA grid.
+        kinematics = cfg.model.kinematics.get("name", "ctra")
+        if kinematics != "ctra":
+            raise NotImplementedError(
+                f"Preprocessing can build '{kinematics}' tokens, but KiGRAS_HA decodes "
+                "CTRA only. Use a 'ctra' cache, or wire KBM decode into the model "
+                f"rollout before training/inference with '{kinematics}'."
+            )
         train_name = split_filename(
-            "train", size=download_size, grid_power=grid_power, num_bins=num_bins
+            "train",
+            size=download_size,
+            grid_power=grid_power,
+            num_bins=num_bins,
+            kinematics=kinematics,
         )
         val_name = split_filename(
-            "val", size=download_size, grid_power=grid_power, num_bins=num_bins
+            "val",
+            size=download_size,
+            grid_power=grid_power,
+            num_bins=num_bins,
+            kinematics=kinematics,
         )
 
         OmegaConf.set_struct(cfg, False)
@@ -59,6 +77,7 @@ class Kigras_HA_Trainer(BaseTrainer):
                     size=download_size,
                     grid_power=grid_power,
                     num_bins=num_bins,
+                    kinematics=kinematics,
                 )
             ).exists()
             for split in proc_cfg.output

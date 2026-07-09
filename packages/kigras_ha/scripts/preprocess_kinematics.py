@@ -12,19 +12,53 @@ from kbm import KinematicBicycleModel
 from kigras_ha.kinematics.inverse_kinematics import InverseKinematicModule
 
 
-def split_filename(
-    split: str, size: str = "", grid_power: float = 1.0, num_bins: int | None = None
-) -> str:
-    """Name of a preprocessed split file, tagged with the action grid.
+import re
 
-    The ``_b<num_bins>`` and ``_p<grid_power>`` suffixes (e.g.
-    ``train_split_b127_p1.0.npy``) make the per-axis bin count and the bin warp
-    explicit, so runs with a different grid never share a file and training only
-    ever loads tokens produced on the same grid the model decodes with.
+
+def split_filename(
+    split: str,
+    size: str = "",
+    grid_power: float = 1.0,
+    num_bins: int | None = None,
+    kinematics: str = "ctra",
+) -> str:
+    """Name of a preprocessed split file, tagged with the full token recipe.
+
+    The ``_<kinematics>_b<num_bins>_p<grid_power>`` suffix (e.g.
+    ``train_split_ctra_b127_p1.0.npy``) records the kinematic module (ctra/kbm),
+    the per-axis bin count, and the bin warp — so runs with a different recipe
+    never share a file, and the recipe (in particular the kinematic module used
+    to encode the tokens) can be recovered from the filename at train/infer time.
     """
     prefix = f"{size}_" if size else ""
+    kin = f"_{kinematics}" if kinematics else ""
     bins = f"_b{int(num_bins)}" if num_bins is not None else ""
-    return f"{prefix}{split}_split{bins}_p{float(grid_power)}.npy"
+    return f"{prefix}{split}_split{kin}{bins}_p{float(grid_power)}.npy"
+
+
+# Matches both the new (``..._split_ctra_b127_p1.0.npy``) and the legacy
+# (``..._split_b127_p1.0.npy`` / ``..._split.npy``) filenames.
+_SPLIT_RE = re.compile(
+    r"^(?:(?P<size>.+?)_)?(?P<split>train|val|test)_split"
+    r"(?:_(?P<kin>ctra|kbm))?(?:_b(?P<bins>\d+))?(?:_p(?P<p>[0-9.]+))?\.npy$"
+)
+
+
+def parse_split_filename(name: str) -> dict:
+    """Recover the token recipe (size/split/kinematics/num_bins/grid_power) from a filename.
+
+    ``kinematics`` defaults to ``"ctra"`` for legacy files that predate the tag.
+    """
+    m = _SPLIT_RE.match(Path(name).name)
+    if not m:
+        raise ValueError(f"Unrecognized preprocessed-split filename: {name}")
+    return {
+        "size": m["size"] or "",
+        "split": m["split"],
+        "kinematics": m["kin"] or "ctra",
+        "num_bins": int(m["bins"]) if m["bins"] else None,
+        "grid_power": float(m["p"]) if m["p"] else 1.0,
+    }
 
 
 def run_preprocessing(
@@ -213,7 +247,11 @@ def run_preprocessing(
     # The _p<grid_power> suffix records the action-bin warp so runs with a
     # different p never collide and are never silently mixed at train time.
     save_path = output_dir / split_filename(
-        output_dir.name, size=size, grid_power=grid_power, num_bins=num_accel
+        output_dir.name,
+        size=size,
+        grid_power=grid_power,
+        num_bins=num_accel,
+        kinematics=kinematics_type,
     )
     np.save(save_path, preprocessed_data_list, allow_pickle=True)
     print(f"\nPreprocessing complete! Saved to {save_path}")
