@@ -77,7 +77,8 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
     optim_cfg = cfg.training.optimizer
     ckpt_cfg = cfg.training.checkpointing
     es_cfg = cfg.training.early_stopping
-    trainer_cfg = cfg.training.trainer
+    # Mutable copy so we can pop `devices` before splatting into pl.Trainer.
+    trainer_cfg = OmegaConf.to_container(cfg.training.trainer, resolve=True)
     model_cfg = cfg.model.architecture
 
     # ------------------------------------------------------------------
@@ -152,8 +153,19 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
 
     # ------------------------------------------------------------------
     # Strategy
+    #
+    # `training.trainer.devices` controls the device count: "auto" (default) uses
+    # every visible GPU with DDP; an int pins the count. The hyperparameter search
+    # sets devices=1 so each trial runs single-GPU — DDP's subprocess relaunch does
+    # NOT preserve the programmatic Hydra/argparse architecture overrides, so under
+    # DDP rank 1 would rebuild the model from the default config (different #layers)
+    # and crash with "DDP expects same model across all ranks".
     # ------------------------------------------------------------------
-    num_devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
+    requested_devices = trainer_cfg.pop("devices", "auto")
+    if requested_devices in (None, "auto", "-1", -1):
+        num_devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
+    else:
+        num_devices = int(requested_devices)
     strategy = (
         DDPStrategy(find_unused_parameters=True, gradient_as_bucket_view=True)
         if num_devices > 1

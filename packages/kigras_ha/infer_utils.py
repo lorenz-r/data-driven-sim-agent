@@ -13,6 +13,7 @@ model: the ``ArgoDataset`` loader, the CTRA action-token rollout used in
 import json
 import platform
 import sys
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -505,6 +506,51 @@ def save_npz_prediction(
     return npz_path
 
 
+# ── Single collected .npz for the whole run (mirrors SMART infer2's format) ─────
+# One ``batch_predictions_<run_id>.npz`` holds every scenario, each field stored
+# under a per-scenario ``scenario_XXXXXX_<field>`` key, plus a top-level manifest
+# (scenario_ids / scenario_keys / num_scenarios) to enumerate them on read.
+def _write_npz_array(archive: zipfile.ZipFile, key: str, value: Any) -> None:
+    with archive.open(f"{key}.npy", "w", force_zip64=True) as file:
+        np.lib.format.write_array(file, np.asarray(value), allow_pickle=False)
+
+
+def _write_batch_scenario_npz(
+    archive: zipfile.ZipFile, scenario_key: str, prediction_data: dict[str, Any]
+) -> None:
+    fields = []
+    for field, value in prediction_data.items():
+        if value is None:
+            continue
+        _write_npz_array(archive, f"{scenario_key}_{field}", value)
+        fields.append(field)
+    _write_npz_array(archive, f"{scenario_key}_fields", np.asarray(fields, dtype=str))
+
+
+def _write_batch_metadata_npz(
+    archive: zipfile.ZipFile,
+    *,
+    run_id: str,
+    run_metadata: dict[str, Any],
+    scenario_ids: list[str],
+    scenario_keys: list[str],
+    num_agents: list[int],
+    num_timesteps: list[int],
+) -> None:
+    _write_npz_array(archive, "format_version", np.asarray("kigras_batch_rollouts_v1"))
+    _write_npz_array(archive, "run_id", np.asarray(run_id))
+    _write_npz_array(archive, "scenario_ids", np.asarray(scenario_ids, dtype=str))
+    _write_npz_array(archive, "scenario_keys", np.asarray(scenario_keys, dtype=str))
+    _write_npz_array(archive, "num_scenarios", np.asarray(len(scenario_ids)))
+    _write_npz_array(archive, "num_agents", np.asarray(num_agents, dtype=np.int64))
+    _write_npz_array(archive, "num_timesteps", np.asarray(num_timesteps, dtype=np.int64))
+    _write_npz_array(
+        archive,
+        "inference_metadata_json",
+        np.asarray(json.dumps({**run_metadata, "run_id": run_id}).encode("utf-8")),
+    )
+
+
 def save_av2_prediction(
     *,
     output_dir: Path,
@@ -643,14 +689,28 @@ def run_inference_pipeline(
         },
     }
 
+    # All scenarios collect into ONE .npz for the whole run (SMART infer2 style).
+    batch_output_path = output_path / f"batch_predictions_{run_id}.npz"
     print(f"Running KiGRAS_HA inference on {len(indices)} scenario(s)")
     print(
         f"Device: {resolved_device}  |  samples: {num_samples}  temperature: {temperature}"
     )
     print(f"Binning: {num_accel}x{num_yaw} bins  |  grid_power: {grid_power}")
+    if format_npz:
+        print(f"Collecting all predictions into: {batch_output_path}")
 
     results: list[dict[str, Any]] = []
     visualized_count = 0
+    # One shared archive for every scenario's predictions (per-scenario keys).
+    batch_archive = (
+        zipfile.ZipFile(batch_output_path, "w", compression=zipfile.ZIP_DEFLATED)
+        if format_npz
+        else None
+    )
+    npz_scenario_ids: list[str] = []
+    npz_scenario_keys: list[str] = []
+    npz_num_agents: list[int] = []
+    npz_num_timesteps: list[int] = []
     # Rollouts are batched (batch_size scenarios per forward pass); the per-scene
     # post-processing below (metrics / npz / av2 / viz) stays per scenario.
     chunk_samples: list[dict] = []
@@ -739,12 +799,12 @@ def run_inference_pipeline(
                     "per_agent_min_fde": scene["per_agent_min_fde"],
                 }
             )
-            npz_path = save_npz_prediction(
-                output_dir=output_path,
-                scenario_id=scenario_id,
-                prediction_data=prediction_data,
-            )
-            print(f"Saved predictions to: {npz_path}")
+            scenario_key = f"scenario_{order:06d}"
+            _write_batch_scenario_npz(batch_archive, scenario_key, prediction_data)
+            npz_scenario_ids.append(scenario_id)
+            npz_scenario_keys.append(scenario_key)
+            npz_num_agents.append(int(rollout_output["pred_states"].shape[1]))
+            npz_num_timesteps.append(int(rollout_output["pred_states"].shape[2]))
 
         if format_av2:
             av2_path = save_av2_prediction(
@@ -785,6 +845,19 @@ def run_inference_pipeline(
                 "focal_min_fde": focal_fde,
             }
         )
+
+    if batch_archive is not None:
+        _write_batch_metadata_npz(
+            batch_archive,
+            run_id=run_id,
+            run_metadata=run_metadata,
+            scenario_ids=npz_scenario_ids,
+            scenario_keys=npz_scenario_keys,
+            num_agents=npz_num_agents,
+            num_timesteps=npz_num_timesteps,
+        )
+        batch_archive.close()
+        print(f"\nSaved collected batch predictions to: {batch_output_path}")
 
     _write_summary(output_path, run_id, run_metadata, results)
     return results

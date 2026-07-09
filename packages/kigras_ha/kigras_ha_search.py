@@ -25,6 +25,7 @@ Examples
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -32,6 +33,7 @@ from typing import Any
 
 KIGRAS_HA_DIR = Path(__file__).resolve().parent
 REPO_ROOT = KIGRAS_HA_DIR.parent.parent
+CONFIGS_DIR = REPO_ROOT / "packages" / "kigras" / "configs"
 RESULTS_DIR = REPO_ROOT / "optuna_results_kigras_ha"
 
 if str(KIGRAS_HA_DIR) not in sys.path:
@@ -115,6 +117,10 @@ def build_overrides(
         f"training.dataloader.val_batch_size={args.val_batch_size}",
         f"model.architecture.gradient_checkpointing={str(not args.no_grad_checkpointing).lower()}",
         f"training.trainer.max_epochs={args.max_epochs}",
+        # Single GPU per trial: DDP's subprocess relaunch drops the programmatic
+        # architecture overrides, so ranks would build different models and crash.
+        # Parallelise ACROSS trials (one GPU each), not within a trial.
+        "training.trainer.devices=1",
         f"training.checkpointing.dirpath={trial_dir / 'ckpts'}",
         "resume.checkpoint_path=null",
         f"seed={args.seed}",
@@ -272,8 +278,86 @@ def write_study_summary(study: Any, path: Path) -> None:
     )
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Materialize the winning config into the YAML files (no overrides for the final,
+# possibly multi-GPU, training run — overrides are dropped by DDP's relaunch).
+# ──────────────────────────────────────────────────────────────────────────────
+def _set_yaml_value(path: Path, key: str, value: Any) -> None:
+    """Set ``key: value`` on its line (preserving a trailing comment); append if absent."""
+    if isinstance(value, bool):
+        vstr = "true" if value else "false"
+    elif isinstance(value, float):
+        vstr = repr(value)
+    else:
+        vstr = str(value)
+    lines = path.read_text().splitlines()
+    pat = re.compile(rf"^(\s*{re.escape(key)}\s*:\s*)([^#\n]*?)(\s*#.*)?$")
+    for i, line in enumerate(lines):
+        m = pat.match(line)
+        if m:
+            comment = m.group(3) or ""
+            lines[i] = f"{m.group(1)}{vstr}{comment}"
+            break
+    else:
+        lines.append(f"{key}: {vstr}")
+    path.write_text("\n".join(lines) + "\n")
+
+
+def apply_best_config(final_summary_path: Path, configs_dir: Path = CONFIGS_DIR) -> None:
+    """Write the winning hyperparameters into the default config YAMLs.
+
+    Backs up each file to ``*.bak`` first. After this, the final training run needs
+    NO ``-- model.architecture.*`` overrides (which DDP's subprocess relaunch drops),
+    so multi-GPU training is safe.
+    """
+    data = json.loads(Path(final_summary_path).read_text())
+    best = data["best"]
+    params = dict(best["params"])
+    fixed = dict(data.get("fixed", {}))
+
+    arch = configs_dir / "model" / "architecture" / "kigras_default_arch.yaml"
+    optim = configs_dir / "training" / "optimizer" / "optim_default.yaml"
+    kin = configs_dir / "model" / "kinematics" / "ctra.yaml"
+    for p in (arch, optim, kin):
+        p.with_suffix(p.suffix + ".bak").write_text(p.read_text())
+
+    arch_keys = (
+        "embedding_dim",
+        "num_head",
+        "encoder_num_layers",
+        "decoder_num_layers",
+        "dropout",
+        "k_neighbors",
+    )
+    for k in arch_keys:
+        if k in params:
+            _set_yaml_value(arch, k, params[k])
+    for k in ("num_action_bins", "max_agents"):
+        if k in fixed:
+            _set_yaml_value(arch, k, fixed[k])
+    if "lr" in params:
+        _set_yaml_value(optim, "learning_rate", params["lr"])
+    if "weight_decay" in params:
+        _set_yaml_value(optim, "weight_decay", params["weight_decay"])
+    if "grid_power" in fixed:
+        _set_yaml_value(kin, "grid_power", fixed["grid_power"])
+
+    print(f"Applied winning config (trial {best.get('trial_number')}, "
+          f"minFDE={best.get('min_fde')}) to:")
+    for p in (arch, optim, kin):
+        print(f"  {p}   (backup: {p.name}.bak)")
+    print("\nThe final run now needs NO -- overrides, e.g.:")
+    print("  uv run python train.py --model kigras_ha --download-first --download-size large")
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Two-stage Optuna search for KiGRAS_HA.")
+    p.add_argument(
+        "--apply-best",
+        type=Path,
+        default=None,
+        help="Write the winner from a final_summary.json into the config YAMLs, then exit (no search).",
+    )
     p.add_argument("--results-dir", type=Path, default=RESULTS_DIR)
     p.add_argument("--n-trials", type=int, default=30)
     p.add_argument("--max-epochs", type=int, default=30)
@@ -325,6 +409,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    # Materialize-only mode: write a previous run's winner into the config YAMLs.
+    if args.apply_best is not None:
+        apply_best_config(args.apply_best)
+        return
+
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
     import optuna
@@ -384,6 +474,15 @@ def main() -> None:
         json.dumps(
             {
                 "objective": "mean focal minFDE (minimize), re-ranked from top val_loss",
+                # Non-searched knobs, needed to fully reconstruct the config via
+                # --apply-best (they aren't in the per-trial params).
+                "fixed": {
+                    "num_action_bins": args.num_action_bins,
+                    "grid_power": args.grid_power,
+                    "max_agents": 0,
+                    "download_size": args.download_size,
+                    "max_epochs": args.max_epochs,
+                },
                 "best": best,
                 "ranked": ranked_sorted,
             },
