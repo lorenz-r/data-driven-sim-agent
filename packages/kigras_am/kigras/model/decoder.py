@@ -138,6 +138,7 @@ class ActionDecoder(nn.Module):
         mem = scene_tokens
 
         tgt = self.pos_encoding(tgt)
+        mem = self.pos_encoding(mem)
 
         # Causal mask so step t can only attend to steps 0..t-1
         tgt_mask = torch.triu(

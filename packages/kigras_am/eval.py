@@ -126,7 +126,11 @@ def main(cfg: DictConfig) -> None:
     torch.set_default_dtype(torch.float64)
     kinematic_model = CTRAKinematics(**OmegaConf.to_container(kin_cfg, resolve=True))
 
-    val_dataset = ArgoDataset(processed_path=Path(cfg.processed_val))
+    val_dataset = ArgoDataset(
+        processed_path=Path(cfg.processed_val),
+        grid_power=cfg.model.kinematics.get("grid_power", 1.0),
+        num_bins=cfg.model.architecture.num_action_bins,
+    )
     val_loader = DataLoader(
         val_dataset,
         batch_size=1,

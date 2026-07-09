@@ -64,6 +64,8 @@ def _build_random_model(arch_cfg: DictConfig) -> KiGRAS:
         decoder_num_layers=arch_cfg.decoder_num_layers,
         decoder_ff_dim=arch_cfg.decoder_ff_dim,
         dropout=arch_cfg.dropout,
+        agent_context_radius=arch_cfg.agent_context_radius,
+        map_context_radius=arch_cfg.map_context_radius,
         vocab_size=arch_cfg.num_action_bins**arch_cfg.num_actions,
     )
 
@@ -339,7 +341,15 @@ def main(cfg: DictConfig) -> None:
     print(f"Scenario index: {infer_cfg.scenario_index}")
     print(f"Device: {device}")
 
-    dataset = ArgoDataset(processed_path=Path(infer_cfg.processed_dir))
+    model = _load_model(infer_cfg, cfg.model.architecture, device)
+    num_action_bins = _infer_num_action_bins(
+        model, fallback=int(cfg.model.architecture.num_action_bins)
+    )
+    dataset = ArgoDataset(
+        processed_path=Path(infer_cfg.processed_dir),
+        grid_power=cfg.model.kinematics.get("grid_power", 1.0),
+        num_bins=num_action_bins,
+    )
     scenario_index = int(infer_cfg.scenario_index)
     if scenario_index < 0 or scenario_index >= len(dataset):
         raise IndexError(
@@ -350,7 +360,6 @@ def main(cfg: DictConfig) -> None:
     batch = collate_fn([sample])
     batch = _to_device(batch, device)
 
-    model = _load_model(infer_cfg, cfg.model.architecture, device)
     model.eval()
     kinematic_model = _build_kinematic_model(model, cfg.model.kinematics)
 

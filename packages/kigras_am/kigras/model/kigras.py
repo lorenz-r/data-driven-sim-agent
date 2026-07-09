@@ -7,7 +7,11 @@ from typing import Any
 from .scene_encoder import SceneEncoder
 from .decoder import ActionDecoder
 from ..dataloader.dataset import CURRENT_STEP, PRED_LEN
-from ..utils.train_utils import process_sparse_batch
+from ..utils.train_utils import (
+    AGENT_CONTEXT_RADIUS,
+    MAP_CONTEXT_RADIUS,
+    process_sparse_batch,
+)
 
 
 OPTIMIZER_REGISTRY: dict[str, Any] = {
@@ -35,6 +39,8 @@ class KiGRAS(pl.LightningModule):
         decoder_num_layers=3,
         decoder_ff_dim=256,
         dropout=0.1,
+        agent_context_radius: float | None = AGENT_CONTEXT_RADIUS,
+        map_context_radius: float | None = MAP_CONTEXT_RADIUS,
         optimizer_config: dict[str, Any] | None = None,
         scheduler_config: dict[str, Any] | None = None,
         lr: float | None = None,
@@ -67,6 +73,8 @@ class KiGRAS(pl.LightningModule):
 
         self.optimizer_config = optimizer_config
         self.scheduler_config = scheduler_config
+        self.agent_context_radius = agent_context_radius
+        self.map_context_radius = map_context_radius
         self.save_hyperparameters()
 
         self.encoder = SceneEncoder(
@@ -99,7 +107,11 @@ class KiGRAS(pl.LightningModule):
             logits: [O_total, 60, vocab_size]
             processed: model-facing sparse context dict from process_sparse_batch
         """
-        processed = process_sparse_batch(batch)
+        processed = process_sparse_batch(
+            batch,
+            agent_context_radius=self.agent_context_radius,
+            map_context_radius=self.map_context_radius,
+        )
         scene_tokens = self.encoder(processed)  # [O, T, d_model]
 
         action_window = processed["action_tokens"][
@@ -244,7 +256,13 @@ class KiGRAS(pl.LightningModule):
         pred_states = []
 
         for t in range(CURRENT_STEP, CURRENT_STEP + PRED_LEN):
-            processed_t = process_sparse_batch(rollout_batch, start_t=t, horizon=1)
+            processed_t = process_sparse_batch(
+                rollout_batch,
+                start_t=t,
+                horizon=1,
+                agent_context_radius=self.agent_context_radius,
+                map_context_radius=self.map_context_radius,
+            )
             scene_t = self.encoder(processed_t)
 
             if scene_tokens is None:

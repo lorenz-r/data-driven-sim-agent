@@ -108,6 +108,8 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
         decoder_num_layers=model_cfg.decoder_num_layers,
         decoder_ff_dim=model_cfg.decoder_ff_dim,
         dropout=model_cfg.dropout,
+        agent_context_radius=model_cfg.agent_context_radius,
+        map_context_radius=model_cfg.map_context_radius,
         vocab_size=model_cfg.num_action_bins**model_cfg.num_actions,
     )
     if model_checkpoint:
