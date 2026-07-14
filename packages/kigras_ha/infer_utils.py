@@ -543,7 +543,9 @@ def _write_batch_metadata_npz(
     _write_npz_array(archive, "scenario_keys", np.asarray(scenario_keys, dtype=str))
     _write_npz_array(archive, "num_scenarios", np.asarray(len(scenario_ids)))
     _write_npz_array(archive, "num_agents", np.asarray(num_agents, dtype=np.int64))
-    _write_npz_array(archive, "num_timesteps", np.asarray(num_timesteps, dtype=np.int64))
+    _write_npz_array(
+        archive, "num_timesteps", np.asarray(num_timesteps, dtype=np.int64)
+    )
     _write_npz_array(
         archive,
         "inference_metadata_json",

@@ -460,7 +460,9 @@ class KiGRAS_HA(pl.LightningModule):
             )
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **params)
         else:
-            raise ValueError(f"Unsupported scheduler '{name}'. Use onecycle|cosine|none.")
+            raise ValueError(
+                f"Unsupported scheduler '{name}'. Use onecycle|cosine|none."
+            )
 
         return {
             "optimizer": optimizer,

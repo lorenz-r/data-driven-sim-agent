@@ -4,7 +4,7 @@
 Stage 1 (coarse): sample hyperparameters, train each config via the top-level
 ``train.py`` (Hydra overrides), and minimise the per-epoch ``best_val_loss``
 emitted in the training metrics JSON.
-
+  
 Stage 2 (re-rank): take the top-K configs by val_loss, run K-sample autoregressive
 rollouts over the validation split, and pick the winner by mean focal ``minFDE``
 (the true objective; token val_loss and rollout accuracy are known to diverge).
@@ -193,7 +193,9 @@ def run_trial(trial: Any, args: argparse.Namespace) -> float:
         *build_overrides(params, trial_dir, args),
     ]
     if need_download:
-        print(f"Trial {trial.number}: processed cache missing → downloading + preprocessing once.")
+        print(
+            f"Trial {trial.number}: processed cache missing → downloading + preprocessing once."
+        )
 
     print(f"\nTrial {trial.number}: training  {params}")
     run_command(cmd, trial_dir / "train.log")
@@ -350,7 +352,9 @@ def _set_yaml_value(path: Path, key: str, value: Any) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
-def apply_best_config(final_summary_path: Path, configs_dir: Path = CONFIGS_DIR) -> None:
+def apply_best_config(
+    final_summary_path: Path, configs_dir: Path = CONFIGS_DIR
+) -> None:
     """Write the winning hyperparameters into the default config YAMLs.
 
     Backs up each file to ``*.bak`` first. After this, the final training run needs
@@ -389,12 +393,16 @@ def apply_best_config(final_summary_path: Path, configs_dir: Path = CONFIGS_DIR)
     if "grid_power" in fixed:
         _set_yaml_value(kin, "grid_power", fixed["grid_power"])
 
-    print(f"Applied winning config (trial {best.get('trial_number')}, "
-          f"minFDE={best.get('min_fde')}) to:")
+    print(
+        f"Applied winning config (trial {best.get('trial_number')}, "
+        f"minFDE={best.get('min_fde')}) to:"
+    )
     for p in (arch, optim, kin):
         print(f"  {p}   (backup: {p.name}.bak)")
     print("\nThe final run now needs NO -- overrides, e.g.:")
-    print("  uv run python train.py --model kigras_ha --download-first --download-size large")
+    print(
+        "  uv run python train.py --model kigras_ha --download-first --download-size large"
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -464,7 +472,10 @@ def parse_args() -> argparse.Namespace:
         "--eval-limit", type=int, default=0, help="Max val scenarios (0=all)."
     )
     p.add_argument(
-        "--eval-batch-size", type=int, default=16, help="Val scenarios per batched rollout."
+        "--eval-batch-size",
+        type=int,
+        default=16,
+        help="Val scenarios per batched rollout.",
     )
     p.add_argument(
         "--eval-device",

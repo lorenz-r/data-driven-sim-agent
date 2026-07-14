@@ -117,7 +117,9 @@ def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -
     kin_cfg = cfg.model.get("kinematics", None)
     sched_cfg = optim_cfg.get("lr_scheduler", None)
     scheduler_config = (
-        OmegaConf.to_container(sched_cfg, resolve=True) if sched_cfg is not None else None
+        OmegaConf.to_container(sched_cfg, resolve=True)
+        if sched_cfg is not None
+        else None
     )
     model = KiGRAS_HA(
         lr=optim_cfg["learning_rate"],
