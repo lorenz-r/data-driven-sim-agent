@@ -1,6 +1,7 @@
 import os
 import time
 from multiprocessing import Pool
+from typing import Any
 
 import numpy as np
 from pathlib import Path
@@ -231,7 +232,7 @@ def process_one_scenario(data, kinematics, kinematics_type):
 # Per-worker state, populated once by ``_worker_init`` in each pool process so
 # the dataset handle and kinematics solver are built a single time per process
 # rather than per scenario.
-_WORKER_STATE = {}
+_WORKER_STATE: dict[str, Any] = {}
 
 
 def _worker_init(input_dir, kinematics_type, kin_kwargs):

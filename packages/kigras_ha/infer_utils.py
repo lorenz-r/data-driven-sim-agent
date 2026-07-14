@@ -764,7 +764,7 @@ def run_inference_pipeline(
         else:
             best_sample = 0
 
-        if format_npz:
+        if batch_archive is not None:  # equivalent to format_npz; lets mypy narrow
             agent_type_ids = _to_numpy(data["agents"]["agent_type_ids"])
             # SMART evaluate_rollout_npz.py schema (pred_traj/pred_head/... etc.).
             # Widened to Any: below we add heterogeneous scalar/string metadata
