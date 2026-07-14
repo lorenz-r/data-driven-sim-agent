@@ -75,14 +75,15 @@ With `--visualize`, each scenario is written as:
 data/cleanup_visualizations/<scenario_id>/
   scenario_<scenario_id>.GIF
   scenario_<scenario_id>_original.GIF
-  av2/
-    scenario_<scenario_id>.parquet
-    scenario_<scenario_id>_original.parquet
-    log_map_archive_*.json
+  scenario_<scenario_id>.parquet
+  scenario_<scenario_id>_original.parquet
+  log_map_archive_*.json
 ```
 
 The cleaned scenario keeps the original filename and internal scenario id. The
-source parquet is copied with `_original` added to the filename.
+source parquet is copied with `_original` added to the filename. This keeps the
+scenario folder compatible with SMART's raw AV2 input discovery, which expects
+the scenario parquet and map JSON directly inside each scenario directory.
 
 Remove any object type, not only vehicles and buses:
 

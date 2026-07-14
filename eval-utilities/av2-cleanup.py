@@ -463,10 +463,9 @@ def visualization_paths_for(
 ) -> tuple[Path, Path, Path, Path]:
     scenario_id = scenario_id_from_parquet_path(parquet_path)
     scenario_output_dir = output_root / scenario_id
-    av2_output_dir = scenario_output_dir / "av2"
-    cleaned_parquet_path = av2_output_dir / parquet_path.name
+    cleaned_parquet_path = scenario_output_dir / parquet_path.name
     original_parquet_path = (
-        av2_output_dir / f"{parquet_path.stem}_original{parquet_path.suffix}"
+        scenario_output_dir / f"{parquet_path.stem}_original{parquet_path.suffix}"
     )
     cleaned_gif_path = scenario_output_dir / f"{parquet_path.stem}.GIF"
     original_gif_path = scenario_output_dir / f"{parquet_path.stem}_original.GIF"
