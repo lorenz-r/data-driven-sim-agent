@@ -77,19 +77,42 @@ def checkpoint_for_trial(checkpoint_dir: Path) -> Path:
 # ──────────────────────────────────────────────────────────────────────────────
 # Search space
 # ──────────────────────────────────────────────────────────────────────────────
-def sample_params(trial: Any) -> dict[str, Any]:
-    # All {64,128,256} are divisible by all {2,4,8}, so emb/head combos are always
-    # valid — no need to constrain the categorical choices per-trial.
-    return {
+def sample_params(trial: Any, args: argparse.Namespace) -> dict[str, Any]:
+    # Optimization / regularization knobs — none change the parameter count, so
+    # they are always searched (including in --search-optim-only mode).
+    params = {
         "lr": trial.suggest_float("lr", 1e-4, 1e-2, log=True),
         "weight_decay": trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True),
         "dropout": trial.suggest_float("dropout", 0.0, 0.3),
-        "embedding_dim": trial.suggest_categorical("embedding_dim", [64, 128, 256]),
-        "num_head": trial.suggest_categorical("num_head", [2, 4, 8]),
-        "encoder_num_layers": trial.suggest_int("encoder_num_layers", 2, 4),
-        "decoder_num_layers": trial.suggest_int("decoder_num_layers", 2, 4),
-        "k_neighbors": trial.suggest_categorical("k_neighbors", [8, 16]),
     }
+
+    if args.search_optim_only:
+        # Freeze the architecture so every trial has the SAME model (and param
+        # count). Use this once the backbone is chosen, to (re)tune only the
+        # optimizer for a specific grid/binning without making runs incomparable
+        # (Framing A). These are constants, not trial.suggest_* calls, so Optuna
+        # does not add them as search dimensions. Any knob left None on the CLI
+        # is omitted here so build_overrides emits NO Hydra override for it and
+        # the value already in the config YAML (e.g. from --apply-best) is used.
+        params.update(
+            embedding_dim=args.embedding_dim,
+            num_head=args.num_head,
+            encoder_num_layers=args.encoder_num_layers,
+            decoder_num_layers=args.decoder_num_layers,
+            k_neighbors=args.k_neighbors,
+        )
+    else:
+        # Full search, including capacity/architecture. All {64,128,256} are
+        # divisible by all {2,4,8}, so emb/head combos are always valid — no
+        # need to constrain the categorical choices per-trial.
+        params.update(
+            embedding_dim=trial.suggest_categorical("embedding_dim", [64, 128, 256]),
+            num_head=trial.suggest_categorical("num_head", [2, 4, 8]),
+            encoder_num_layers=trial.suggest_int("encoder_num_layers", 2, 4),
+            decoder_num_layers=trial.suggest_int("decoder_num_layers", 2, 4),
+            k_neighbors=trial.suggest_categorical("k_neighbors", [8, 16]),
+        )
+    return params
 
 
 def build_overrides(
@@ -100,11 +123,6 @@ def build_overrides(
         f"training.optimizer.learning_rate={params['lr']}",
         f"training.optimizer.weight_decay={params['weight_decay']}",
         f"model.architecture.dropout={params['dropout']}",
-        f"model.architecture.embedding_dim={params['embedding_dim']}",
-        f"model.architecture.num_head={params['num_head']}",
-        f"model.architecture.encoder_num_layers={params['encoder_num_layers']}",
-        f"model.architecture.decoder_num_layers={params['decoder_num_layers']}",
-        f"model.architecture.k_neighbors={params['k_neighbors']}",
         # Always keep all agents (no proximity filtering).
         "model.architecture.max_agents=0",
         # Grid fixed for the coarse pass (avoids per-trial re-preprocessing).
@@ -129,6 +147,20 @@ def build_overrides(
         "resume.checkpoint_path=null",
         f"seed={args.seed}",
     ]
+    # Architecture overrides: emit one only when a value is present. In the full
+    # search these are always set (from trial.suggest); in --search-optim-only
+    # they are set only for the CLI flags you passed. A missing (None) knob means
+    # "don't override" — Hydra then uses the value already in the config YAML
+    # (e.g. the last --apply-best backbone).
+    for key in (
+        "embedding_dim",
+        "num_head",
+        "encoder_num_layers",
+        "decoder_num_layers",
+        "k_neighbors",
+    ):
+        if params.get(key) is not None:
+            ov.append(f"model.architecture.{key}={params[key]}")
     if args.cpu:
         ov.append("training.trainer.accelerator=cpu")
     return ov
@@ -138,7 +170,7 @@ def build_overrides(
 # Stage 1: train + read val_loss
 # ──────────────────────────────────────────────────────────────────────────────
 def run_trial(trial: Any, args: argparse.Namespace) -> float:
-    params = sample_params(trial)
+    params = sample_params(trial, args)
     trial_dir = args.results_dir / f"trial_{trial.number:04d}"
     trial_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = trial_dir / "train_metrics.json"
@@ -404,6 +436,24 @@ def parse_args() -> argparse.Namespace:
     # Grid fixed for the coarse pass (changing it re-preprocesses per trial).
     p.add_argument("--num-action-bins", type=int, default=63)
     p.add_argument("--grid-power", type=float, default=1.0)
+    # Optimizer-only search: freeze the architecture to the values below and
+    # search just lr + weight_decay. Use after the backbone is chosen so trials
+    # stay size-matched and comparable across grid/binning studies (Framing A).
+    p.add_argument(
+        "--search-optim-only",
+        action="store_true",
+        help="Search only lr + weight_decay + dropout; hold the architecture "
+        "(embedding_dim/num_head/encoder+decoder layers/k_neighbors) fixed. Any of "
+        "those flags left unset falls back to the value already in the config YAML "
+        "(e.g. from a prior --apply-best) instead of being overridden.",
+    )
+    # Frozen-backbone values for --search-optim-only. Default None = don't
+    # override, i.e. use whatever is currently in the config YAML.
+    p.add_argument("--embedding-dim", type=int, default=None)
+    p.add_argument("--num-head", type=int, default=None)
+    p.add_argument("--encoder-num-layers", type=int, default=None)
+    p.add_argument("--decoder-num-layers", type=int, default=None)
+    p.add_argument("--k-neighbors", type=int, default=None)
     # Stage-2 rollout eval
     p.add_argument("--top-k", type=int, default=5, help="Configs re-ranked by minFDE.")
     p.add_argument(
