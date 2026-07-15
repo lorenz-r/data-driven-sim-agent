@@ -3,6 +3,7 @@ defaults:
   - /paths
 train_path: ${processed_train}
 val_path: ${processed_val}
+test_path: ${processed_test}
 
 # Loader settings
 train_batch_size: 1

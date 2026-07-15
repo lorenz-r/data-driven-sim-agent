@@ -64,10 +64,21 @@ class Kigras_HA_Trainer(BaseTrainer):
         cfg.training.dataloader.val_path = (
             f"{project_root}/av2_data/kigras_processed/val/{val_name}"
         )
+        cfg.training.dataloader.test_path = str(
+            project_root / "av2_data" / "kigras_processed" / "test"
+            / split_filename(
+                "test",
+                size=download_size,
+                grid_power=grid_power,
+                num_bins=num_bins,
+                kinematics=kinematics,
+            )
+        )
 
         print(OmegaConf.to_yaml(cfg))
 
-        # Skip preprocessing if the size- and grid_power-specific outputs exist
+        # Skip preprocessing if the size- and grid_power-specific outputs exist for
+        # every split whose input directory is present (missing input → skip that split).
         proc_cfg = cfg.setup.preprocessing
         outputs_exist = all(
             (
@@ -81,6 +92,7 @@ class Kigras_HA_Trainer(BaseTrainer):
                 )
             ).exists()
             for split in proc_cfg.output
+            if Path(proc_cfg.input[split]).exists()
         )
         if outputs_exist:
             print(

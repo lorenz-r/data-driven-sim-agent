@@ -402,14 +402,21 @@ def process(cfg, size: str = ""):
     Mirrors ``kigras.scripts.preprocess_kinematics.process`` so trainers can
     swap the import, but resolves the action grid from ``cfg.model.kinematics``
     and delegates to this package's ``run_preprocessing`` (kbm support, labels).
+
+    Splits whose input directory does not exist are silently skipped so that
+    runs without a test set do not fail.
     """
     proc_cfg = cfg.setup.preprocessing
     kin_cfg = cfg.model.kinematics
 
     for split in proc_cfg.input.keys():
+        input_dir = Path(proc_cfg.input[split])
+        if not input_dir.exists():
+            print(f"Skipping '{split}' preprocessing: input directory not found ({input_dir})")
+            continue
         start = time.perf_counter()
         run_preprocessing(
-            input_dir=Path(proc_cfg.input[split]),
+            input_dir=input_dir,
             output_dir=Path(proc_cfg.output[split]),
             kinematics_type=kin_cfg.get("name", "ctra"),
             num_accel=kin_cfg.get("num_accel_bins", 63),
@@ -462,10 +469,14 @@ def cli_main():
     )
     args = parser.parse_args()
 
-    for split in ("train", "val"):
+    for split in ("train", "val", "test"):
+        input_dir = args.raw_dir / split
+        if not input_dir.exists():
+            print(f"Skipping '{split}': {input_dir} not found")
+            continue
         start = time.perf_counter()
         run_preprocessing(
-            input_dir=args.raw_dir / split,
+            input_dir=input_dir,
             output_dir=args.output_dir / split,
             kinematics_type=args.kinematics_type,
             num_accel=args.num_accel,

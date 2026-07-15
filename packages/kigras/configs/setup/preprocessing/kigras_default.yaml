@@ -2,6 +2,8 @@
 input:
   train: ${raw_train}
   val: ${raw_val}
+  test: ${raw_test}
 output:
   train: ${processed_train}
   val: ${processed_val}
+  test: ${processed_test}
