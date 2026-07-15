@@ -36,6 +36,7 @@ include = [
     "configs/**",
     "eval.py",
     "infer.py",
+    "infer_utils.py",
     "kigras/**",
     "README.md",
     "scripts/**",

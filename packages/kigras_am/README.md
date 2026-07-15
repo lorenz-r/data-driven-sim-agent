@@ -667,20 +667,37 @@ ${checkpoint_save_path}/last.ckpt
 
 and reports focal and observer ADE/FDE from closed-loop CTRA rollout.
 
-### 4. Visualize One Inference Rollout
+### 4. Run Multi-Scenario Inference
 
 ```bash
 python packages/kigras_am/infer.py \
-  infer.scenario_index=0 \
-  infer.processed_dir=/path/to/kigras_processed/val \
-  infer.checkpoint=/path/to/checkpoints/last.ckpt \
-  infer.output=/path/to/outputs/kigras_inference.png
+  --input /path/to/kigras_processed/val \
+  --checkpoint /path/to/checkpoints/last.ckpt \
+  --output /path/to/outputs/kigras_am_preds \
+  --batch-size 1
 ```
 
-To compare model predictions against label-token CTRA rollout instead of raw ground truth:
+`infer.py` expects AM preprocessed data, either a concrete `.npy` split or a split
+directory containing the matching preprocessed file. It writes a collected
+SMART-compatible batch archive:
+
+```text
+<output>/batch_predictions_<run_id>.npz
+```
+
+The archive keeps full-scene ground truth for visualization/context, but AM only
+predicts observer agents (`SCORED_TRACK` and `FOCAL_TRACK`). Non-observer rows are
+included in `gt`, `gt_head`, `gt_valid_mask`, `agent_id`, and `agent_type`, while
+their prediction rows have `pred_valid_mask=false`. The extra fields
+`observer_mask` and `is_predicted_agent` mark rows with actual AM predictions.
+
+For quick smoke tests, run a subset:
 
 ```bash
 python packages/kigras_am/infer.py \
-  infer.scenario_index=0 \
-  infer.compare_to_label_rollout=true
+  --input /path/to/kigras_processed/val \
+  --checkpoint /path/to/checkpoints/last.ckpt \
+  --output /path/to/outputs/kigras_am_preds \
+  --idx 0 \
+  --no-visualize
 ```
