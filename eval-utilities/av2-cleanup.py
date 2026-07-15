@@ -51,7 +51,9 @@ class CollisionIndex:
     removable_agents: set[str] = field(default_factory=set)
     # Heap entries are immutable, so changed agents get a new generation number.
     # Stale entries are ignored when popped instead of being deleted in-place.
-    generation_by_agent: dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    generation_by_agent: dict[str, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
     heap: list[tuple[int, int, str, int]] = field(default_factory=list)
 
 
@@ -590,8 +592,13 @@ def clean_one_parquet(
                 shutil.copy2(parquet_path, original_output_path)
                 copy_json_sidecars(parquet_path, original_output_path)
             if visualize:
-                if cleaned_visualization_path is None or original_visualization_path is None:
-                    raise ValueError("visualization paths are required when visualize=True")
+                if (
+                    cleaned_visualization_path is None
+                    or original_visualization_path is None
+                ):
+                    raise ValueError(
+                        "visualization paths are required when visualize=True"
+                    )
                 save_visualization_gifs(
                     original_parquet_path=parquet_path,
                     cleaned_parquet_path=output_path,
@@ -621,7 +628,9 @@ def clean_one_parquet(
             rows_after=rows_after,
             verified_collisions=verified_collisions,
             cleaned_visualization_path=None if dry_run else cleaned_visualization_path,
-            original_visualization_path=None if dry_run else original_visualization_path,
+            original_visualization_path=None
+            if dry_run
+            else original_visualization_path,
         )
     except Exception as exc:
         return CleanupResult(
