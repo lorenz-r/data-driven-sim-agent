@@ -403,29 +403,49 @@ def process(cfg, size: str = ""):
     swap the import, but resolves the action grid from ``cfg.model.kinematics``
     and delegates to this package's ``run_preprocessing`` (kbm support, labels).
 
-    Splits whose input directory does not exist are silently skipped so that
-    runs without a test set do not fail.
+    Each split is handled independently: a split is skipped when its input
+    directory is absent (so runs without a test set do not fail) or when its
+    output file already exists (so only the missing split is (re)created).
     """
     proc_cfg = cfg.setup.preprocessing
     kin_cfg = cfg.model.kinematics
+
+    kinematics_type = kin_cfg.get("name", "ctra")
+    num_accel = kin_cfg.get("num_accel_bins", 63)
+    grid_power = kin_cfg.get("grid_power", 1.0)
 
     for split in proc_cfg.input.keys():
         input_dir = Path(proc_cfg.input[split])
         if not input_dir.exists():
             print(f"Skipping '{split}' preprocessing: input directory not found ({input_dir})")
             continue
+
+        output_dir = Path(proc_cfg.output[split])
+        # Mirror the save path in run_preprocessing so an existing split is not
+        # needlessly recomputed just because a sibling split is missing.
+        output_path = output_dir / split_filename(
+            output_dir.name,
+            size=size,
+            grid_power=grid_power,
+            num_bins=num_accel,
+            kinematics=kinematics_type,
+        )
+        if output_path.exists():
+            print(f"Skipping '{split}' preprocessing: output already exists ({output_path})")
+            continue
+
         start = time.perf_counter()
         run_preprocessing(
             input_dir=input_dir,
-            output_dir=Path(proc_cfg.output[split]),
-            kinematics_type=kin_cfg.get("name", "ctra"),
-            num_accel=kin_cfg.get("num_accel_bins", 63),
+            output_dir=output_dir,
+            kinematics_type=kinematics_type,
+            num_accel=num_accel,
             num_steer=kin_cfg.get("num_yaw_bins", 63),
             max_accel=kin_cfg.get("max_accel", 5.0),
             max_yaw_rate=kin_cfg.get("max_yaw_rate", 1.5),
             delta_time=kin_cfg.get("delta_time", 0.1),
             max_iter=kin_cfg.get("max_iter", 5),
-            grid_power=kin_cfg.get("grid_power", 1.0),
+            grid_power=grid_power,
             size=size,
         )
         end = time.perf_counter()
