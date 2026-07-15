@@ -20,8 +20,8 @@ detection. For each scenario it:
 5. Deletes the resolved edges and repeats until no active collision edge remains,
    no removable agent is left, or `--max-removals` is reached.
 
-By default only `vehicle` and `bus` tracks are removable. Collisions with other
-object types can still influence which vehicle is removed.
+By default every object type is removable. Pass `--removable-types` with an
+explicit allow-list if a run should only remove specific object classes.
 
 ### Examples
 
@@ -85,16 +85,17 @@ source parquet is copied with `_original` added to the filename. This keeps the
 scenario folder compatible with SMART's raw AV2 input discovery, which expects
 the scenario parquet and map JSON directly inside each scenario directory.
 
-Remove any object type, not only vehicles and buses:
+Restrict removals to vehicles and buses:
 
 ```bash
 .venv/bin/python eval-utilities/av2-cleanup.py \
   data/raw/val \
   data/cleaned/val \
-  --removable-types all
+  --removable-types vehicle bus
 ```
 
-Restrict collision detection itself to vehicles and buses:
+Restrict collision detection itself to vehicles and buses while still allowing
+all detected collision participants to be removed:
 
 ```bash
 .venv/bin/python eval-utilities/av2-cleanup.py \

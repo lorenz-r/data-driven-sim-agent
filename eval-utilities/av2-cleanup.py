@@ -24,7 +24,7 @@ from typing import Any, Iterable
 import pandas as pd
 
 
-DEFAULT_REMOVABLE_TYPES = ("vehicle", "bus")
+DEFAULT_REMOVABLE_TYPES = ("all",)
 
 
 @dataclass(frozen=True)
@@ -96,7 +96,7 @@ class CleanupTask:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Clean raw AV2 scenario parquet files by truncating colliding vehicle "
+            "Clean raw AV2 scenario parquet files by truncating colliding object "
             "trajectories before overlap rows are kept."
         )
     )
@@ -121,7 +121,8 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Object types that may be removed. Defaults to: "
             + " ".join(DEFAULT_REMOVABLE_TYPES)
-            + ". Use --removable-types all to allow every type."
+            + ". Pass explicit types, e.g. --removable-types vehicle bus, "
+            "to restrict removals."
         ),
     )
     parser.add_argument(
