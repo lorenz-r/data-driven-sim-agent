@@ -249,6 +249,30 @@ top-k token candidates for generative rollouts. In batch mode, GIFs are saved
 for the first 10 scenarios by default; use `--batch-visualization-limit 0` or
 `--no-visualize` to skip them.
 
+#### Model-agnostic rollout visualization and evaluation
+
+Collected rollout `.npz` files from SMART infer2 and KiGRAS-HA can be rendered
+after inference without loading either model:
+
+```bash
+uv run python visualize_rollout_npz.py path/to/batch_predictions.npz \
+  --raw-data-folder data/raw \
+  --num-scenarios 10 \
+  --visualize-ground-truth
+```
+
+The command writes rollout-0 prediction GIFs and, when requested, full raw
+ground-truth GIFs to separate output roots. Use `--scenario-list` for a text
+file containing one scenario ID per line. Evaluate the same artifact with:
+
+```bash
+uv run python evaluate_rollout_npz.py path/to/batch_predictions.npz \
+  --raw-data-folder data/raw
+```
+
+See `packages/README_INFERENCE.md` for the complete artifact schema and CLI
+behavior.
+
 ### Training
 
 Training has been refactored into a top level script to make it easier to switch between models and orchestrate hyperparameter searches. A quick explanation of the new components:

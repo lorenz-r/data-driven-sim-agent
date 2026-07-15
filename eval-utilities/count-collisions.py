@@ -46,7 +46,7 @@ REQUIRED_COLUMNS = {
     "heading",
 }
 
-# Matches the SMART/meta-metric box model used by packages/smart/evaluate_rollout_npz.py.
+# Matches the shared box model used by evaluate_rollout_npz.py.
 DEFAULT_BOXES_M = {
     "vehicle": (4.50, 2.00),
     "bus": (4.50, 2.00),

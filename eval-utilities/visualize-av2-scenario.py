@@ -511,6 +511,7 @@ def save_animation(
     show_boxes: bool,
     show_trails: bool,
     highlighted_tracks: dict[str, tuple[int, int]],
+    end_timestep: int | None = None,
 ) -> None:
     fig, ax = plt.subplots(figsize=(12, 10), facecolor="white")
     set_axis_limits(ax, scenario, static_map if show_map else None)
@@ -540,9 +541,12 @@ def save_animation(
         ax.grid(color="#e7e7e7", linewidth=0.4)
         return []
 
-    animation = FuncAnimation(
-        fig, update, frames=max_timestep(scenario) + 1, blit=False
-    )
+    if end_timestep is None:
+        end_timestep = max_timestep(scenario)
+    if end_timestep < 0:
+        raise ValueError(f"end_timestep must be non-negative, got {end_timestep}")
+
+    animation = FuncAnimation(fig, update, frames=end_timestep + 1, blit=False)
     suffix = output_path.suffix.lower()
     if suffix == ".mp4":
         animation.save(output_path, writer="ffmpeg", fps=fps)

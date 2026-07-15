@@ -106,6 +106,55 @@ include:
 - `gt_<scenario_id>.GIF`;
 - `pred_<scenario_id>.GIF`.
 
+## Model-Agnostic Post-Processing
+
+The repository-level visualizer consumes the collected rollout `.npz` after
+inference, without loading a model or checkpoint. It supports the current SMART
+and KiGRAS-HA batch containers and always renders rollout index `0`:
+
+```bash
+uv run python visualize_rollout_npz.py \
+  packages/smart/data/preds/batch_predictions_<run_id>.npz \
+  --raw-data-folder data/raw \
+  --num-scenarios 10
+```
+
+The plain `packages/kigras` and `packages/kigras_am` inference paths do not
+currently emit this shared NPZ schema; their outputs must be converted before
+using these post-processing commands.
+
+`INPUT` may be one standalone scenario NPZ, one collected batch NPZ, or a
+directory containing either form. With no selector, the first 10 scenarios in
+deterministic manifest order are rendered. Use `--num-scenarios N` for another
+positive limit, or `--scenario-list scenarios.txt` for exact scenario IDs. The
+UTF-8 list parser ignores blank lines and lines beginning with `#`, and removes
+duplicates while preserving the requested order. IDs absent from the archive
+are reported as warnings while the remaining IDs continue.
+
+Prediction GIFs contain the raw observed history and the predicted future, but
+never the raw future ground truth. Raw AV2 parquet and map files are therefore
+required; `--raw-data-folder` takes precedence over a path stored in scenario
+or batch inference metadata. To also render each selected raw scenario in full,
+use:
+
+```bash
+uv run python visualize_rollout_npz.py \
+  packages/smart/data/preds/batch_predictions_<run_id>.npz \
+  --raw-data-folder data/raw \
+  --visualize-ground-truth
+```
+
+By default, prediction and ground-truth GIFs are kept in separate sibling
+folders named `<input_stem>_visualizations` and
+`<input_stem>_ground_truth_visualizations`. Override them independently with
+`--output` and `--ground-truth-output` (`--ground-truth-output` requires
+`--visualize-ground-truth`). The exact default paths are:
+
+```text
+<input_stem>_visualizations/<scenario_id>/pred_<scenario_id>.GIF
+<input_stem>_ground_truth_visualizations/<scenario_id>/gt_<scenario_id>.GIF
+```
+
 ## Configuration Caveat
 
 The output metadata currently records the model config loaded from the
@@ -123,14 +172,14 @@ Until this is improved, record inference results together with:
 
 ## Evaluation
 
-`packages/smart/evaluate_rollout_npz.py` evaluates inference `.npz` artifacts.
+`evaluate_rollout_npz.py` evaluates inference `.npz` artifacts.
 It accepts either a single `.npz` file or a directory containing `.npz` files and
 writes a JSON report with summary metrics and evaluation metadata.
 
 Example:
 
 ```bash
-uv run python packages/smart/evaluate_rollout_npz.py \
+uv run python evaluate_rollout_npz.py \
   packages/smart/data/preds/batch_predictions_20260627T111519Z_92b646d6.npz \
   --raw-data-folder av2_data/val \
   --workers 8
@@ -152,7 +201,8 @@ when raw AV2 map JSON files can be found; use `--no-map` to skip them.
 
 ### What Is Currently Evaluated
 
-The evaluator is tied to the `infer2.py` `.npz` schema. It computes:
+The evaluator consumes the shared rollout schema written by SMART infer2 and
+the current KiGRAS-HA inference pipeline. It computes:
 
 - forecasting metrics from ground-truth and simulated xy positions;
 - kinematic likelihood metrics from positions and headings when headings are

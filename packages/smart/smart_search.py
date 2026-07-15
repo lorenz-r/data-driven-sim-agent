@@ -292,7 +292,7 @@ def run_trial(trial: Any, args: argparse.Namespace) -> float:
     batch_prediction_path = latest_batch_prediction(preds_dir)
     eval_cmd = [
         sys.executable,
-        str(SMART_DIR / "evaluate_rollout_npz.py"),
+        str(REPO_ROOT / "evaluate_rollout_npz.py"),
         str(batch_prediction_path),
         "--output",
         str(eval_metrics_path),

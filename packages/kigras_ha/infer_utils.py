@@ -452,9 +452,9 @@ def _to_numpy(value: Any) -> np.ndarray:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# SMART evaluator schema  (packages/smart/evaluate_rollout_npz.py)
+# Shared rollout evaluator schema  (evaluate_rollout_npz.py)
 # ──────────────────────────────────────────────────────────────────────────────
-# KiGRAS agent-type id → SMART evaluator agent-type id.
+# KiGRAS agent-type id → shared evaluator agent-type id.
 #   KiGRAS: 0=vehicle 1=pedestrian 2=cyclist 3=motorcyclist 4=bus 5=unknown
 #   SMART : 0=vehicle 1=pedestrian 2=cyclist 3=background
 _KIGRAS_TO_SMART_TYPE = {0: 0, 1: 1, 2: 2, 3: 2, 4: 0, 5: 3}
@@ -697,7 +697,7 @@ def run_inference_pipeline(
         },
         "npz_schema": {
             "format_version": "smart_infer2_compatible_v1",
-            "evaluator": "packages/smart/evaluate_rollout_npz.py",
+            "evaluator": "evaluate_rollout_npz.py",
             "target_policy": "all agents (agent_category == 3); invalid / GT-less "
             "steps ignored by the valid masks",
         },
@@ -780,7 +780,7 @@ def run_inference_pipeline(
 
         if batch_archive is not None:  # equivalent to format_npz; lets mypy narrow
             agent_type_ids = _to_numpy(data["agents"]["agent_type_ids"])
-            # SMART evaluate_rollout_npz.py schema (pred_traj/pred_head/... etc.).
+            # Shared evaluate_rollout_npz.py schema (pred_traj/pred_head/... etc.).
             # Widened to Any: below we add heterogeneous scalar/string metadata
             # (scenario_id, focal_track_id, best_sample, ...) alongside the arrays.
             prediction_data: dict[str, Any] = build_smart_eval_arrays(
@@ -797,7 +797,7 @@ def run_inference_pipeline(
                             "utf-8"
                         )
                     ),
-                    # KiGRAS-native extras (ignored by the SMART evaluator).
+                    # KiGRAS-native extras (ignored by the shared evaluator).
                     "pred_states": rollout_output["pred_states"],
                     "pred_tokens": rollout_output["pred_tokens"],
                     # Exact ground-truth vx/vy. The SMART-schema `gt` holds only
@@ -807,7 +807,7 @@ def run_inference_pipeline(
                     "gt_vel": gt_future[..., 4:6].astype(np.float32),  # (N, T, 2)
                     "agent_type_ids": agent_type_ids,
                     "track_ids": track_ids_arr,
-                    # SMART-schema alias so evaluate_rollout_npz.py and collision
+                    # Shared-schema alias so evaluate_rollout_npz.py and collision
                     # tooling find readable per-agent ids under the expected key.
                     "agent_id": track_ids_arr,
                     "focal_track_id": str(data["focal_track_id"]),
