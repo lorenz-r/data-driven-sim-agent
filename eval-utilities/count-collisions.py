@@ -513,16 +513,16 @@ def find_collisions_python(
             if track_codes[i] == track_codes[j]:
                 continue
             if boxes_collide_python(
-                x[i],
-                y[i],
-                heading[i],
-                length[i],
-                width[i],
-                x[j],
-                y[j],
-                heading[j],
-                length[j],
-                width[j],
+                float(x[i]),
+                float(y[i]),
+                float(heading[i]),
+                float(length[i]),
+                float(width[i]),
+                float(x[j]),
+                float(y[j]),
+                float(heading[j]),
+                float(length[j]),
+                float(width[j]),
                 overlap_tolerance,
             ):
                 out_a.append(int(track_codes[i]))
