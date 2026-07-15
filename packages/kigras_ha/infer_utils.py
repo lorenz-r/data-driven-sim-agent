@@ -772,6 +772,9 @@ def run_inference_pipeline(
             prediction_data: dict[str, Any] = build_smart_eval_arrays(
                 rollout_output["pred_states"], gt_future, agent_type_ids
             )
+            track_ids_arr = np.asarray(
+                [str(t) for t in scenario_result["track_ids"]], dtype=str
+            )
             prediction_data.update(
                 {
                     "scenario_id": scenario_id,
@@ -784,9 +787,10 @@ def run_inference_pipeline(
                     "pred_states": rollout_output["pred_states"],
                     "pred_tokens": rollout_output["pred_tokens"],
                     "agent_type_ids": agent_type_ids,
-                    "track_ids": np.asarray(
-                        [str(t) for t in scenario_result["track_ids"]], dtype=str
-                    ),
+                    "track_ids": track_ids_arr,
+                    # SMART-schema alias so evaluate_rollout_npz.py and collision
+                    # tooling find readable per-agent ids under the expected key.
+                    "agent_id": track_ids_arr,
                     "focal_track_id": str(data["focal_track_id"]),
                     "focal_idx": focal_idx,
                     "best_sample": best_sample,

@@ -534,8 +534,11 @@ def _is_batch_npz(data: np.lib.npyio.NpzFile) -> bool:
         return False
     if "format_version" not in data:
         return True
-    return str(np.asarray(data["format_version"]).item()).startswith(
-        "smart_batch_rollouts"
+    version = str(np.asarray(data["format_version"]).item())
+    # Accept both the native SMART batch files and KiGRAS-HA batch files, which
+    # share this schema (same keys/shapes) but tag themselves differently.
+    return version.startswith("smart_batch_rollouts") or version.startswith(
+        "kigras_batch_rollouts"
     )
 
 
