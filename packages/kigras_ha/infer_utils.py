@@ -704,7 +704,15 @@ def run_inference_pipeline(
     }
 
     # All scenarios collect into ONE .npz for the whole run (SMART infer2 style).
-    batch_output_path = output_path / f"batch_predictions_{run_id}.npz"
+    # When the input is a preprocessed split, mirror its name with a `_pred`
+    # suffix (e.g. massive_val_split_ctra_b127_p1.0.npy ->
+    # massive_val_split_ctra_b127_p1.0_pred.npz); otherwise fall back to a
+    # timestamped name since a raw folder has no preprocessed filename to match.
+    input_path_obj = Path(input_path)
+    if input_path_obj.suffix == ".npy":
+        batch_output_path = output_path / f"{input_path_obj.stem}_pred.npz"
+    else:
+        batch_output_path = output_path / f"batch_predictions_{run_id}.npz"
     print(f"Running KiGRAS_HA inference on {len(indices)} scenario(s)")
     print(
         f"Device: {resolved_device}  |  samples: {num_samples}  "
