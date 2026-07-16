@@ -29,7 +29,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["kigras"]
+packages = ["kigras_am"]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -37,7 +37,7 @@ include = [
     "eval.py",
     "infer.py",
     "infer_utils.py",
-    "kigras/**",
+    "kigras_am/**",
     "README.md",
     "scripts/**",
     "train.py",

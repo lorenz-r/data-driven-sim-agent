@@ -393,6 +393,7 @@ def build_config(args=None) -> dict:
         config["profiling"]["keep_action_files"] = True
 
     config["data"]["download_size"] = args.download_size
+    config["data"]["download_first"] = args.download_first
 
     return config
 

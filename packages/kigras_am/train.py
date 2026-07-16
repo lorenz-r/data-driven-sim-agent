@@ -1,5 +1,5 @@
-from kigras.dataloader.datamodule import ArgoDataModule
-from kigras.model.kigras import KiGRAS
+from kigras_am.dataloader.datamodule import ArgoDataModule
+from kigras_am.model.kigras import KiGRAS
 from dotenv import load_dotenv
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
@@ -62,6 +62,10 @@ def _create_wandb_logger(cfg: DictConfig) -> WandbLogger | None:
 
 
 def run_training(cfg: DictConfig, wandb_logger=None, return_metrics_path=None) -> dict:
+    # Preprocessing uses float64 inverse kinematics; training should construct
+    # model parameters in float32 so Lightning AMP can cast them consistently.
+    torch.set_default_dtype(torch.float32)
+
     dl_cfg = cfg.training.dataloader
     optim_cfg = OmegaConf.to_container(cfg.training.optimizer, resolve=True)
     scheduler_cfg = OmegaConf.to_container(cfg.training.scheduler, resolve=True)

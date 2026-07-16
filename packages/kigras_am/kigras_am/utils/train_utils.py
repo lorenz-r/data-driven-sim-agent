@@ -1,6 +1,6 @@
 import torch
 
-from kigras.dataloader.dataset import CURRENT_STEP, PRED_LEN
+from kigras_am.dataloader.dataset import CURRENT_STEP, PRED_LEN
 
 POSITION_SCALE = 100.0
 VELOCITY_SCALE = 30.0

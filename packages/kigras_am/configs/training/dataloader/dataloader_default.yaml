@@ -1,6 +1,4 @@
 # Use default paths from the top level config (don't modify this)
-defaults:
-  - /paths
 train_path: ${processed_train}
 val_path: ${processed_val}
 

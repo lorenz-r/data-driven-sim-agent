@@ -59,16 +59,16 @@ from typing import Any
 import numpy as np
 import torch
 
-from kigras.dataloader.dataset import (
+from kigras_am.dataloader.dataset import (
     CURRENT_STEP,
     OBS_LEN,
     PRED_LEN,
     collate_fn,
     tree_map,
 )
-from kigras.kinematics.ctra import CTRAKinematics
-from kigras.model.kigras import KiGRAS
-from kigras.utils.naming import split_filename
+from kigras_am.kinematics.ctra import CTRAKinematics
+from kigras_am.model.kigras import KiGRAS
+from kigras_am.utils.naming import split_filename
 
 
 SMART_TARGET_CATEGORY = 3

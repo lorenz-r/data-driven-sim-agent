@@ -1,6 +1,6 @@
 import torch
 
-from kigras.utils.train_utils import (
+from kigras_am.utils.train_utils import (
     observer_local_velocity,
     process_sparse_batch,
     transform_batch_sparse,

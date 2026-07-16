@@ -4,7 +4,7 @@ pytest.importorskip("torch_scatter")
 
 import torch
 
-from kigras.model.scene_encoder import SceneEncoder
+from kigras_am.model.scene_encoder import SceneEncoder
 
 
 def _processed_batch() -> dict:

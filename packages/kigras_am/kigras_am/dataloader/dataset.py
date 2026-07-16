@@ -128,7 +128,7 @@ from av2.geometry.interpolate import compute_midpoint_line
 from av2.map.lane_segment import LaneMarkType, LaneType
 from av2.map.map_api import ArgoverseStaticMap
 
-from kigras.utils.naming import split_filename
+from kigras_am.utils.naming import split_filename
 
 # ---------------------------
 # Constants
@@ -555,7 +555,7 @@ class ArgoDataset(Dataset):
         self.path = cast(Path, path).resolve()
         self.mode = "proc" if processed_path else "raw"
         # Action grid identity, so proc mode loads exactly the tokens that match
-        # the model's decode grid (see kigras.utils.naming.split_filename).
+        # the model's decode grid (see kigras_am.utils.naming.split_filename).
         self.grid_power = grid_power
         self.num_bins = num_bins
 

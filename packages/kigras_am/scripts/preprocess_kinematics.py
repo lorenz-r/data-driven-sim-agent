@@ -17,188 +17,191 @@
 # }
 
 
+import os
 import time
+from multiprocessing import Pool
+from typing import Any
+
 import numpy as np
 from pathlib import Path
 import sys
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
+try:
+    from tqdm import tqdm
+except ImportError:
+
+    def tqdm(iterable, **kwargs):
+        return iterable
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # Import your dataloader and KBM components
-from kigras.dataloader.dataset import ArgoDataset, CURRENT_STEP, PRED_LEN
-from kigras.utils.naming import split_filename
+from kigras_am.dataloader.dataset import ArgoDataset, CURRENT_STEP, PRED_LEN
+from kigras_am.utils.naming import split_filename
 
 # from kbm import KinematicBicycleModel
-# from kigras.kinematics.inverse_kinematics import InverseKinematicModule
+# from kigras_am.kinematics.inverse_kinematics import InverseKinematicModule
+
+
+def build_kinematics(kinematics_cfg: dict):
+    if kinematics_cfg["name"] == "ctra":
+        import torch
+        from kigras_am.kinematics.ctra import CTRAKinematics
+
+        previous_dtype = torch.get_default_dtype()
+        torch.set_default_dtype(torch.float64)
+        try:
+            return CTRAKinematics(**kinematics_cfg)
+        finally:
+            torch.set_default_dtype(previous_dtype)
+
+    # elif kinematics_cfg["name"] == "kbm":
+    #     kbm = KinematicBicycleModel(
+    #         wheelbase=kinematics_cfg["wheelbase"],
+    #         max_steer=kinematics_cfg["max_steer"],
+    #         delta_time=kinematics_cfg["delta_time"],
+    #     )
+    #     return InverseKinematicModule(
+    #         kbm,
+    #         num_accel=kinematics_cfg["num_accel"],
+    #         num_steer=kinematics_cfg["num_steer"],
+    #     )
+    raise ValueError(f"Unsupported kinematics type: {kinematics_cfg['name']}")
+
+
+def process_one_scenario(data: dict, kinematics, kinematics_name: str) -> dict:
+    import torch
+
+    states = data["agents"]["states"]  # Shape: (N, 110, 7)
+    if kinematics_name == "ctra":
+        # The model consumes action_tokens[:, 48:109]. Token 48 is the
+        # previous-action context for the first predicted action, and tokens
+        # 49..108 are the targets for transitions 49->50 through 108->109.
+        action_start = CURRENT_STEP - 1
+        action_stop = CURRENT_STEP + PRED_LEN
+        token_ids = np.full((states.shape[0], states.shape[1] - 1), -1, np.int64)
+        graded_agent_idx = np.where(
+            (data["agents"]["track_categories"] == 2)
+            | (data["agents"]["track_categories"] == 3)
+        )[0]
+
+        for agent_idx in graded_agent_idx:
+            state_window = states[
+                agent_idx : agent_idx + 1, action_start : action_stop + 1
+            ]
+
+            speed = np.hypot(state_window[..., 4], state_window[..., 5])
+            obs_window = np.stack(
+                [
+                    state_window[..., 0],
+                    state_window[..., 1],
+                    state_window[..., 2],
+                    state_window[..., 3],
+                    speed,
+                ],
+                axis=-1,
+            )  # Shape: (1, 62, 5), states 48..109
+
+            window_mask = state_window[..., 6] > 0  # Shape: (1, 62)
+            action_valid = window_mask[:, :-1] & window_mask[:, 1:]  # (1, 61)
+
+            obs_window_t = torch.from_numpy(obs_window).to(torch.float64)
+            window_mask_t = torch.from_numpy(window_mask).bool()
+            actions = kinematics.solve(
+                obs_window_t, quantize=True, valid_mask=window_mask_t
+            )
+
+            window_token_ids = (
+                kinematics.actions_to_token_ids(actions).numpy().astype(np.int64)
+            )
+            window_token_ids[~action_valid] = -1
+            token_ids[agent_idx, action_start:action_stop] = window_token_ids[0]
+
+        data["agents"]["action_tokens"] = token_ids  # (N, 109)
+
+        return data
+
+    raise ValueError(f"Unsupported kinematics type: {kinematics_name}")
+
+
+_WORKER_STATE: dict[str, Any] = {}
+
+
+def _worker_init(input_dir: Path, kinematics_cfg: dict):
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+    import torch
+
+    # The processes provide the parallelism; one torch thread per worker avoids
+    # oversubscribing CPU cores and keeps inverse-kinematics preprocessing on CPU.
+    torch.set_num_threads(1)
+
+    _WORKER_STATE["dataset"] = ArgoDataset(raw_path=input_dir)
+    _WORKER_STATE["kinematics"] = build_kinematics(kinematics_cfg)
+    _WORKER_STATE["kinematics_name"] = kinematics_cfg["name"]
+
+
+def _worker(idx: int) -> dict:
+    data = _WORKER_STATE["dataset"][idx]
+    return process_one_scenario(
+        data, _WORKER_STATE["kinematics"], _WORKER_STATE["kinematics_name"]
+    )
 
 
 def run_preprocessing(
     input_dir: Path,
     output_dir: Path,
-    kinematics_cfg: OmegaConf,
+    kinematics_cfg: DictConfig | dict,
     split: str,
     size: str = "",
 ):
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if kinematics_cfg.name == "ctra":
-        import torch
-        from kigras.kinematics.ctra import CTRAKinematics
-
-        torch.set_default_dtype(torch.float64)
-
-        kinematics = CTRAKinematics(**kinematics_cfg)
-
-    # elif kinematics_cfg.name == "kbm":
-    #     kbm = KinematicBicycleModel(
-    #         wheelbase=kinematics_cfg.wheelbase,
-    #         max_steer=kinematics_cfg.max_steer,
-    #         delta_time=kinematics_cfg.delta_time,
-    #     )
-    #     kinematics = InverseKinematicModule(
-    #         kbm, num_accel=kinematics_cfg.num_accel, num_steer=kinematics_cfg.num_steer
-    #     )
+    if isinstance(kinematics_cfg, DictConfig):
+        kinematics_cfg = OmegaConf.to_container(kinematics_cfg, resolve=True)
     else:
-        raise ValueError(f"Unsupported kinematics type: {kinematics_cfg.name}")
+        kinematics_cfg = dict(kinematics_cfg)
+    if not isinstance(kinematics_cfg, dict):
+        raise TypeError("kinematics_cfg must resolve to a mapping")
+    kinematics_name = kinematics_cfg["name"]
 
     # Load the Dataset in RAW mode
     raw_dataset = ArgoDataset(raw_path=input_dir)
-    preprocessed_data_list = []
+    n_scenarios = len(raw_dataset)
 
-    print(f"Starting offline preprocessing for {len(raw_dataset)} scenarios...")
+    print(f"Starting offline preprocessing for {n_scenarios} scenarios...")
 
-    processing_times = []
+    num_workers = int(os.environ.get("PREPROCESS_WORKERS", os.cpu_count() or 1))
+    num_workers = max(1, min(num_workers, n_scenarios))
+    start_time = time.perf_counter()
 
-    for i in range(len(raw_dataset)):
-        # if i == 10:
-        #     quit()
-
-        start_time = time.perf_counter()
-        data = raw_dataset[i]
-
-        states = data["agents"]["states"]  # Shape: (N, 110, 7)
-        if kinematics_cfg.name == "ctra":
-            # The model consumes action_tokens[:, 48:109]. Token 48 is the
-            # previous-action context for the first predicted action, and tokens
-            # 49..108 are the targets for transitions 49->50 through 108->109.
-            action_start = CURRENT_STEP - 1
-            action_stop = CURRENT_STEP + PRED_LEN
-            token_ids = np.full((states.shape[0], states.shape[1] - 1), -1, np.int64)
-            graded_agent_idx = np.where(
-                (data["agents"]["track_categories"] == 2)
-                | (data["agents"]["track_categories"] == 3)
-            )[0]
-
-            for agent_idx in graded_agent_idx:
-                state_window = states[
-                    agent_idx : agent_idx + 1, action_start : action_stop + 1
-                ]
-
-                speed = np.hypot(state_window[..., 4], state_window[..., 5])
-                obs_window = np.stack(
-                    [
-                        state_window[..., 0],
-                        state_window[..., 1],
-                        state_window[..., 2],
-                        state_window[..., 3],
-                        speed,
-                    ],
-                    axis=-1,
-                )  # Shape: (1, 62, 5), states 48..109
-
-                window_mask = state_window[..., 6] > 0  # Shape: (1, 62)
-                action_valid = window_mask[:, :-1] & window_mask[:, 1:]  # (1, 61)
-
-                obs_window_t = torch.from_numpy(obs_window).to(torch.float64)
-                window_mask_t = torch.from_numpy(window_mask).bool()
-                actions = kinematics.solve(
-                    obs_window_t, quantize=True, valid_mask=window_mask_t
+    if num_workers > 1:
+        print(f"Preprocessing with {num_workers} worker processes...")
+        with Pool(
+            num_workers,
+            initializer=_worker_init,
+            initargs=(input_dir, kinematics_cfg),
+        ) as pool:
+            preprocessed_data_list = list(
+                tqdm(
+                    pool.imap(_worker, range(n_scenarios), chunksize=8),
+                    total=n_scenarios,
                 )
+            )
+    else:
+        kinematics = build_kinematics(kinematics_cfg)
+        preprocessed_data_list = [
+            process_one_scenario(raw_dataset[i], kinematics, kinematics_name)
+            for i in tqdm(range(n_scenarios), total=n_scenarios)
+        ]
 
-                window_token_ids = (
-                    kinematics.actions_to_token_ids(actions).numpy().astype(np.int64)
-                )
-                window_token_ids[~action_valid] = -1
-                token_ids[agent_idx, action_start:action_stop] = window_token_ids[0]
-
-            # # ------------- TRAJ RECONSTRUCTION QUALITY TESTING ----------------------------------------
-            # import matplotlib.pyplot as plt
-
-            # print(kinematics)
-            # for agent_idx in graded_agent_idx:
-            #     init_state_np = states[agent_idx, action_start, :]
-            #     init_speed = np.hypot(init_state_np[4], init_state_np[5])
-            #     init_state = torch.tensor([[*init_state_np[:4], init_speed]], dtype=torch.float64)
-            #     saved_tokens = torch.from_numpy(token_ids[agent_idx, action_start:action_stop])
-            #     valid_actions = saved_tokens >= 0
-            #     safe_tokens = saved_tokens.clamp(min=0)
-            #     accel_idx = safe_tokens // int(kinematics.NUM_YAW)
-            #     yaw_idx = safe_tokens % int(kinematics.NUM_YAW)
-            #     actions = torch.stack(
-            #         [
-            #             kinematics.accel_bins[accel_idx],
-            #             kinematics.yaw_rate_bins[yaw_idx],
-            #         ],
-            #         dim=-1,
-            #     ).unsqueeze(0)
-            #     rec = kinematics.forward(init_state, actions)[0].detach().numpy()
-
-            #     gt_xy = states[agent_idx, action_start : action_stop + 1, :2]
-            #     valid = states[agent_idx, action_start : action_stop + 1, 6] > 0
-            #     valid[1:] &= valid_actions.numpy()
-            #     plt.plot(gt_xy[valid, 0], gt_xy[valid, 1], label=f"GT {agent_idx}")
-            #     plt.plot(
-            #         rec[valid, 0],
-            #         rec[valid, 1],
-            #         "--",
-            #         label=f"rec {agent_idx}",
-            #     )
-            # plt.axis("equal")
-            # plt.legend()
-            # plt.show()
-
-            # # # ------------------------------------------------------------------------------------------
-
-            data["agents"]["action_tokens"] = token_ids  # (N, 109)
-
-        # # TODO: Adjust this to process mutiple agents as well
-        # elif kinematics_cfg.name == "kbm":
-        #     focal_id = data["focal_track_id"]
-        #     focal_idx = track_ids.index(focal_id)
-        #     future = data["agents"]["future"]
-
-        #     focal_hist = data["agents"]["history"][focal_idx, 49]
-        #     c_x, c_y = focal_hist[0], focal_hist[1]
-        #     c_yaw = np.arctan2(focal_hist[3], focal_hist[2])
-        #     c_v = np.hypot(focal_hist[4], focal_hist[5])
-        #     current_state = [c_x, c_y, c_yaw, c_v]
-
-        #     valid_mask = future[..., 6] > 0
-        #     valid_targets = future[focal_idx, valid_mask[focal_idx], :2]
-        #     if len(valid_targets) == 0:
-        #         preprocessed_data_list.append(data)
-        #         continue
-
-        #     trajectory_for_ik = [current_state] + valid_targets.tolist()
-        #     action_tokens = kinematics.solve_actions(trajectory_for_ik)
-
-        #     n_valid_focal = int(valid_mask[focal_idx].sum())
-        #     agent_action_tokens[focal_idx, :n_valid_focal] = action_tokens[
-        #         :n_valid_focal
-        #     ]
-
-        #     # TODO: multi-agent KBM - currently only populates focal agent's tokens
-        #     data["agents"]["action_tokens"] = agent_action_tokens  # (N, 60)
-
-        preprocessed_data_list.append(data)
-
-        end_time = time.perf_counter()
-        processing_times.append(end_time - start_time)
+    elapsed = time.perf_counter() - start_time
 
     print(
-        f"\nAverage processing time per scenario: {np.mean(processing_times):.4f} seconds"
+        f"\nAverage processing time per scenario: {elapsed / max(1, n_scenarios):.4f} "
+        f"seconds (wall {elapsed:.1f}s over {num_workers} workers)"
     )
 
     # Tag the file with the action grid (bin count + warp) so runs with a

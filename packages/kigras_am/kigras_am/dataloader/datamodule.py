@@ -4,7 +4,7 @@ from typing import Literal, Optional
 import pytorch_lightning as L
 from torch.utils.data import DataLoader
 
-from kigras.dataloader.dataset import ArgoDataset, collate_fn
+from kigras_am.dataloader.dataset import ArgoDataset, collate_fn
 
 
 class ArgoDataModule(L.LightningDataModule):

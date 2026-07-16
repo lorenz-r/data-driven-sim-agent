@@ -1,6 +1,6 @@
-# KiGRAS
+# KiGRAS-AM
 
-`kigras` is a standalone package for sparse, observer-centric motion forecasting on Argoverse 2. The model predicts discrete kinematic action tokens for each scored or focal agent, then can roll those tokens forward through a CTRA kinematic model to produce trajectories.
+`kigras_am` is a standalone package for sparse, observer-centric motion forecasting on Argoverse 2. The model predicts discrete kinematic action tokens for each scored or focal agent, then can roll those tokens forward through a CTRA kinematic model to produce trajectories.
 
 ## Contents
 
@@ -20,7 +20,7 @@
 - [Closed-Loop Rollout](#closed-loop-rollout)
 - [Installation](#installation)
 - [Configuration](#configuration)
-- [Usage](#usage)
+- [Practical Commands](#practical-commands)
 
 ## Pipeline Overview
 
@@ -43,13 +43,13 @@ Important files:
 
 | File | Role |
 | --- | --- |
-| `kigras/dataloader/dataset.py` | AV2 parsing, processed dataset loading, sparse `collate_fn`. |
+| `kigras_am/dataloader/dataset.py` | AV2 parsing, processed dataset loading, sparse `collate_fn`. |
 | `scripts/preprocess_kinematics.py` | Converts trajectories into discrete CTRA action-token labels. |
-| `kigras/utils/train_utils.py` | Converts collated batches into observer-local model inputs. |
-| `kigras/model/scene_encoder.py` | Encodes sparse agent/map context into one scene token per observer timestep with sparse attention. |
-| `kigras/model/decoder.py` | Transformer action decoder over observer scene tokens and previous actions. |
-| `kigras/model/kigras.py` | LightningModule that wires processing, encoder, decoder, loss, training, and rollout. |
-| `kigras/kinematics/ctra.py` | CTRA action quantization, inverse action recovery, and forward rollout. |
+| `kigras_am/utils/train_utils.py` | Converts collated batches into observer-local model inputs. |
+| `kigras_am/model/scene_encoder.py` | Encodes sparse agent/map context into one scene token per observer timestep with sparse attention. |
+| `kigras_am/model/decoder.py` | Transformer action decoder over observer scene tokens and previous actions. |
+| `kigras_am/model/kigras.py` | LightningModule that wires processing, encoder, decoder, loss, training, and rollout. |
+| `kigras_am/kinematics/ctra.py` | CTRA action quantization, inverse action recovery, and forward rollout. |
 
 ## Data Representation
 
@@ -172,22 +172,22 @@ Invalid transitions are stored as `-1`. A transition is valid only when both end
 
 Only action-token indices `48..108` are populated by preprocessing. Other indices remain `-1`. Token `48` is kept because training uses it as the previous-action context for the first predicted action; tokens `49..108` are the supervised prediction targets.
 
-The preprocessing output is a numpy file named after the split directory:
+The preprocessing output is a numpy file in the split directory:
 
 ```text
-<processed_dir>/<split>_split.npy
+<processed_root>/<split>/<split>_split*.npy
 ```
 
 For example:
 
 ```text
-av2_data/kigras_processed/train/train_split.npy
-av2_data/kigras_processed/val/val_split.npy
+av2_data/kigras_am_processed/train/train_split*.npy
+av2_data/kigras_am_processed/val/val_split*.npy
 ```
 
 ## Batching
 
-`collate_fn` in `kigras/dataloader/dataset.py` builds sparse batches from scenarios with different numbers of agents and map nodes. It does not pad each scenario to a common number of agents or map nodes. Instead, it flattens all scenarios in the DataLoader batch and records index tensors.
+`collate_fn` in `kigras_am/dataloader/dataset.py` builds sparse batches from scenarios with different numbers of agents and map nodes. It does not pad each scenario to a common number of agents or map nodes. Instead, it flattens all scenarios in the DataLoader batch and records index tensors.
 
 Dimension names used throughout the package:
 
@@ -247,7 +247,7 @@ When multiple scenarios are collated, indices are shifted by running global offs
 
 ## Batch Processing
 
-`process_sparse_batch` in `kigras/utils/train_utils.py` turns a collated batch into model-facing sparse tensors.
+`process_sparse_batch` in `kigras_am/utils/train_utils.py` turns a collated batch into model-facing sparse tensors.
 
 Default call:
 
@@ -376,7 +376,7 @@ The processed batch contains:
 
 ## Model
 
-`KiGRAS` in `kigras/model/kigras.py` is a PyTorch Lightning module. Its forward pass is:
+`KiGRAS` in `kigras_am/model/kigras.py` is a PyTorch Lightning module. Its forward pass is:
 
 ```python
 processed = process_sparse_batch(batch)
@@ -394,7 +394,7 @@ With the default action grid, `vocab_size = 3969`.
 
 ## Encoder
 
-`SparseSceneEncoder` in `kigras/model/scene_encoder.py` turns sparse observer-local context into one dense scene token per observer per timestep.
+`SparseSceneEncoder` in `kigras_am/model/scene_encoder.py` turns sparse observer-local context into one dense scene token per observer per timestep.
 
 ```text
 agent context edges + map context edges -> scene_tokens [O_total, T, d_model]
@@ -450,7 +450,7 @@ scene_tokens: [O_total, T, d_model]
 
 ## Decoder
 
-`ActionDecoder` in `kigras/model/decoder.py` maps the encoder's scene tokens and previous action tokens to logits over the discrete action vocabulary.
+`ActionDecoder` in `kigras_am/model/decoder.py` maps the encoder's scene tokens and previous action tokens to logits over the discrete action vocabulary.
 
 ```text
 scene_tokens [O_total, T, d_model] + prev_actions [O_total, T]
@@ -576,8 +576,8 @@ Default path keys:
 | --- | --- |
 | `raw_train` | `${package_root}/av2_data/raw_av2/train` |
 | `raw_val` | `${package_root}/av2_data/raw_av2/val` |
-| `processed_train` | `${package_root}/av2_data/kigras_processed/train` |
-| `processed_val` | `${package_root}/av2_data/kigras_processed/val` |
+| `processed_train` | `${package_root}/av2_data/kigras_am_processed/train` |
+| `processed_val` | `${package_root}/av2_data/kigras_am_processed/val` |
 | `checkpoint_save_path` | `${package_root}/checkpoints` |
 
 Model architecture defaults live in:
@@ -611,93 +611,94 @@ With defaults:
 63 ** 2 = 3969
 ```
 
-## Usage
+## Practical Commands
 
-### 1. Preprocess Raw AV2 Data
+Run these from the repository root with `uv run`.
 
-From the repository root after editable installation:
+### Train From No Local Data
+
+This downloads AV2, preprocesses AM data, and trains:
 
 ```bash
-python packages/kigras_am/scripts/preprocess_kinematics.py \
-  raw_train=/path/to/av2/train \
-  raw_val=/path/to/av2/val \
-  processed_train=/path/to/kigras_processed/train \
-  processed_val=/path/to/kigras_processed/val
+uv run train.py --model kigras_am --download-first --download-size small
 ```
 
-This writes:
+Tiny smoke run:
+
+```bash
+uv run train.py --model kigras_am --download-first --download-size single -- training.trainer.max_epochs=1
+```
+
+Outputs use the AM-specific processed-data folder:
 
 ```text
-/path/to/kigras_processed/train/train_split.npy
-/path/to/kigras_processed/val/val_split.npy
+av2_data/raw_av2/{train,val}
+av2_data/kigras_am_processed/{train,val}
+checkpoints/last.ckpt
 ```
 
-### 2. Train
+Control preprocessing parallelism with `PREPROCESS_WORKERS`:
 
 ```bash
-python packages/kigras_am/train.py \
-  processed_train=/path/to/kigras_processed/train \
-  processed_val=/path/to/kigras_processed/val \
-  checkpoint_save_path=/path/to/checkpoints
+PREPROCESS_WORKERS=8 uv run train.py --model kigras_am --download-first --download-size small
 ```
 
-Useful overrides:
+### Generate AM Prediction NPZ
+
+`infer.py` expects AM preprocessed data, not raw AV2. It writes a SMART-compatible batch archive.
 
 ```bash
-python packages/kigras_am/train.py \
-  training.dataloader.train_batch_size=4 \
-  training.dataloader.val_batch_size=1 \
-  training.trainer.max_epochs=20 \
-  model.architecture.embedding_dim=128
-```
-
-### 3. Evaluate Closed-Loop Rollout
-
-```bash
-python packages/kigras_am/eval.py \
-  processed_val=/path/to/kigras_processed/val \
-  checkpoint_save_path=/path/to/checkpoints
-```
-
-`eval.py` loads:
-
-```text
-${checkpoint_save_path}/last.ckpt
-```
-
-and reports focal and observer ADE/FDE from closed-loop CTRA rollout.
-
-### 4. Run Multi-Scenario Inference
-
-```bash
-python packages/kigras_am/infer.py \
-  --input /path/to/kigras_processed/val \
-  --checkpoint /path/to/checkpoints/last.ckpt \
-  --output /path/to/outputs/kigras_am_preds \
-  --batch-size 1
-```
-
-`infer.py` expects AM preprocessed data, either a concrete `.npy` split or a split
-directory containing the matching preprocessed file. It writes a collected
-SMART-compatible batch archive:
-
-```text
-<output>/batch_predictions_<run_id>.npz
-```
-
-The archive keeps full-scene ground truth for visualization/context, but AM only
-predicts observer agents (`SCORED_TRACK` and `FOCAL_TRACK`). Non-observer rows are
-included in `gt`, `gt_head`, `gt_valid_mask`, `agent_id`, and `agent_type`, while
-their prediction rows have `pred_valid_mask=false`. The extra fields
-`observer_mask` and `is_predicted_agent` mark rows with actual AM predictions.
-
-For quick smoke tests, run a subset:
-
-```bash
-python packages/kigras_am/infer.py \
-  --input /path/to/kigras_processed/val \
-  --checkpoint /path/to/checkpoints/last.ckpt \
-  --output /path/to/outputs/kigras_am_preds \
-  --idx 0 \
+uv run python packages/kigras_am/infer.py \
+  --input av2_data/kigras_am_processed/val \
+  --checkpoint checkpoints/last.ckpt \
+  --output outputs/kigras_am_preds \
+  --raw-data-folder av2_data/raw_av2/val \
+  --device auto \
+  --batch-size 1 \
   --no-visualize
 ```
+
+Smoke inference on a few scenarios:
+
+```bash
+uv run python packages/kigras_am/infer.py \
+  --input av2_data/kigras_am_processed/val \
+  --checkpoint checkpoints/last.ckpt \
+  --output outputs/kigras_am_preds \
+  --raw-data-folder av2_data/raw_av2/val \
+  --limit 10 \
+  --no-visualize
+```
+
+The main output is:
+
+```text
+outputs/kigras_am_preds/batch_predictions_<run_id>.npz
+outputs/kigras_am_preds/inference_summary_<run_id>.json
+```
+
+AM predicts only observer agents (`SCORED_TRACK` and `FOCAL_TRACK`). The NPZ keeps full-scene ground truth/context, but non-observer prediction rows are invalid via `pred_valid_mask=false`.
+
+### Evaluate With SMART Unified NPZ Metrics
+
+Use the common SMART evaluator for both SMART and KiGRAS batch NPZ files:
+
+```bash
+uv run python packages/smart/evaluate_rollout_npz.py \
+  outputs/kigras_am_preds/batch_predictions_<run_id>.npz \
+  --output outputs/kigras_am_preds/metrics.json \
+  --raw-data-folder av2_data/raw_av2/val \
+  --workers 8
+```
+
+Fast forecast-only evaluation:
+
+```bash
+uv run python packages/smart/evaluate_rollout_npz.py \
+  outputs/kigras_am_preds/batch_predictions_<run_id>.npz \
+  --output outputs/kigras_am_preds/metrics.json \
+  --no-map \
+  --no-interactive
+```
+
+The evaluator scores rows with `agent_category == 3`; AM sets that only for observer agents.

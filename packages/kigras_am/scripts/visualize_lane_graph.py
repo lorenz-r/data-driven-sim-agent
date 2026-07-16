@@ -20,7 +20,7 @@ from matplotlib.lines import Line2D
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from kigras.dataloader.dataset import ArgoDataset
+from kigras_am.dataloader.dataset import ArgoDataset
 from av2.geometry.interpolate import compute_midpoint_line
 from av2.map.lane_segment import LaneType, LaneMarkType
 from av2.map.map_api import ArgoverseStaticMap

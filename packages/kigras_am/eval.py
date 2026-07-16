@@ -7,9 +7,9 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
-from kigras.dataloader.dataset import ArgoDataset, OBS_LEN, collate_fn
-from kigras.kinematics.ctra import CTRAKinematics
-from kigras.model.kigras import KiGRAS
+from kigras_am.dataloader.dataset import ArgoDataset, OBS_LEN, collate_fn
+from kigras_am.kinematics.ctra import CTRAKinematics
+from kigras_am.model.kigras import KiGRAS
 
 
 def _to_device(data: Any, device: torch.device) -> Any:

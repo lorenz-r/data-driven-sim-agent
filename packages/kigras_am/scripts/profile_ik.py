@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from kigras.kinematics import CTRAKinematics
+from kigras_am.kinematics import CTRAKinematics
 
 
 def _time(name, fn, n_warmup=0, n_trial=2):

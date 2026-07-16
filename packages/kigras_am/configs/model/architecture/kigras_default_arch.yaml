@@ -1,12 +1,12 @@
 # KiGRAS Architecture Params
 embedding_dim: 64
 num_head: 4
-encoder_num_layers: 5
+encoder_num_layers: 3
 encoder_ff_dim: 256
-decoder_num_layers: 5
+decoder_num_layers: 3
 decoder_ff_dim: 256
 dropout: 0.1
 num_actions: 2
 num_action_bins: 63
-agent_context_radius: 25.0
-map_context_radius: 25.0
+agent_context_radius: 20.0
+map_context_radius: 20.0
