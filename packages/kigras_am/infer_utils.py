@@ -197,7 +197,9 @@ def build_processed_dataset(
             f"Processed AM input must be a .npy file or split directory, got: {path}"
         )
 
-    expected = path / split_filename(path.name, grid_power=grid_power, num_bins=num_bins)
+    expected = path / split_filename(
+        path.name, grid_power=grid_power, num_bins=num_bins
+    )
     if expected.is_file():
         return ProcessedNpyDataset(expected), expected.resolve()
 
@@ -731,7 +733,9 @@ def run_inference_pipeline(
                 zip(chunk_indices, samples, split_rollouts)
             ):
                 order = chunk_start + offset
-                scenario_id = str(sample.get("scenario_id", f"scenario_{scenario_idx:06d}"))
+                scenario_id = str(
+                    sample.get("scenario_id", f"scenario_{scenario_idx:06d}")
+                )
                 scenario_key = f"scenario_{order:06d}"
                 print(f"\n[{order + 1}/{len(indices)}] {scenario_id}")
 
@@ -759,7 +763,8 @@ def run_inference_pipeline(
                 num_timesteps.append(int(prediction_data["num_timesteps"]))
 
                 should_visualize = visualize and (
-                    visualization_limit is None or visualized_count < visualization_limit
+                    visualization_limit is None
+                    or visualized_count < visualization_limit
                 )
                 if should_visualize:
                     vis_path = output_path / scenario_id / f"pred_{scenario_id}.png"
@@ -826,8 +831,12 @@ def _write_summary(
     observer_ade = float(np.average(ades, weights=weights)) if total_agents else None
     observer_fde = float(np.average(fdes, weights=weights)) if total_agents else None
 
-    focal_ades = [r["focal_min_ade"] for r in results if np.isfinite(r["focal_min_ade"])]
-    focal_fdes = [r["focal_min_fde"] for r in results if np.isfinite(r["focal_min_fde"])]
+    focal_ades = [
+        r["focal_min_ade"] for r in results if np.isfinite(r["focal_min_ade"])
+    ]
+    focal_fdes = [
+        r["focal_min_fde"] for r in results if np.isfinite(r["focal_min_fde"])
+    ]
 
     summary = {
         **run_metadata,
