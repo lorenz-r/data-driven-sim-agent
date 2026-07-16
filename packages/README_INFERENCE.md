@@ -116,7 +116,8 @@ and KiGRAS-HA batch containers and always renders rollout index `0`:
 uv run python visualize_rollout_npz.py \
   packages/smart/data/preds/batch_predictions_<run_id>.npz \
   --raw-data-folder data/raw \
-  --num-scenarios 10
+  --num-scenarios 10 \
+  --workers 4
 ```
 
 The plain `packages/kigras` and `packages/kigras_am` inference paths do not
@@ -131,6 +132,13 @@ UTF-8 list parser ignores blank lines and lines beginning with `#`, and removes
 duplicates while preserving the requested order. IDs absent from the archive
 are reported as warnings while the remaining IDs continue.
 
+Rendering uses process-level parallelism across scenarios. The default is up to
+4 workers, capped by the selected scenario count; override it with `--workers N`
+or use `--workers 1` for sequential rendering. Prediction and optional GT for
+one scenario stay in the same worker so its parquet and map are loaded once.
+Each worker renders a full GIF independently, so memory and raw-data I/O usage
+increase with the worker count.
+
 Prediction GIFs contain the raw observed history and the predicted future, but
 never the raw future ground truth. Raw AV2 parquet and map files are therefore
 required; `--raw-data-folder` takes precedence over a path stored in scenario
@@ -141,6 +149,7 @@ use:
 uv run python visualize_rollout_npz.py \
   packages/smart/data/preds/batch_predictions_<run_id>.npz \
   --raw-data-folder data/raw \
+  --workers 4 \
   --visualize-ground-truth
 ```
 

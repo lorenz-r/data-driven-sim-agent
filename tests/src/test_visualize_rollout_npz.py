@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import math
+import subprocess
+import sys
+from concurrent.futures import Future
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +18,9 @@ from av2.datasets.motion_forecasting.data_schema import (
     TrackCategory,
 )
 from av2.map.map_api import ArgoverseStaticMap
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _state(
@@ -178,6 +184,80 @@ def test_default_selection_outputs_and_metadata_fallbacks(
     ) == Path("batch")
 
 
+def test_worker_cli_validation() -> None:
+    assert visualizer.parse_args(["input.npz"]).workers == visualizer.DEFAULT_WORKERS
+    assert visualizer.parse_args(["input.npz", "--workers", "3"]).workers == 3
+    with pytest.raises(SystemExit):
+        visualizer.parse_args(["input.npz", "--workers", "0"])
+    with pytest.raises(SystemExit):
+        visualizer.parse_args(["input.npz", "--workers", "-1"])
+
+
+def test_parallel_scheduler_preserves_order_and_captures_worker_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    tasks = [
+        visualizer.VisualizationTask(
+            ref=visualizer.ScenarioRef(tmp_path / f"{scenario_id}.npz", None, scenario_id),
+            raw_data_folder=tmp_path,
+            prediction_output=tmp_path / "predictions",
+            ground_truth_output=tmp_path / "ground-truth",
+            visualize_ground_truth=True,
+        )
+        for scenario_id in ("first", "second")
+    ]
+    submitted: list[str] = []
+
+    class FakeExecutor:
+        def __init__(self, *, max_workers: int, mp_context) -> None:
+            assert max_workers == 2
+            assert mp_context.get_start_method() == "spawn"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def submit(self, _function, task: visualizer.VisualizationTask):
+            submitted.append(task.ref.scenario_id)
+            future: Future[visualizer.ScenarioVisualizationResult] = Future()
+            if task.ref.scenario_id == "first":
+                future.set_result(
+                    visualizer.ScenarioVisualizationResult(
+                        scenario_id="first",
+                        artifacts=(),
+                    )
+                )
+            else:
+                future.set_exception(RuntimeError("worker crashed"))
+            return future
+
+    monkeypatch.setattr(visualizer, "ProcessPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(
+        visualizer,
+        "as_completed",
+        lambda futures: iter(reversed(list(futures))),
+    )
+
+    results = visualizer._execute_visualization_tasks(
+        tasks,
+        workers=20,
+        show_progress=False,
+    )
+
+    assert submitted == ["first", "second"]
+    assert [result.scenario_id for result in results] == ["first", "second"]
+    assert [artifact.name for artifact in results[1].artifacts] == [
+        "prediction",
+        "ground truth",
+    ]
+    assert all(
+        artifact.error is not None and "worker crashed" in artifact.error
+        for artifact in results[1].artifacts
+    )
+
+
 def test_ground_truth_still_renders_when_prediction_payload_is_malformed(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -194,7 +274,7 @@ def test_ground_truth_still_renders_when_prediction_payload_is_malformed(
     monkeypatch.setattr(
         visualizer,
         "_load_scenario_archive_data",
-        lambda _: (None, ValueError("malformed pred_traj"), None),
+        lambda _: (None, ValueError("malformed pred_traj"), None, ()),
     )
     monkeypatch.setattr(visualizer, "_load_raw_inputs", lambda *_: raw_inputs)
     rendered: list[tuple[ArgoverseScenario, Path, int]] = []
@@ -221,6 +301,8 @@ def test_ground_truth_still_renders_when_prediction_payload_is_malformed(
             "--visualize-ground-truth",
             "--ground-truth-output",
             str(tmp_path / "ground-truth"),
+            "--workers",
+            "1",
         ]
     )
 
@@ -254,3 +336,40 @@ def test_headless_renderer_writes_gif(tmp_path: Path) -> None:
     )
 
     assert output_path.read_bytes().startswith(b"GIF89a")
+
+
+def test_two_process_cli_failure_path_is_picklable(tmp_path: Path) -> None:
+    input_dir = tmp_path / "inputs"
+    input_dir.mkdir()
+    for scenario_id in ("scene-a", "scene-b"):
+        np.savez_compressed(
+            input_dir / f"{scenario_id}.npz",
+            scenario_id=np.asarray(scenario_id),
+            agent_id=np.asarray(["agent"]),
+            pred_traj=np.zeros((1, 2, 2), dtype=np.float32),
+            pred_valid_mask=np.ones((1, 2), dtype=bool),
+        )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "visualize_rollout_npz.py"),
+            str(input_dir),
+            "--raw-data-folder",
+            str(tmp_path / "missing-raw-data"),
+            "--num-scenarios",
+            "2",
+            "--workers",
+            "2",
+            "--output",
+            str(tmp_path / "output"),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "scene-a prediction" in result.stderr
+    assert "scene-b prediction" in result.stderr

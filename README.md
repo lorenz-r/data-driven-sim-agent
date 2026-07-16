@@ -258,12 +258,15 @@ after inference without loading either model:
 uv run python visualize_rollout_npz.py path/to/batch_predictions.npz \
   --raw-data-folder data/raw \
   --num-scenarios 10 \
+  --workers 4 \
   --visualize-ground-truth
 ```
 
 The command writes rollout-0 prediction GIFs and, when requested, full raw
-ground-truth GIFs to separate output roots. Use `--scenario-list` for a text
-file containing one scenario ID per line. Evaluate the same artifact with:
+ground-truth GIFs to separate output roots. Scenarios render in parallel worker
+processes; use `--workers 1` for sequential rendering. Use `--scenario-list`
+for a text file containing one scenario ID per line. Evaluate the same artifact
+with:
 
 ```bash
 uv run python evaluate_rollout_npz.py path/to/batch_predictions.npz \

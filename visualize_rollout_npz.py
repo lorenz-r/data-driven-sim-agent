@@ -4,17 +4,20 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import importlib.util
 import math
+import multiprocessing
 import os
 import sys
 import tempfile
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 if "MPLCONFIGDIR" not in os.environ:
     os.environ["MPLCONFIGDIR"] = str(Path(tempfile.gettempdir()) / "matplotlib")
@@ -31,6 +34,7 @@ from av2.datasets.motion_forecasting.data_schema import (
     Track,
 )
 from av2.map.map_api import ArgoverseStaticMap
+from tqdm import tqdm
 
 from rollout_npz import (
     ScenarioRef,
@@ -52,6 +56,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 RENDERER_PATH = REPO_ROOT / "eval-utilities" / "visualize-av2-scenario.py"
 DEFAULT_NUM_SCENARIOS = 10
 DEFAULT_FPS = 10
+DEFAULT_WORKERS = max(1, min(4, os.cpu_count() or 1))
 RAW_SPLIT_NAMES = ("train", "val", "validation", "test")
 
 
@@ -76,6 +81,37 @@ class RawScenarioInputs:
     scenario_dir: Path
     parquet_path: Path
     map_path: Path
+
+
+@dataclass(frozen=True)
+class VisualizationTask:
+    """Picklable inputs for one independently rendered scenario."""
+
+    ref: ScenarioRef
+    raw_data_folder: Path | None
+    prediction_output: Path
+    ground_truth_output: Path
+    visualize_ground_truth: bool
+
+
+@dataclass(frozen=True)
+class ArtifactVisualizationResult:
+    """Success or failure of one prediction/ground-truth artifact."""
+
+    name: str
+    output_path: Path
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class ScenarioVisualizationResult:
+    """Buffered worker result printed by the parent in selection order."""
+
+    scenario_id: str
+    artifacts: tuple[ArtifactVisualizationResult, ...]
+    parquet_path: Path | None = None
+    map_path: Path | None = None
+    warnings: tuple[str, ...] = ()
 
 
 def _positive_int(value: str) -> int:
@@ -142,6 +178,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Ground-truth output root (default: "
             "<input_stem>_ground_truth_visualizations). Requires "
             "--visualize-ground-truth."
+        ),
+    )
+    parser.add_argument(
+        "--workers",
+        type=_positive_int,
+        default=DEFAULT_WORKERS,
+        help=(
+            "Scenario worker processes "
+            f"(default: {DEFAULT_WORKERS}; use 1 for sequential rendering)."
         ),
     )
     args = parser.parse_args(argv)
@@ -527,6 +572,7 @@ def _render_gif(
         )
     finally:
         renderer.plt.close("all")
+        gc.collect()
     if not output_path.is_file():
         raise RuntimeError(f"Renderer did not create expected GIF: {output_path}")
 
@@ -548,19 +594,23 @@ def _selected_refs(args: argparse.Namespace) -> tuple[list[ScenarioRef], list[st
 
 def _load_scenario_archive_data(
     ref: ScenarioRef,
-) -> tuple[PredictionPayload | None, Exception | None, dict[str, Any] | None]:
+) -> tuple[
+    PredictionPayload | None,
+    Exception | None,
+    dict[str, Any] | None,
+    tuple[str, ...],
+]:
     prediction: PredictionPayload | None = None
     prediction_error: Exception | None = None
     metadata: dict[str, Any] | None = None
+    warnings: list[str] = []
     try:
         with open_scenario(ref) as data:
             try:
                 metadata = load_inference_metadata(data)
             except Exception as exc:
-                print(
-                    f"Warning: could not read inference metadata for "
-                    f"{ref.scenario_id}: {exc}",
-                    file=sys.stderr,
+                warnings.append(
+                    f"could not read inference metadata for {ref.scenario_id}: {exc}"
                 )
             try:
                 prediction = _load_prediction_payload(data)
@@ -568,7 +618,200 @@ def _load_scenario_archive_data(
                 prediction_error = exc
     except Exception as exc:
         prediction_error = exc
-    return prediction, prediction_error, metadata
+    return prediction, prediction_error, metadata, tuple(warnings)
+
+
+def _artifact_output_paths(task: VisualizationTask) -> tuple[Path, Path]:
+    scenario_id = task.ref.scenario_id
+    prediction_path = (
+        task.prediction_output / scenario_id / f"pred_{scenario_id}.GIF"
+    )
+    ground_truth_path = (
+        task.ground_truth_output / scenario_id / f"gt_{scenario_id}.GIF"
+    )
+    return prediction_path, ground_truth_path
+
+
+def _scenario_failure_result(
+    task: VisualizationTask,
+    error: str,
+    *,
+    warnings: tuple[str, ...] = (),
+) -> ScenarioVisualizationResult:
+    prediction_path, ground_truth_path = _artifact_output_paths(task)
+    artifacts = [
+        ArtifactVisualizationResult(
+            name="prediction",
+            output_path=prediction_path,
+            error=error,
+        )
+    ]
+    if task.visualize_ground_truth:
+        artifacts.append(
+            ArtifactVisualizationResult(
+                name="ground truth",
+                output_path=ground_truth_path,
+                error=error,
+            )
+        )
+    return ScenarioVisualizationResult(
+        scenario_id=task.ref.scenario_id,
+        artifacts=tuple(artifacts),
+        warnings=warnings,
+    )
+
+
+def _visualize_scenario(task: VisualizationTask) -> ScenarioVisualizationResult:
+    scenario_id = task.ref.scenario_id
+    prediction_path, ground_truth_path = _artifact_output_paths(task)
+    prediction, prediction_error, scenario_metadata, warnings = (
+        _load_scenario_archive_data(task.ref)
+    )
+
+    try:
+        raw_root = _resolve_raw_data_folder(
+            task.raw_data_folder,
+            scenario_metadata,
+            task.ref.batch_metadata,
+        )
+        raw_inputs = _load_raw_inputs(raw_root, scenario_id)
+    except Exception as exc:
+        return _scenario_failure_result(task, str(exc), warnings=warnings)
+
+    artifacts: list[ArtifactVisualizationResult] = []
+    if prediction_error is not None or prediction is None:
+        error = prediction_error or RuntimeError("prediction data was not loaded")
+        artifacts.append(
+            ArtifactVisualizationResult(
+                name="prediction",
+                output_path=prediction_path,
+                error=str(error),
+            )
+        )
+    else:
+        try:
+            prediction_scenario, prediction_end = _build_prediction_scenario(
+                raw_inputs.scenario, prediction
+            )
+            _render_gif(
+                prediction_scenario,
+                raw_inputs.static_map,
+                prediction_path,
+                end_timestep=prediction_end,
+            )
+            artifacts.append(
+                ArtifactVisualizationResult(
+                    name="prediction",
+                    output_path=prediction_path,
+                )
+            )
+        except Exception as exc:
+            artifacts.append(
+                ArtifactVisualizationResult(
+                    name="prediction",
+                    output_path=prediction_path,
+                    error=str(exc),
+                )
+            )
+
+    if task.visualize_ground_truth:
+        try:
+            _render_gif(
+                raw_inputs.scenario,
+                raw_inputs.static_map,
+                ground_truth_path,
+                end_timestep=len(raw_inputs.scenario.timestamps_ns) - 1,
+            )
+            artifacts.append(
+                ArtifactVisualizationResult(
+                    name="ground truth",
+                    output_path=ground_truth_path,
+                )
+            )
+        except Exception as exc:
+            artifacts.append(
+                ArtifactVisualizationResult(
+                    name="ground truth",
+                    output_path=ground_truth_path,
+                    error=str(exc),
+                )
+            )
+
+    return ScenarioVisualizationResult(
+        scenario_id=scenario_id,
+        artifacts=tuple(artifacts),
+        parquet_path=raw_inputs.parquet_path,
+        map_path=raw_inputs.map_path,
+        warnings=warnings,
+    )
+
+
+def _run_visualization_task(
+    task: VisualizationTask,
+) -> ScenarioVisualizationResult:
+    try:
+        return _visualize_scenario(task)
+    except Exception as exc:
+        error = f"unexpected worker failure ({type(exc).__name__}): {exc}"
+        return _scenario_failure_result(task, error)
+    finally:
+        gc.collect()
+
+
+def _effective_worker_count(num_tasks: int, requested_workers: int) -> int:
+    if requested_workers < 1:
+        raise ValueError("workers must be a positive integer")
+    return min(num_tasks, requested_workers) if num_tasks else 0
+
+
+def _execute_visualization_tasks(
+    tasks: Sequence[VisualizationTask],
+    *,
+    workers: int,
+    show_progress: bool = True,
+) -> list[ScenarioVisualizationResult]:
+    effective_workers = _effective_worker_count(len(tasks), workers)
+    if effective_workers == 0:
+        return []
+    if effective_workers == 1:
+        return [
+            _run_visualization_task(task)
+            for task in tqdm(
+                tasks,
+                total=len(tasks),
+                desc="Rendering scenarios",
+                unit="scenario",
+                disable=not show_progress,
+            )
+        ]
+
+    results: list[ScenarioVisualizationResult | None] = [None] * len(tasks)
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(
+        max_workers=effective_workers,
+        mp_context=context,
+    ) as executor:
+        future_to_index = {
+            executor.submit(_run_visualization_task, task): index
+            for index, task in enumerate(tasks)
+        }
+        completed = as_completed(future_to_index)
+        for future in tqdm(
+            completed,
+            total=len(future_to_index),
+            desc="Rendering scenarios",
+            unit="scenario",
+            disable=not show_progress,
+        ):
+            index = future_to_index[future]
+            try:
+                results[index] = future.result()
+            except Exception as exc:
+                task = tasks[index]
+                error = f"worker process failed ({type(exc).__name__}): {exc}"
+                results[index] = _scenario_failure_result(task, error)
+
+    return [cast(ScenarioVisualizationResult, result) for result in results]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -604,76 +847,52 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Prediction output: {prediction_output}")
     if args.visualize_ground_truth:
         print(f"Ground-truth output: {ground_truth_output}")
+    effective_workers = _effective_worker_count(len(selected_refs), args.workers)
+    print(
+        f"Worker processes: {effective_workers} "
+        f"(requested {args.workers})"
+    )
+
+    tasks = [
+        VisualizationTask(
+            ref=ref,
+            raw_data_folder=args.raw_data_folder,
+            prediction_output=prediction_output,
+            ground_truth_output=ground_truth_output,
+            visualize_ground_truth=args.visualize_ground_truth,
+        )
+        for ref in selected_refs
+    ]
+    try:
+        results = _execute_visualization_tasks(
+            tasks,
+            workers=args.workers,
+            show_progress=len(tasks) > 1,
+        )
+    except Exception as exc:
+        print(f"Error: visualization workers failed: {exc}", file=sys.stderr)
+        return 1
 
     failures: list[str] = []
     produced = 0
-    for index, ref in enumerate(selected_refs, start=1):
-        scenario_id = ref.scenario_id
+    for index, result in enumerate(results, start=1):
+        scenario_id = result.scenario_id
         print(f"\n[{index}/{len(selected_refs)}] {scenario_id}")
-        prediction, prediction_error, scenario_metadata = (
-            _load_scenario_archive_data(ref)
-        )
-
-        try:
-            raw_root = _resolve_raw_data_folder(
-                args.raw_data_folder,
-                scenario_metadata,
-                ref.batch_metadata,
-            )
-            raw_inputs = _load_raw_inputs(raw_root, scenario_id)
-            print(f"Loaded raw scenario: {raw_inputs.parquet_path}")
-            print(f"Loaded static map:  {raw_inputs.map_path}")
-        except Exception as exc:
-            failure = f"{scenario_id} prediction: {exc}"
-            failures.append(failure)
-            print(f"Error: {failure}", file=sys.stderr)
-            if args.visualize_ground_truth:
-                failure = f"{scenario_id} ground truth: {exc}"
-                failures.append(failure)
-                print(f"Error: {failure}", file=sys.stderr)
-            continue
-
-        prediction_path = (
-            prediction_output / scenario_id / f"pred_{scenario_id}.GIF"
-        )
-        if prediction_error is not None or prediction is None:
-            error = prediction_error or RuntimeError("prediction data was not loaded")
-            failure = f"{scenario_id} prediction: {error}"
-            failures.append(failure)
-            print(f"Error: {failure}", file=sys.stderr)
-        else:
-            try:
-                prediction_scenario, prediction_end = _build_prediction_scenario(
-                    raw_inputs.scenario, prediction
-                )
-                _render_gif(
-                    prediction_scenario,
-                    raw_inputs.static_map,
-                    prediction_path,
-                    end_timestep=prediction_end,
-                )
+        for warning in result.warnings:
+            print(f"Warning: {warning}", file=sys.stderr)
+        if result.parquet_path is not None:
+            print(f"Loaded raw scenario: {result.parquet_path}")
+        if result.map_path is not None:
+            print(f"Loaded static map:  {result.map_path}")
+        for artifact in result.artifacts:
+            if artifact.error is None:
                 produced += 1
-                print(f"Saved prediction GIF: {prediction_path}")
-            except Exception as exc:
-                failure = f"{scenario_id} prediction: {exc}"
-                failures.append(failure)
-                print(f"Error: {failure}", file=sys.stderr)
-
-        if args.visualize_ground_truth:
-            ground_truth_path = (
-                ground_truth_output / scenario_id / f"gt_{scenario_id}.GIF"
-            )
-            try:
-                _render_gif(
-                    raw_inputs.scenario,
-                    raw_inputs.static_map,
-                    ground_truth_path,
-                    end_timestep=len(raw_inputs.scenario.timestamps_ns) - 1,
+                saved_name = (
+                    "ground-truth" if artifact.name == "ground truth" else artifact.name
                 )
-                produced += 1
-                print(f"Saved ground-truth GIF: {ground_truth_path}")
-            except Exception as exc:
-                failure = f"{scenario_id} ground truth: {exc}"
+                print(f"Saved {saved_name} GIF: {artifact.output_path}")
+            else:
+                failure = f"{scenario_id} {artifact.name}: {artifact.error}"
                 failures.append(failure)
                 print(f"Error: {failure}", file=sys.stderr)
 
