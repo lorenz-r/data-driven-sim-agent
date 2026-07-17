@@ -800,6 +800,11 @@ def run_inference_pipeline(
                     # KiGRAS-native extras (ignored by the SMART evaluator).
                     "pred_states": rollout_output["pred_states"],
                     "pred_tokens": rollout_output["pred_tokens"],
+                    # Exact ground-truth vx/vy. The SMART-schema `gt` holds only
+                    # positions, so without this a GT speed/accel reference has to
+                    # be finite-differenced while predictions carry true
+                    # velocities — an unfair asymmetry for kinematics diagnostics.
+                    "gt_vel": gt_future[..., 4:6].astype(np.float32),  # (N, T, 2)
                     "agent_type_ids": agent_type_ids,
                     "track_ids": track_ids_arr,
                     # SMART-schema alias so evaluate_rollout_npz.py and collision
