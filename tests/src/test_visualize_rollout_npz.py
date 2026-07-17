@@ -165,15 +165,20 @@ def test_default_selection_outputs_and_metadata_fallbacks(
 
     assert [ref.scenario_id for ref in selected] == [f"s{i}" for i in range(10)]
     assert missing == []
-    assert visualizer._default_output_root(
-        args.input, "_visualizations"
-    ) == tmp_path / "batch_visualizations"
-    assert visualizer._default_output_root(
-        args.input, "_ground_truth_visualizations"
-    ) == tmp_path / "batch_ground_truth_visualizations"
-    assert visualizer._resolve_raw_data_folder(
-        tmp_path / "explicit", {"cli": {"raw_data_folder": "scenario"}}, None
-    ) == tmp_path / "explicit"
+    assert (
+        visualizer._default_output_root(args.input, "_visualizations")
+        == tmp_path / "batch_visualizations"
+    )
+    assert (
+        visualizer._default_output_root(args.input, "_ground_truth_visualizations")
+        == tmp_path / "batch_ground_truth_visualizations"
+    )
+    assert (
+        visualizer._resolve_raw_data_folder(
+            tmp_path / "explicit", {"cli": {"raw_data_folder": "scenario"}}, None
+        )
+        == tmp_path / "explicit"
+    )
     assert visualizer._resolve_raw_data_folder(
         None,
         {"cli": {"raw_data_folder": "scenario"}},
@@ -198,7 +203,9 @@ def test_parallel_scheduler_preserves_order_and_captures_worker_failure(
 ) -> None:
     tasks = [
         visualizer.VisualizationTask(
-            ref=visualizer.ScenarioRef(tmp_path / f"{scenario_id}.npz", None, scenario_id),
+            ref=visualizer.ScenarioRef(
+                tmp_path / f"{scenario_id}.npz", None, scenario_id
+            ),
             raw_data_folder=tmp_path,
             prediction_output=tmp_path / "predictions",
             ground_truth_output=tmp_path / "ground-truth",

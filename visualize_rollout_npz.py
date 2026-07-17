@@ -22,9 +22,7 @@ from typing import Any, cast
 if "MPLCONFIGDIR" not in os.environ:
     os.environ["MPLCONFIGDIR"] = str(Path(tempfile.gettempdir()) / "matplotlib")
 if "XDG_CACHE_HOME" not in os.environ:
-    os.environ["XDG_CACHE_HOME"] = str(
-        Path(tempfile.gettempdir()) / "fontconfig-cache"
-    )
+    os.environ["XDG_CACHE_HOME"] = str(Path(tempfile.gettempdir()) / "fontconfig-cache")
 
 import numpy as np
 from av2.datasets.motion_forecasting import scenario_serialization
@@ -206,9 +204,7 @@ def _load_prediction_payload(data: Mapping[str, Any]) -> PredictionPayload:
     positions = np.asarray(
         ensure_rollout_positions(require_array(data, "pred_traj")), dtype=float
     )
-    valid_mask = ensure_rollout_valid_mask(
-        require_array(data, "pred_valid_mask")
-    )
+    valid_mask = ensure_rollout_valid_mask(require_array(data, "pred_valid_mask"))
     headings = ensure_rollout_headings(optional_array(data, "pred_head"))
     if headings is not None:
         headings = np.asarray(headings, dtype=float)
@@ -410,7 +406,9 @@ def _build_prediction_scenario(
             raise ValueError(f"Raw scenario contains duplicate track ID {track_id!r}")
         raw_tracks[track_id] = track
 
-    missing_ids = [agent_id for agent_id in prediction.agent_ids if agent_id not in raw_tracks]
+    missing_ids = [
+        agent_id for agent_id in prediction.agent_ids if agent_id not in raw_tracks
+    ]
     if missing_ids:
         raise ValueError(
             "NPZ agent IDs not found in the raw AV2 scenario: "
@@ -585,9 +583,7 @@ def _selected_refs(args: argparse.Namespace) -> tuple[list[ScenarioRef], list[st
             raise ValueError(f"Scenario list is empty: {args.scenario_list}")
         return select_scenarios(refs, scenario_ids=scenario_ids)
     requested_count = (
-        args.num_scenarios
-        if args.num_scenarios is not None
-        else DEFAULT_NUM_SCENARIOS
+        args.num_scenarios if args.num_scenarios is not None else DEFAULT_NUM_SCENARIOS
     )
     return select_scenarios(refs, num_scenarios=requested_count)
 
@@ -623,12 +619,8 @@ def _load_scenario_archive_data(
 
 def _artifact_output_paths(task: VisualizationTask) -> tuple[Path, Path]:
     scenario_id = task.ref.scenario_id
-    prediction_path = (
-        task.prediction_output / scenario_id / f"pred_{scenario_id}.GIF"
-    )
-    ground_truth_path = (
-        task.ground_truth_output / scenario_id / f"gt_{scenario_id}.GIF"
-    )
+    prediction_path = task.prediction_output / scenario_id / f"pred_{scenario_id}.GIF"
+    ground_truth_path = task.ground_truth_output / scenario_id / f"gt_{scenario_id}.GIF"
     return prediction_path, ground_truth_path
 
 
@@ -848,10 +840,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.visualize_ground_truth:
         print(f"Ground-truth output: {ground_truth_output}")
     effective_workers = _effective_worker_count(len(selected_refs), args.workers)
-    print(
-        f"Worker processes: {effective_workers} "
-        f"(requested {args.workers})"
-    )
+    print(f"Worker processes: {effective_workers} (requested {args.workers})")
 
     tasks = [
         VisualizationTask(
@@ -896,10 +885,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 failures.append(failure)
                 print(f"Error: {failure}", file=sys.stderr)
 
-    print(
-        f"\nCreated {produced} GIF(s); "
-        f"{len(failures)} selected artifact(s) failed."
-    )
+    print(f"\nCreated {produced} GIF(s); {len(failures)} selected artifact(s) failed.")
     if produced == 0:
         return 1
     return 1 if failures else 0

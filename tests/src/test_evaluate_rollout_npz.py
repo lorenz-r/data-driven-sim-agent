@@ -116,9 +116,7 @@ def test_batch_manifest_id_is_used_when_member_omits_scenario_id(
         "num_scenarios": np.asarray(1),
         "scenario_000000_fields": np.asarray(list(arrays)),
     }
-    payload.update(
-        {f"scenario_000000_{key}": value for key, value in arrays.items()}
-    )
+    payload.update({f"scenario_000000_{key}": value for key, value in arrays.items()})
     np.savez_compressed(prediction, **payload)
 
     report = _run_evaluator(

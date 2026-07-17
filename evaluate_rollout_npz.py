@@ -70,6 +70,7 @@ class EvaluationTask:
     no_headings: bool
     seconds_per_step: float
 
+
 def _load_meta_metrics():
     spec = importlib.util.spec_from_file_location("meta_metrics", METRICS_PATH)
     if spec is None or spec.loader is None:
@@ -356,9 +357,7 @@ def _compute_scenario_metrics_from_data(
             f"gt_valid_mask shape {gt_valid_mask.shape} must match {gt.shape[:-1]}"
         )
     if gt_head is not None and gt_head.shape != gt.shape[:-1]:
-        raise ValueError(
-            f"gt_head shape {gt_head.shape} must match {gt.shape[:-1]}"
-        )
+        raise ValueError(f"gt_head shape {gt_head.shape} must match {gt.shape[:-1]}")
 
     num_agents = gt.shape[0]
     target_mask = _target_agent_mask(data, num_agents)

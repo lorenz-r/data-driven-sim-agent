@@ -271,7 +271,9 @@ def _validated_batch_refs(
     if not scenario_keys:
         raise RolloutNpzError(f"No scenarios found in batch archive {npz_path}")
     if any(not key for key in scenario_keys):
-        raise RolloutNpzError(f"Batch archive {npz_path} contains an empty scenario key")
+        raise RolloutNpzError(
+            f"Batch archive {npz_path} contains an empty scenario key"
+        )
     _raise_for_duplicates(scenario_keys, label="scenario keys")
 
     if "scenario_ids" in data:
@@ -307,8 +309,7 @@ def _validated_batch_refs(
             count_value, (int, np.integer)
         ):
             raise RolloutNpzError(
-                f"num_scenarios must be an integer in {npz_path}, "
-                f"got {count_value!r}"
+                f"num_scenarios must be an integer in {npz_path}, got {count_value!r}"
             )
         if int(count_value) != len(scenario_keys):
             raise RolloutNpzError(
@@ -366,7 +367,9 @@ def _inspect_archive(npz_path: Path) -> tuple[bool, list[ScenarioRef]]:
     except RolloutNpzError:
         raise
     except Exception as exc:
-        raise RolloutNpzError(f"Could not read rollout archive {npz_path}: {exc}") from exc
+        raise RolloutNpzError(
+            f"Could not read rollout archive {npz_path}: {exc}"
+        ) from exc
 
 
 def discover_scenarios(input_path: str | Path) -> list[ScenarioRef]:

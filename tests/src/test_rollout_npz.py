@@ -163,9 +163,7 @@ def test_directory_prefers_batch_members_over_nested_standalones(
         ),
     ],
 )
-def test_rejects_invalid_batch_manifests(
-    tmp_path: Path, mutate, match: str
-) -> None:
+def test_rejects_invalid_batch_manifests(tmp_path: Path, mutate, match: str) -> None:
     npz_path = tmp_path / "invalid.npz"
     _write_batch(npz_path, ["a"])
     with np.load(npz_path, allow_pickle=False) as original:
