@@ -31,10 +31,11 @@ except ImportError as exc:
     from .infer_utils import run_inference_pipeline
 
 
-DEFAULT_INPUT_PATH = REPO_ROOT / "av2_data" / "kigras_processed" / "val"
+DEFAULT_INPUT_PATH = REPO_ROOT / "av2_data" / "kigras_am_processed" / "val"
 DEFAULT_OUTPUT_FOLDER = KIGRAS_AM_ROOT / "data" / "preds"
 DEFAULT_CHECKPOINT_PATH = REPO_ROOT / "checkpoints" / "last.ckpt"
 DEFAULT_VISUALIZATION_LIMIT = 10
+DEFAULT_ROLLOUTS_PER_SCENARIO = 1
 
 
 def main() -> None:
@@ -91,6 +92,28 @@ def main() -> None:
         type=int,
         default=1,
         help="Scenarios rolled out per batched forward pass (default: 1).",
+    )
+    parser.add_argument(
+        "--sample-tokens",
+        dest="sample_tokens",
+        action="store_true",
+        default=False,
+        help="Sample action tokens instead of selecting the greedy argmax token.",
+    )
+    parser.add_argument(
+        "--greedy-tokens",
+        dest="sample_tokens",
+        action="store_false",
+        help="Select the argmax action token at every step (default).",
+    )
+    parser.add_argument(
+        "--rollouts-per-scenario",
+        type=int,
+        default=DEFAULT_ROLLOUTS_PER_SCENARIO,
+        help=(
+            "Number of autoregressive rollouts saved per scenario "
+            f"(default: {DEFAULT_ROLLOUTS_PER_SCENARIO})."
+        ),
     )
     parser.add_argument(
         "--idx",
@@ -174,6 +197,8 @@ def main() -> None:
         visualize=args.visualize,
         visualization_limit=visualization_limit,
         batch_size=args.batch_size,
+        sample_tokens=args.sample_tokens,
+        rollouts_per_scenario=args.rollouts_per_scenario,
         grid_power=args.grid_power,
         max_accel=args.max_accel,
         max_yaw_rate=args.max_yaw_rate,

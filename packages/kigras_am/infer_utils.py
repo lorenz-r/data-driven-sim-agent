@@ -51,6 +51,7 @@ import json
 import math
 import platform
 import sys
+import warnings
 import zipfile
 from bisect import bisect_right
 from datetime import datetime, timezone
@@ -319,6 +320,8 @@ def rollout_batch(
     *,
     device: torch.device,
     kinematic_model: CTRAKinematics,
+    sample_tokens: bool,
+    rollouts_per_scenario: int,
 ) -> tuple[dict, dict]:
     batch = collate_fn(samples)
     if "action_tokens" not in batch["observers"]:
@@ -328,7 +331,18 @@ def rollout_batch(
         )
     batch = _to_device(batch, device)
     model.eval()
-    rollout = model.rollout(batch, kinematic_model)
+    rollouts = [
+        model.rollout(
+            batch,
+            kinematic_model,
+            sample_tokens=sample_tokens,
+        )
+        for _ in range(rollouts_per_scenario)
+    ]
+    rollout = {
+        "states": torch.stack([item["states"] for item in rollouts]),
+        "tokens": torch.stack([item["tokens"] for item in rollouts]),
+    }
     return batch, rollout
 
 
@@ -348,8 +362,8 @@ def _split_rollout_by_scenario(
         out.append(
             {
                 "observer_local_idx": observer_local_idx[rows].astype(np.int64),
-                "pred_states_observer": pred_states[rows].astype(np.float32),
-                "pred_tokens_observer": pred_tokens[rows].astype(np.int64),
+                "pred_states_observer": pred_states[:, rows].astype(np.float32),
+                "pred_tokens_observer": pred_tokens[:, rows].astype(np.int64),
             }
         )
     return out
@@ -372,10 +386,12 @@ def build_full_scene_prediction_data(
     observer_mask = np.zeros(num_agents, dtype=bool)
     observer_mask[observer_local_idx] = True
 
-    pred_states = np.zeros((1, num_agents, PRED_LEN, 7), dtype=np.float32)
-    pred_tokens = np.full((1, num_agents, PRED_LEN), -1, dtype=np.int64)
-    pred_states[0, observer_local_idx] = scenario_rollout["pred_states_observer"]
-    pred_tokens[0, observer_local_idx] = scenario_rollout["pred_tokens_observer"]
+    observer_states = scenario_rollout["pred_states_observer"]
+    num_rollouts = int(observer_states.shape[0])
+    pred_states = np.zeros((num_rollouts, num_agents, PRED_LEN, 7), dtype=np.float32)
+    pred_tokens = np.full((num_rollouts, num_agents, PRED_LEN), -1, dtype=np.int64)
+    pred_states[:, observer_local_idx] = observer_states
+    pred_tokens[:, observer_local_idx] = scenario_rollout["pred_tokens_observer"]
 
     pred_valid_mask = pred_states[..., 6] > 0.5
     pred_valid_mask[:, ~observer_mask, :] = False
@@ -399,6 +415,16 @@ def build_full_scene_prediction_data(
     focal_ade, focal_fde = (
         focal_metrics if focal_metrics is not None else (float("nan"), float("nan"))
     )
+    best_sample = 0
+    if 0 <= focal_idx < num_agents and observer_mask[focal_idx]:
+        focal_valid = gt_future[focal_idx, :, 6].astype(bool)
+        if focal_valid.any():
+            focal_errors = np.linalg.norm(
+                pred_states[:, focal_idx, focal_valid, :2]
+                - gt_future[focal_idx, focal_valid, :2][None],
+                axis=-1,
+            )
+            best_sample = int(focal_errors.mean(axis=1).argmin())
 
     prediction_data: dict[str, Any] = {
         "scenario_id": scenario_id,
@@ -424,9 +450,9 @@ def build_full_scene_prediction_data(
         "observer_track_ids": track_ids_arr[observer_local_idx],
         "focal_track_id": str(sample["focal_track_id"]),
         "focal_idx": focal_idx,
-        "best_sample": 0,
-        "num_samples": 1,
-        "rollouts_per_scenario": 1,
+        "best_sample": best_sample,
+        "num_samples": num_rollouts,
+        "rollouts_per_scenario": num_rollouts,
         "num_agents": num_agents,
         "num_timesteps": PRED_LEN,
         "last_pos": states[:, CURRENT_STEP, :2].astype(np.float32),
@@ -470,8 +496,11 @@ def save_visualization(
 
     states = np.asarray(sample["agents"]["states"], dtype=np.float32)
     gt_future = states[:, OBS_LEN:, :]
-    pred_xy = np.asarray(prediction_data["pred_traj"])[0]
-    pred_valid = np.asarray(prediction_data["pred_valid_mask"])[0].astype(bool)
+    best_sample = int(prediction_data["best_sample"])
+    pred_xy = np.asarray(prediction_data["pred_traj"])[best_sample]
+    pred_valid = np.asarray(prediction_data["pred_valid_mask"])[best_sample].astype(
+        bool
+    )
     observer_mask = np.asarray(prediction_data["observer_mask"]).astype(bool)
     track_ids = np.asarray(prediction_data["agent_id"]).astype(str)
     focal_idx = int(prediction_data["focal_idx"])
@@ -595,6 +624,7 @@ def _write_batch_metadata_npz(
     visualized_scenario_ids: list[str],
     num_agents: list[int],
     num_timesteps: list[int],
+    rollouts_per_scenario: list[int],
 ) -> None:
     _write_npz_array(archive, "format_version", np.asarray("kigras_batch_rollouts_v1"))
     _write_npz_array(archive, "run_id", np.asarray(run_id))
@@ -613,7 +643,7 @@ def _write_batch_metadata_npz(
     _write_npz_array(
         archive,
         "rollouts_per_scenario",
-        np.ones(len(scenario_ids), dtype=np.int64),
+        np.asarray(rollouts_per_scenario, dtype=np.int64),
     )
     _write_npz_array(
         archive,
@@ -645,6 +675,8 @@ def run_inference_pipeline(
     visualize: bool,
     visualization_limit: int | None,
     batch_size: int,
+    sample_tokens: bool,
+    rollouts_per_scenario: int,
     grid_power: float,
     max_accel: float,
     max_yaw_rate: float,
@@ -652,6 +684,14 @@ def run_inference_pipeline(
     max_iter: int,
 ) -> list[dict[str, Any]]:
     batch_size = max(1, int(batch_size))
+    if rollouts_per_scenario < 1:
+        raise ValueError("rollouts_per_scenario must be at least 1")
+    if rollouts_per_scenario > 1 and not sample_tokens:
+        warnings.warn(
+            "rollouts_per_scenario > 1 with sample_tokens=False will produce "
+            "identical greedy rollouts.",
+            stacklevel=2,
+        )
     resolved_device = resolve_inference_device(device)
     output_path = Path(output_dir).expanduser()
     output_path.mkdir(parents=True, exist_ok=True)
@@ -693,6 +733,8 @@ def run_inference_pipeline(
             "raw_data_folder": str(raw_data_path) if raw_data_path else None,
             "num_scenarios": len(indices),
             "batch_size": batch_size,
+            "sample_tokens": sample_tokens,
+            "rollouts_per_scenario": rollouts_per_scenario,
         },
         "binning": {
             "num_accel_bins": int(kinematic_model.NUM_ACCEL),
@@ -736,6 +778,7 @@ def run_inference_pipeline(
     visualized_scenario_ids: list[str] = []
     num_agents: list[int] = []
     num_timesteps: list[int] = []
+    rollout_counts: list[int] = []
     visualized_count = 0
 
     with zipfile.ZipFile(
@@ -749,6 +792,8 @@ def run_inference_pipeline(
                 samples,
                 device=resolved_device,
                 kinematic_model=kinematic_model,
+                sample_tokens=sample_tokens,
+                rollouts_per_scenario=rollouts_per_scenario,
             )
             split_rollouts = _split_rollout_by_scenario(samples, batch, rollout)
 
@@ -784,6 +829,7 @@ def run_inference_pipeline(
                 scenario_keys.append(scenario_key)
                 num_agents.append(int(prediction_data["num_agents"]))
                 num_timesteps.append(int(prediction_data["num_timesteps"]))
+                rollout_counts.append(int(prediction_data["rollouts_per_scenario"]))
 
                 should_visualize = visualize and (
                     visualization_limit is None
@@ -827,6 +873,7 @@ def run_inference_pipeline(
             visualized_scenario_ids=visualized_scenario_ids,
             num_agents=num_agents,
             num_timesteps=num_timesteps,
+            rollouts_per_scenario=rollout_counts,
         )
 
     print(f"\nSaved collected batch predictions to: {batch_output_path}")

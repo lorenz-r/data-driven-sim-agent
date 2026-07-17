@@ -670,6 +670,25 @@ uv run python packages/kigras_am/infer.py \
   --no-visualize
 ```
 
+When the input directory contains multiple `.npy` shards, inference loads them
+in filename order and exposes them as one logical split. `--idx` and `--limit`
+apply to the resulting global scenario order.
+
+Generate multiple stochastic rollouts per scenario:
+
+```bash
+uv run python packages/kigras_am/infer.py \
+  --input av2_data/kigras_am_processed/val \
+  --checkpoint checkpoints/last.ckpt \
+  --output outputs/kigras_am_preds \
+  --sample-tokens \
+  --rollouts-per-scenario 6 \
+  --no-visualize
+```
+
+Without `--sample-tokens`, token selection remains greedy. Requesting multiple
+greedy rollouts is allowed but produces identical rollouts.
+
 The main output is:
 
 ```text

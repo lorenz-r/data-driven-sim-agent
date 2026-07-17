@@ -236,7 +236,13 @@ class KiGRAS(pl.LightningModule):
         return torch.stack([accel_bins[accel_idx], yaw_rate_bins[yaw_idx]], dim=-1)
 
     @torch.no_grad()
-    def rollout(self, batch: dict, kinematic_model) -> dict:
+    def rollout(
+        self,
+        batch: dict,
+        kinematic_model,
+        *,
+        sample_tokens: bool = False,
+    ) -> dict:
         self.eval()
 
         rollout_batch = dict(batch)
@@ -280,7 +286,12 @@ class KiGRAS(pl.LightningModule):
                 prev_actions_valid=prev_actions_valid,
                 scene_valid=scene_valid,
             )
-            pred_token = logits[:, -1].argmax(dim=-1)
+            next_logits = logits[:, -1]
+            if sample_tokens:
+                probabilities = torch.softmax(next_logits, dim=-1)
+                pred_token = torch.multinomial(probabilities, num_samples=1).squeeze(-1)
+            else:
+                pred_token = next_logits.argmax(dim=-1)
             pred_tokens.append(pred_token)
 
             current_state = rollout_batch["agents"]["states"][observer_idx, t]
