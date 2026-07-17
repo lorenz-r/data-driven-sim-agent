@@ -432,6 +432,12 @@ def _build_prediction_scenario(
             key=lambda state: int(state.timestep),
         )
         if not observed_states:
+            if not prediction.valid_mask[agent_index].any():
+                # Observer-centric producers such as KiGRAS-AM retain full-scene
+                # agent metadata, including future-only context tracks, while
+                # marking every prediction timestep invalid for those tracks.
+                # There is neither history to draw nor a prediction to anchor.
+                continue
             raise ValueError(f"Raw track {agent_id!r} contains no observed history")
         observed_timesteps = [int(state.timestep) for state in observed_states]
         duplicates = [

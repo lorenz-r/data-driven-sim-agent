@@ -151,6 +151,49 @@ def test_prediction_scenario_uses_only_observed_history_and_valid_predictions() 
     assert scenario.map_id == 7
 
 
+def test_prediction_scenario_skips_unpredicted_future_only_context_track() -> None:
+    raw_scenario = _raw_scenario()
+    raw_scenario.tracks.append(
+        Track(
+            track_id="future-context",
+            object_states=[_state(2, 8.0, 3.0, observed=False)],
+            object_type=ObjectType.PEDESTRIAN,
+            category=TrackCategory.UNSCORED_TRACK,
+        )
+    )
+    payload = visualizer.PredictionPayload(
+        agent_ids=("focal", "future-context"),
+        positions=np.zeros((2, 2, 2), dtype=np.float32),
+        valid_mask=np.asarray([[True, True], [False, False]]),
+        headings=None,
+    )
+
+    scenario, _ = visualizer._build_prediction_scenario(raw_scenario, payload)
+
+    assert [track.track_id for track in scenario.tracks] == ["focal"]
+
+
+def test_prediction_scenario_rejects_predicted_track_without_history() -> None:
+    raw_scenario = _raw_scenario()
+    raw_scenario.tracks.append(
+        Track(
+            track_id="future-predicted",
+            object_states=[_state(2, 8.0, 3.0, observed=False)],
+            object_type=ObjectType.PEDESTRIAN,
+            category=TrackCategory.SCORED_TRACK,
+        )
+    )
+    payload = visualizer.PredictionPayload(
+        agent_ids=("future-predicted",),
+        positions=np.zeros((1, 2, 2), dtype=np.float32),
+        valid_mask=np.asarray([[True, True]]),
+        headings=None,
+    )
+
+    with pytest.raises(ValueError, match="contains no observed history"):
+        visualizer._build_prediction_scenario(raw_scenario, payload)
+
+
 def test_default_selection_outputs_and_metadata_fallbacks(
     tmp_path: Path, monkeypatch
 ) -> None:
