@@ -213,8 +213,8 @@ def build_processed_dataset(
     if path.suffix == ".npy":
         if not path.is_file():
             raise FileNotFoundError(f"Preprocessed split not found: {path}")
-        resolved = path.resolve()
-        return ProcessedNpyDataset(resolved), [resolved]
+        resolved_path = path.resolve()
+        return ProcessedNpyDataset(resolved_path), [resolved_path]
 
     if not path.is_dir():
         raise FileNotFoundError(
@@ -229,8 +229,8 @@ def build_processed_dataset(
     )
     if len(npy_splits) == 1 and expected.is_file():
         npy_splits = [expected]
-    resolved = [split.resolve() for split in npy_splits]
-    return ProcessedNpyDataset(resolved), resolved
+    resolved_paths = [split.resolve() for split in npy_splits]
+    return ProcessedNpyDataset(resolved_paths), resolved_paths
 
 
 def resolve_scenario_indices(
