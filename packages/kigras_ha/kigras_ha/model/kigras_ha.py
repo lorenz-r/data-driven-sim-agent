@@ -578,9 +578,7 @@ class KiGRAS_HA(pl.LightningModule):
                     k = probs.size(-1) if top_k <= 0 else min(top_k, probs.size(-1))
                     topk_prob, topk_idx = torch.topk(probs, k=k, dim=-1)
                     choice = torch.multinomial(topk_prob.view(B * N, k), 1)  # (B*N, 1)
-                    action_tokens = (
-                        topk_idx.view(B * N, k).gather(1, choice).view(B, N)
-                    )
+                    action_tokens = topk_idx.view(B * N, k).gather(1, choice).view(B, N)
                 else:
                     action_tokens = logits.argmax(dim=-1)  # (B, N) — SMART top-1
 
