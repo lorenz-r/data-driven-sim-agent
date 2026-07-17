@@ -5,7 +5,7 @@ Compares the *distribution* of rolled-out kinematics against ground truth —
 the axis the sim-agent "kinematics" metric scores, and the one minADE/minFDE is
 blind to (that metric takes a per-agent min over rollouts, so it never sees how
 a typical rollout actually moves).
-
+ 
 Both sides use EXACT velocities, never finite-differenced positions:
   * predictions — ``pred_states`` carries [x, y, cos_h, sin_h, vx, vy, valid],
     written by the CTRA integrator itself.
@@ -72,15 +72,23 @@ def _mask_to(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
     return values[m]
 
 
-def _collect(npz_path: Path) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict]:
+def _collect(
+    npz_path: Path,
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict]:
     """Pull per-scenario predicted + ground-truth kinematics out of the batch npz."""
-    pred: dict[str, list[np.ndarray]] = {k: [] for k in ("speed", "accel", "jerk", "omega")}
-    gt: dict[str, list[np.ndarray]] = {k: [] for k in ("speed", "accel", "jerk", "omega")}
+    pred: dict[str, list[np.ndarray]] = {
+        k: [] for k in ("speed", "accel", "jerk", "omega")
+    }
+    gt: dict[str, list[np.ndarray]] = {
+        k: [] for k in ("speed", "accel", "jerk", "omega")
+    }
     n_spin = n_steps = 0
 
     with np.load(npz_path, allow_pickle=False) as data:
         if "scenario_keys" not in data:
-            raise SystemExit(f"{npz_path} is not a batch prediction file (no scenario_keys).")
+            raise SystemExit(
+                f"{npz_path} is not a batch prediction file (no scenario_keys)."
+            )
         keys = [str(k) for k in np.asarray(data["scenario_keys"]).tolist()]
         if f"{keys[0]}_gt_vel" not in data:
             raise SystemExit(
@@ -108,7 +116,9 @@ def _collect(npz_path: Path) -> tuple[dict[str, np.ndarray], dict[str, np.ndarra
             # Spin: rotating while stationary. omega is (K,N,T-1); align speed.
             sp = p_speed[..., :-1]
             ok = p_valid[..., :-1] & p_valid[..., 1:]
-            spinning = (np.abs(p["omega"]) > SPIN_OMEGA_THRESH) & (sp < SPIN_SPEED_THRESH)
+            spinning = (np.abs(p["omega"]) > SPIN_OMEGA_THRESH) & (
+                sp < SPIN_SPEED_THRESH
+            )
             n_spin += int((spinning & ok).sum())
             n_steps += int(ok.sum())
 
@@ -161,10 +171,22 @@ def _plot(pred: dict, gt: dict, out_png: Path) -> None:
         bins = np.linspace(*rng, 120)
         # density=True: prediction and GT sample counts differ (K rollouts vs 1
         # GT), so only normalised distributions are comparable.
-        ax.hist(np.clip(gt[name], *rng), bins=bins, density=True,
-                alpha=0.55, label="ground truth", color="tab:green")
-        ax.hist(np.clip(pred[name], *rng), bins=bins, density=True,
-                alpha=0.55, label="prediction", color="tab:red")
+        ax.hist(
+            np.clip(gt[name], *rng),
+            bins=bins,
+            density=True,
+            alpha=0.55,
+            label="ground truth",
+            color="tab:green",
+        )
+        ax.hist(
+            np.clip(pred[name], *rng),
+            bins=bins,
+            density=True,
+            alpha=0.55,
+            label="prediction",
+            color="tab:red",
+        )
         ax.set_xlabel(label)
         ax.set_ylabel("density")
         ax.set_yscale("log")  # tails carry the implausible motion
@@ -178,10 +200,19 @@ def _plot(pred: dict, gt: dict, out_png: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--npz", type=Path, required=True, help="batch_predictions_<run_id>.npz")
-    ap.add_argument("-o", "--out", type=Path, default=Path("kinematics"),
-                    help="Output directory for the PNG + stats JSON.")
-    ap.add_argument("--no-plot", action="store_true", help="Write stats only (no matplotlib).")
+    ap.add_argument(
+        "--npz", type=Path, required=True, help="batch_predictions_<run_id>.npz"
+    )
+    ap.add_argument(
+        "-o",
+        "--out",
+        type=Path,
+        default=Path("kinematics"),
+        help="Output directory for the PNG + stats JSON.",
+    )
+    ap.add_argument(
+        "--no-plot", action="store_true", help="Write stats only (no matplotlib)."
+    )
     args = ap.parse_args()
 
     pred, gt, stats = _collect(args.npz)
@@ -191,15 +222,24 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "kinematics_stats.json").write_text(json.dumps(stats, indent=2))
 
-    print(f"\nSpin (rotating while stopped): {stats['spin_rate']:.4%} of "
-          f"{stats['total_pred_steps']:,} predicted steps")
+    print(
+        f"\nSpin (rotating while stopped): {stats['spin_rate']:.4%} of "
+        f"{stats['total_pred_steps']:,} predicted steps"
+    )
     print(f"  ({stats['spin_definition']})\n")
-    print(f"{'metric':8s} {'source':6s} {'mean':>9s} {'std':>9s} {'p99':>9s} {'|max|':>9s}")
+    print(
+        f"{'metric':8s} {'source':6s} {'mean':>9s} {'std':>9s} {'p99':>9s} {'|max|':>9s}"
+    )
     for name, _, _ in PANELS:
-        for src, row in (("pred", _summarize(name, pred[name])), ("gt", _summarize(name, gt[name]))):
+        for src, row in (
+            ("pred", _summarize(name, pred[name])),
+            ("gt", _summarize(name, gt[name])),
+        ):
             if row["n"]:
-                print(f"{name:8s} {src:6s} {row['mean']:9.3f} {row['std']:9.3f} "
-                      f"{row['p99']:9.3f} {row['absmax']:9.3f}")
+                print(
+                    f"{name:8s} {src:6s} {row['mean']:9.3f} {row['std']:9.3f} "
+                    f"{row['p99']:9.3f} {row['absmax']:9.3f}"
+                )
 
     if not args.no_plot:
         out_png = args.out / "kinematics_hist.png"
