@@ -52,6 +52,7 @@ import math
 import platform
 import sys
 import zipfile
+from bisect import bisect_right
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -81,17 +82,38 @@ _KIGRAS_TO_SMART_TYPE = {0: 0, 1: 1, 2: 2, 3: 2, 4: 0, 5: 3}
 
 
 class ProcessedNpyDataset:
-    """Small dataset wrapper for a concrete AM preprocessed ``.npy`` split."""
+    """Expose one or more AM ``.npy`` shards as one logical dataset."""
 
-    def __init__(self, split_path: Path):
-        self.split_path = split_path.expanduser().resolve()
-        self.split = np.load(self.split_path, allow_pickle=True)
+    def __init__(self, split_paths: Path | list[Path]):
+        paths = [split_paths] if isinstance(split_paths, Path) else split_paths
+        if not paths:
+            raise ValueError("At least one preprocessed split shard is required")
+        self.split_paths = [path.expanduser().resolve() for path in paths]
+        lengths = []
+        for path in self.split_paths:
+            split = np.load(path, allow_pickle=True)
+            lengths.append(len(split))
+            del split
+        self._ends = np.cumsum(lengths).tolist()
+        self._loaded_shard_idx: int | None = None
+        self._loaded_shard: np.ndarray | None = None
 
     def __len__(self) -> int:
-        return len(self.split)
+        return self._ends[-1]
 
     def __getitem__(self, idx: int) -> dict:
-        data = self.split[idx]
+        if idx < 0:
+            idx += len(self)
+        if not 0 <= idx < len(self):
+            raise IndexError(idx)
+        shard_idx = bisect_right(self._ends, idx)
+        shard_start = self._ends[shard_idx - 1] if shard_idx else 0
+        if self._loaded_shard_idx != shard_idx:
+            self._loaded_shard = np.load(self.split_paths[shard_idx], allow_pickle=True)
+            self._loaded_shard_idx = shard_idx
+        if self._loaded_shard is None:  # pragma: no cover - guarded above
+            raise RuntimeError("Failed to load preprocessed shard")
+        data = self._loaded_shard[idx - shard_start]
         return tree_map(
             lambda x: x.copy() if isinstance(x, np.ndarray) else x,
             data,
@@ -183,35 +205,31 @@ def build_processed_dataset(
     *,
     grid_power: float,
     num_bins: int,
-) -> tuple[ProcessedNpyDataset, Path]:
-    """Load an AM preprocessed split from a concrete file or split directory."""
+) -> tuple[ProcessedNpyDataset, list[Path]]:
+    """Load one AM split file or all ``.npy`` shards in a split directory."""
 
     path = Path(input_path).expanduser()
     if path.suffix == ".npy":
         if not path.is_file():
             raise FileNotFoundError(f"Preprocessed split not found: {path}")
-        return ProcessedNpyDataset(path), path.resolve()
+        resolved = path.resolve()
+        return ProcessedNpyDataset(resolved), [resolved]
 
     if not path.is_dir():
         raise FileNotFoundError(
             f"Processed AM input must be a .npy file or split directory, got: {path}"
         )
 
+    npy_splits = sorted(path.glob("*.npy"))
+    if not npy_splits:
+        raise FileNotFoundError(f"No .npy preprocessed split found in {path}")
     expected = path / split_filename(
         path.name, grid_power=grid_power, num_bins=num_bins
     )
-    if expected.is_file():
-        return ProcessedNpyDataset(expected), expected.resolve()
-
-    npy_splits = sorted(path.glob("*.npy"))
-    if len(npy_splits) == 1:
-        return ProcessedNpyDataset(npy_splits[0]), npy_splits[0].resolve()
-    if not npy_splits:
-        raise FileNotFoundError(f"No .npy preprocessed split found in {path}")
-    raise ValueError(
-        f"Directory {path} contains multiple .npy splits "
-        f"({[p.name for p in npy_splits]}). Pass the exact split via --input."
-    )
+    if len(npy_splits) == 1 and expected.is_file():
+        npy_splits = [expected]
+    resolved = [split.resolve() for split in npy_splits]
+    return ProcessedNpyDataset(resolved), resolved
 
 
 def resolve_scenario_indices(
@@ -649,7 +667,7 @@ def run_inference_pipeline(
         grid_power=grid_power,
         fallback_num_bins=num_bins,
     )
-    dataset, split_path = build_processed_dataset(
+    dataset, split_paths = build_processed_dataset(
         input_path,
         grid_power=grid_power,
         num_bins=num_bins,
@@ -665,7 +683,10 @@ def run_inference_pipeline(
         "checkpoint": str(Path(checkpoint_path).expanduser().resolve()),
         "cli": {
             "input_path": str(input_path),
-            "resolved_split_path": str(split_path),
+            "resolved_split_path": (
+                str(split_paths[0]) if len(split_paths) == 1 else None
+            ),
+            "resolved_split_paths": [str(path) for path in split_paths],
             "output_dir": str(output_dir),
             "device": device,
             "resolved_device": str(resolved_device),
@@ -704,7 +725,9 @@ def run_inference_pipeline(
     batch_output_path = output_path / f"batch_predictions_{run_id}.npz"
     print(f"Running KiGRAS-AM inference on {len(indices)} scenario(s)")
     print(f"Device: {resolved_device} | batch_size: {batch_size}")
-    print(f"Processed split: {split_path}")
+    print(f"Processed split shard(s): {len(split_paths)}")
+    for split_path in split_paths:
+        print(f"  {split_path}")
     print(f"Collecting predictions into: {batch_output_path}")
 
     results: list[dict[str, Any]] = []
