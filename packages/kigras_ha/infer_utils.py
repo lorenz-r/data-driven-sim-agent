@@ -136,13 +136,14 @@ def rollout(
     semantics: torch.Tensor,  # (1, N) long
     *,
     num_samples: int,
-    temperature: float,
+    top_k: int,
+    sample_tokens: bool,
 ) -> dict[str, np.ndarray]:
     """Roll out ``num_samples`` independent futures for every agent.
 
-    With ``num_samples == 1`` actions are chosen greedily (argmax); with more
-    than one sample each rollout draws actions from the softmax distribution,
-    yielding the diverse hypotheses used for minADE / minFDE.
+    Actions follow SMART's scheme: softmax at temperature 1, truncated to the
+    ``top_k`` most likely tokens, then sampled — or the deterministic top-1 token
+    when ``sample_tokens`` is False (in which case every rollout is identical).
 
     Returns a dict of stacked arrays:
         pred_states : (K, N, 60, 7)  full state [x, y, cos, sin, vx, vy, valid]
@@ -158,7 +159,8 @@ def rollout(
         graph_dir,
         semantics,
         num_samples=num_samples,
-        temperature=temperature,
+        top_k=top_k,
+        sample_tokens=sample_tokens,
         steps=PRED_LEN,
     )  # (K, B, N, 60, 7) and (K, B, N, 60)
 
@@ -231,7 +233,8 @@ def rollout_batch(
     samples: list[dict],
     *,
     num_samples: int,
-    temperature: float,
+    top_k: int,
+    sample_tokens: bool,
     device: torch.device,
 ) -> list[dict[str, Any]]:
     """Roll out a whole list of scenarios in ONE batched forward pass.
@@ -250,7 +253,8 @@ def rollout_batch(
         graph_dir,
         semantics,
         num_samples=num_samples,
-        temperature=temperature,
+        top_k=top_k,
+        sample_tokens=sample_tokens,
         steps=PRED_LEN,
     )  # (K, B, N_max, 60, 7) and (K, B, N_max, 60)
     ps = pred_states.cpu().numpy()
@@ -610,11 +614,17 @@ def run_scenario_inference(
     model: KiGRAS_HA,
     device: torch.device,
     num_samples: int,
-    temperature: float,
+    top_k: int,
+    sample_tokens: bool,
 ) -> dict[str, Any]:
     """Single-scenario convenience wrapper over the batched rollout path."""
     res = rollout_batch(
-        model, [data], num_samples=num_samples, temperature=temperature, device=device
+        model,
+        [data],
+        num_samples=num_samples,
+        top_k=top_k,
+        sample_tokens=sample_tokens,
+        device=device,
     )[0]
     return _scenario_metrics(res)
 
@@ -629,7 +639,8 @@ def run_inference_pipeline(
     checkpoint_path: str | Path,
     device: str,
     num_samples: int,
-    temperature: float,
+    top_k: int,
+    sample_tokens: bool,
     raw_data_folder: Optional[str | Path],
     idx: Optional[list[int]],
     limit: Optional[int],
@@ -668,7 +679,8 @@ def run_inference_pipeline(
             "device": device,
             "resolved_device": str(resolved_device),
             "num_samples": num_samples,
-            "temperature": temperature,
+            "top_k": top_k,
+            "sample_tokens": sample_tokens,
             "raw_data_folder": str(dataroot) if dataroot else None,
             "num_scenarios": len(indices),
         },
@@ -695,7 +707,8 @@ def run_inference_pipeline(
     batch_output_path = output_path / f"batch_predictions_{run_id}.npz"
     print(f"Running KiGRAS_HA inference on {len(indices)} scenario(s)")
     print(
-        f"Device: {resolved_device}  |  samples: {num_samples}  temperature: {temperature}"
+        f"Device: {resolved_device}  |  samples: {num_samples}  "
+        f"top_k: {top_k}  sample_tokens: {sample_tokens}"
     )
     print(f"Binning: {num_accel}x{num_yaw} bins  |  grid_power: {grid_power}")
     if format_npz:
@@ -725,7 +738,8 @@ def run_inference_pipeline(
                 model,
                 chunk_samples,
                 num_samples=num_samples,
-                temperature=temperature,
+                top_k=top_k,
+                sample_tokens=sample_tokens,
                 device=resolved_device,
             )
             chunk_results = [_scenario_metrics(r) for r in batched]
@@ -795,7 +809,8 @@ def run_inference_pipeline(
                     "focal_idx": focal_idx,
                     "best_sample": best_sample,
                     "num_samples": num_samples,
-                    "temperature": temperature,
+                    "top_k": top_k,
+                    "sample_tokens": sample_tokens,
                     "focal_min_ade": focal_ade,
                     "focal_min_fde": focal_fde,
                     "scene_min_ade": scene["mean_min_ade"],

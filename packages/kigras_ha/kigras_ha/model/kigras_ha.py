@@ -481,7 +481,8 @@ class KiGRAS_HA(pl.LightningModule):
         semantics: torch.Tensor,  # (B, N) long
         *,
         num_samples: int = 1,
-        temperature: float = 1.0,
+        top_k: int = 5,
+        sample_tokens: bool = True,
         steps: int = 60,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Autoregressive physical rollout — the single inference path.
@@ -496,8 +497,10 @@ class KiGRAS_HA(pl.LightningModule):
              (k nearest neighbours + local map) and the previous action token.
           2. Append the token, run the causal decoder over the growing sequence,
              and take the last position's logits.
-          3. Pick the action — greedy argmax when ``num_samples == 1``, otherwise
-             a temperature-scaled softmax sample.
+          3. Pick the action, matching SMART's scheme (``smart/modules/agent_decoder.py``):
+             softmax at temperature 1, truncate to the ``top_k`` most likely tokens,
+             then draw from the renormalized top-k — or take top-1 deterministically
+             when ``sample_tokens`` is False.
           4. Decode the token on the model's own CTRA grid (``self._ctra``) and
              advance the world one step, then fold the new frame into the GRU.
 
@@ -508,8 +511,13 @@ class KiGRAS_HA(pl.LightningModule):
             history: observed states per agent, (B, N, obs_len, 7).
             graph_pos, graph_dir: lane graph, (B, M, 2).
             semantics: agent type ids, (B, N).
-            num_samples: independent rollouts per scene (1 = greedy).
-            temperature: softmax temperature when ``num_samples > 1``.
+            num_samples: independent rollouts per scene.
+            top_k: keep only the k most likely tokens before sampling (SMART's
+                   ``beam_size``, default 5). ``0`` disables truncation and
+                   samples over the full vocabulary.
+            sample_tokens: draw from the top-k distribution (True) or take the
+                   deterministic top-1 token (False). Independent of
+                   ``num_samples``: with False, every rollout is identical.
             steps: future horizon to roll out.
 
         Returns:
@@ -562,13 +570,19 @@ class KiGRAS_HA(pl.LightningModule):
                 seq = torch.stack(scene_tokens, dim=2)  # (B, N, step+1, d)
                 logits = self.decoder(seq)[:, :, -1, :]  # (B, N, vocab)
 
-                if num_samples > 1:
-                    probs = torch.softmax(logits / max(temperature, 1e-6), dim=-1)
-                    action_tokens = torch.multinomial(probs.view(B * N, -1), 1).view(
-                        B, N
+                if sample_tokens:
+                    # SMART parity: softmax at T=1, keep the top-k tokens, then
+                    # sample from them. multinomial renormalizes the retained
+                    # weights internally, so no explicit rescale is needed.
+                    probs = torch.softmax(logits, dim=-1)  # (B, N, vocab)
+                    k = probs.size(-1) if top_k <= 0 else min(top_k, probs.size(-1))
+                    topk_prob, topk_idx = torch.topk(probs, k=k, dim=-1)
+                    choice = torch.multinomial(topk_prob.view(B * N, k), 1)  # (B*N, 1)
+                    action_tokens = (
+                        topk_idx.view(B * N, k).gather(1, choice).view(B, N)
                     )
                 else:
-                    action_tokens = logits.argmax(dim=-1)  # (B, N)
+                    action_tokens = logits.argmax(dim=-1)  # (B, N) — SMART top-1
 
                 step_tokens.append(action_tokens)
                 prev_actions = action_tokens

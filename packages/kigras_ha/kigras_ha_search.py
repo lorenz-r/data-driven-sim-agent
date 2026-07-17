@@ -278,7 +278,8 @@ def evaluate_min_fde(
             model,
             samples,
             num_samples=args.eval_samples,
-            temperature=args.eval_temperature,
+            top_k=args.eval_top_k,
+            sample_tokens=args.eval_sample_tokens,
             device=device,
         ):
             fidx = res["focal_idx"]
@@ -467,7 +468,26 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--eval-samples", type=int, default=6, help="Rollout samples (minFDE@K)."
     )
-    p.add_argument("--eval-temperature", type=float, default=1.0)
+    p.add_argument(
+        "--eval-top-k",
+        type=int,
+        default=5,
+        help="Stage-2 rollouts sample among the top-k tokens (SMART's beam_size; "
+        "0 = full vocab).",
+    )
+    p.add_argument(
+        "--eval-sample-tokens",
+        dest="eval_sample_tokens",
+        action="store_true",
+        default=True,
+        help="Sample stage-2 rollout tokens among the top-k (default).",
+    )
+    p.add_argument(
+        "--no-eval-sample-tokens",
+        dest="eval_sample_tokens",
+        action="store_false",
+        help="Use deterministic top-1 tokens for stage-2 rollouts.",
+    )
     p.add_argument(
         "--eval-limit", type=int, default=0, help="Max val scenarios (0=all)."
     )

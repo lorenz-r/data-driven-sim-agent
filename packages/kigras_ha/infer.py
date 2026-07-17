@@ -12,12 +12,16 @@ model: the ``ArgoDataset`` loader, the CTRA action-token rollout used in
 
 Examples
 --------
-    # All raw scenarios in a folder, greedy rollout, save everything
-    python infer.py -i data/val -o data/preds
+    # All raw scenarios in a folder, deterministic top-1 rollout, save everything
+    python infer.py -i data/val -o data/preds --no-sample-tokens
 
-    # A single preprocessed split, 6 stochastic samples for minADE/minFDE
+    # A single preprocessed split, 16 stochastic samples for minADE/minFDE
     python infer.py -i data/val_split.npy --raw-data-folder data/val \\
-        -o data/preds --num-samples 6 --temperature 0.8 --limit 20
+        -o data/preds --num-samples 16 --top-k 5 --limit 20
+
+Action sampling matches SMART (``smart/modules/agent_decoder.py``): a
+temperature-1 softmax truncated to the ``--top-k`` most likely tokens, then
+sampled — or deterministic top-1 with ``--no-sample-tokens``.
 """
 
 import sys
@@ -46,7 +50,9 @@ DEFAULT_INPUT_PATH = KIGRAS_HA_ROOT / "data" / "val"
 DEFAULT_OUTPUT_FOLDER = KIGRAS_HA_ROOT / "data" / "preds"
 DEFAULT_CHECKPOINT_PATH = REPO_ROOT / "checkpoints" / "last.ckpt"
 DEFAULT_NUM_SAMPLES = 1
-DEFAULT_TEMPERATURE = 1.0
+# SMART's beam_size (smart/modules/agent_decoder.py): sample among the top-5
+# tokens of the temperature-1 softmax.
+DEFAULT_TOP_K = 5
 DEFAULT_VISUALIZATION_LIMIT = 10
 
 
@@ -109,10 +115,26 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--temperature",
-        type=float,
-        default=DEFAULT_TEMPERATURE,
-        help="Softmax temperature for sampling (ignored when --num-samples=1).",
+        "--top-k",
+        type=int,
+        default=DEFAULT_TOP_K,
+        help=(
+            "Sample among the k most likely action tokens (SMART's beam_size; "
+            f"0 = no truncation, sample the full vocab). Default: {DEFAULT_TOP_K}."
+        ),
+    )
+    parser.add_argument(
+        "--sample-tokens",
+        dest="sample_tokens",
+        action="store_true",
+        default=True,
+        help="Sample among the top-k action tokens for diverse rollouts (default).",
+    )
+    parser.add_argument(
+        "--no-sample-tokens",
+        dest="sample_tokens",
+        action="store_false",
+        help="Use deterministic top-1 tokens for every rollout.",
     )
     parser.add_argument(
         "--batch-size",
@@ -177,7 +199,8 @@ def main() -> None:
         checkpoint_path=args.checkpoint,
         device=args.device,
         num_samples=args.num_samples,
-        temperature=args.temperature,
+        top_k=args.top_k,
+        sample_tokens=args.sample_tokens,
         raw_data_folder=args.raw_data_folder,
         idx=args.idx,
         limit=args.limit,
