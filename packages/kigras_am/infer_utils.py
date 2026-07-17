@@ -331,14 +331,20 @@ def rollout_batch(
         )
     batch = _to_device(batch, device)
     model.eval()
-    rollouts = [
-        model.rollout(
+    rollouts = []
+    for rollout_idx in range(rollouts_per_scenario):
+        rollout = model.rollout(
             batch,
             kinematic_model,
             sample_tokens=sample_tokens,
         )
-        for _ in range(rollouts_per_scenario)
-    ]
+        rollouts.append(rollout)
+        valid_states = int((rollout["states"][..., 6] > 0.5).sum().item())
+        total_states = int(rollout["states"][..., 6].numel())
+        print(
+            f"Rollout {rollout_idx + 1}/{rollouts_per_scenario}: "
+            f"{valid_states} / {total_states} observer states valid"
+        )
     rollout = {
         "states": torch.stack([item["states"] for item in rollouts]),
         "tokens": torch.stack([item["tokens"] for item in rollouts]),
@@ -766,7 +772,11 @@ def run_inference_pipeline(
 
     batch_output_path = output_path / f"batch_predictions_{run_id}.npz"
     print(f"Running KiGRAS-AM inference on {len(indices)} scenario(s)")
-    print(f"Device: {resolved_device} | batch_size: {batch_size}")
+    print(
+        f"Device: {resolved_device} | batch_size: {batch_size} | "
+        f"rollouts_per_scenario: {rollouts_per_scenario} | "
+        f"token_selection: {'sampled' if sample_tokens else 'greedy'}"
+    )
     print(f"Processed split shard(s): {len(split_paths)}")
     for split_path in split_paths:
         print(f"  {split_path}")
@@ -786,6 +796,12 @@ def run_inference_pipeline(
     ) as archive:
         for chunk_start in range(0, len(indices), batch_size):
             chunk_indices = indices[chunk_start : chunk_start + batch_size]
+            batch_number = chunk_start // batch_size + 1
+            num_batches = math.ceil(len(indices) / batch_size)
+            print(
+                f"\nPreparing batch {batch_number}/{num_batches}: "
+                f"{len(chunk_indices)} scenario(s)"
+            )
             samples = [dataset[i] for i in chunk_indices]
             batch, rollout = rollout_batch(
                 model,
@@ -813,15 +829,24 @@ def run_inference_pipeline(
                     scenario_id=scenario_id,
                     run_metadata=run_metadata,
                 )
+                print(
+                    "Predicted rollouts shape: "
+                    f"{prediction_data['pred_traj'].shape} "
+                    "(rollouts, agents, timesteps, xy)"
+                )
                 scene = result["scene"]
                 print(
-                    f"Observer minADE: {scene['mean_min_ade']:.3f} m | "
-                    f"minFDE: {scene['mean_min_fde']:.3f} m | "
+                    f"Observer minADE@{rollouts_per_scenario}: "
+                    f"{scene['mean_min_ade']:.3f} m | "
+                    f"minFDE@{rollouts_per_scenario}: "
+                    f"{scene['mean_min_fde']:.3f} m | "
                     f"observer agents with GT: {scene['num_scored_agents']}"
                 )
                 print(
-                    f"Focal minADE: {result['focal_min_ade']:.3f} m | "
-                    f"minFDE: {result['focal_min_fde']:.3f} m"
+                    f"Focal minADE@{rollouts_per_scenario}: "
+                    f"{result['focal_min_ade']:.3f} m | "
+                    f"minFDE@{rollouts_per_scenario}: "
+                    f"{result['focal_min_fde']:.3f} m"
                 )
 
                 _write_batch_scenario_npz(archive, scenario_key, prediction_data)

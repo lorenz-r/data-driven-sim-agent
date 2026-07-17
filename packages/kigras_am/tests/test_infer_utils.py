@@ -1,11 +1,14 @@
 from pathlib import Path
 
 import numpy as np
+import torch
 
+import packages.kigras_am.infer_utils as infer_utils
 from packages.kigras_am.infer_utils import (
     PRED_LEN,
     build_full_scene_prediction_data,
     build_processed_dataset,
+    rollout_batch,
 )
 
 
@@ -68,3 +71,47 @@ def test_full_scene_export_preserves_multiple_rollouts() -> None:
     assert prediction["num_samples"] == 3
     assert prediction["pred_valid_mask"][:, 0].all()
     assert not prediction["pred_valid_mask"][:, 1].any()
+
+
+def test_rollout_batch_runs_and_stacks_every_requested_rollout(
+    monkeypatch, capsys
+) -> None:
+    batch = {
+        "observers": {"action_tokens": torch.zeros((1, 1), dtype=torch.long)},
+    }
+    monkeypatch.setattr(infer_utils, "collate_fn", lambda samples: batch)
+
+    class FakeModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def eval(self) -> None:
+            pass
+
+        def rollout(self, batch, kinematic_model, *, sample_tokens=False):
+            self.calls += 1
+            states = torch.zeros((1, PRED_LEN, 7))
+            states[..., 0] = self.calls
+            states[..., 6] = 1
+            return {
+                "states": states,
+                "tokens": torch.full((1, PRED_LEN), self.calls, dtype=torch.long),
+            }
+
+    model = FakeModel()
+    _, rollout = rollout_batch(
+        model,
+        [{}],
+        device=torch.device("cpu"),
+        kinematic_model=object(),
+        sample_tokens=True,
+        rollouts_per_scenario=16,
+    )
+
+    assert model.calls == 16
+    assert rollout["states"].shape == (16, 1, PRED_LEN, 7)
+    assert rollout["tokens"].shape == (16, 1, PRED_LEN)
+    assert torch.equal(rollout["tokens"][:, 0, 0], torch.arange(1, 17))
+    output = capsys.readouterr().out
+    assert "Rollout 1/16" in output
+    assert "Rollout 16/16" in output
