@@ -417,7 +417,9 @@ def process(cfg, size: str = ""):
     for split in proc_cfg.input.keys():
         input_dir = Path(proc_cfg.input[split])
         if not input_dir.exists():
-            print(f"Skipping '{split}' preprocessing: input directory not found ({input_dir})")
+            print(
+                f"Skipping '{split}' preprocessing: input directory not found ({input_dir})"
+            )
             continue
 
         output_dir = Path(proc_cfg.output[split])
@@ -431,7 +433,9 @@ def process(cfg, size: str = ""):
             kinematics=kinematics_type,
         )
         if output_path.exists():
-            print(f"Skipping '{split}' preprocessing: output already exists ({output_path})")
+            print(
+                f"Skipping '{split}' preprocessing: output already exists ({output_path})"
+            )
             continue
 
         start = time.perf_counter()

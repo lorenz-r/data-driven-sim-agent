@@ -65,7 +65,10 @@ class Kigras_HA_Trainer(BaseTrainer):
             f"{project_root}/av2_data/kigras_processed/val/{val_name}"
         )
         cfg.training.dataloader.test_path = str(
-            project_root / "av2_data" / "kigras_processed" / "test"
+            project_root
+            / "av2_data"
+            / "kigras_processed"
+            / "test"
             / split_filename(
                 "test",
                 size=download_size,
